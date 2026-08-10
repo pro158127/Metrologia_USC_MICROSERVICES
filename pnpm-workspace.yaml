@@ -1,0 +1,8 @@
+
+packages:
+  - '.'
+  - 'frontend'
+  - 'backend'
+
+allowBuilds:
+  protobufjs: false

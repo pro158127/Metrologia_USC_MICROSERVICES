@@ -1,0 +1,15 @@
+# Definición de la carpeta raíz del Frontend
+packages:
+  - '.'
+
+allowBuilds:
+  protobufjs: false
+
+# Lista blanca oficial de pnpm v10+ para compilar binarios nativos
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - argon2
+  - esbuild
+  - prisma
+  - sharps

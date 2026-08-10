@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <title>Visor y Mapeo - Luckysheet</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  
+  <!-- CSS oficial de W3.CSS y Luckysheet v2.1.2 -->
+  <link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/luckysheet@2.1.2/dist/plugins/css/pluginsCss.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/luckysheet@2.1.2/dist/plugins/plugins.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/luckysheet@2.1.2/dist/css/luckysheet.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/luckysheet@2.1.2/dist/assets/iconfont/iconfont.css" />
+
+  <!-- Scripts oficiales de CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.2/dist/plugins/js/plugin.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luckysheet@2.1.2/dist/luckysheet.umd.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    /* Aseguramos dimensiones físicas reales para evitar el bug de offsetHeight */
+    #luckysheet-wrapper {
+      width: 100%;
+      height: calc(100vh - 145px);
+      position: relative;
+    }
+    #luckysheet {
+      margin: 0px;
+      padding: 0px;
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      left: 0px;
+      top: 0px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="w3-container" id="header-area">
+  <h2 style="margin-top:10px;">Visor de Planillas Metrológicas</h2>
+  <p style="margin-bottom:10px;">Selecciona una pestaña o haz clic en cualquier celda para mapear sellos/variables.</p>
+</div>
+
+<div class="w3-bar w3-black" id="nav-area">
+  <button class="w3-bar-item w3-button" onclick="openCity('London')">Planilla Principal</button>
+  <button class="w3-bar-item w3-button" onclick="openCity('Paris')">Parámetros</button>
+  <button class="w3-bar-item w3-button" onclick="openCity('Tokyo')">Info</button>
+</div>
+
+<!-- Contenedor Principal (London) -->
+<div id="London" class="city">
+  <div id="luckysheet-wrapper">
+    <div id="luckysheet"></div>
+  </div>
+</div>
+
+<div id="Paris" class="w3-container city" style="display:none; padding: 20px;">
+  <h2>Parámetros Ambientales</h2>
+  <p>Configuración secundaria del ensayo.</p> 
+</div>
+
+<div id="Tokyo" class="w3-container city" style="display:none; padding: 20px;">
+  <h2>Información del Sistema</h2>
+  <p>MetroSoft - Módulo de mapeo de celdas.</p>
+</div>
+
+<script>
+  // Helper para convertir columnas numéricas a letras (0 -> A, 1 -> B)
+  function colToLetter(col) {
+    let letter = '';
+    while (col >= 0) {
+      letter = String.fromCharCode((col % 26) + 65) + letter;
+      col = Math.floor(col / 26) - 1;
+    }
+    return letter;
+  }
+
+  // Inicialización diferida para garantizar layout pintado
+  $(document).ready(function () {
+    setTimeout(function() {
+      luckysheet.create({
+        container: 'luckysheet',
+        showinfobar: false,
+        showsheetbar: true,
+        lang: 'es',
+        forceCalculation: false,
+        
+        // MOCK DE DATOS Y ESTILOS
+        data: [
+          {
+            name: "Planilla Mapeo",
+            status: 1,
+            order: 0,
+            celldata: [
+              { r: 0, c: 0, v: { v: "PLANILLA DE ENSAYO", m: "PLANILLA DE ENSAYO", bg: "#1e3a8a", fc: "#ffffff", bl: 1, ht: 1 } },
+              { r: 2, c: 0, v: { v: "Muestra ID", bg: "#f1f5f9", bl: 1 } },
+              { r: 2, c: 1, v: { v: "Valor Ref.", bg: "#f1f5f9", bl: 1 } },
+              { r: 2, c: 2, v: { v: "Lectura", bg: "#f1f5f9", bl: 1 } },
+              { r: 3, c: 0, v: { v: "M-001" } },
+              { r: 3, c: 1, v: { v: 100.00 } },
+              { r: 3, c: 2, v: { v: 100.05 } },
+              // ZONA DE SELLO
+              { r: 6, c: 0, v: { v: "ZONA DE SELLO DE INSPECCIÓN", bg: "#fef08a", fc: "#854d0e", bl: 1, ht: 1 } }
+            ],
+            config: {
+              merge: {
+                "0_0": { r: 0, c: 0, rs: 1, cs: 3 },
+                "6_0": { r: 6, c: 0, rs: 2, cs: 3 }
+              }
+            }
+          }
+        ],
+
+        // HOOK DE CAPTURA DE CELDAS (Envía datos a Next.js)
+        hook: {
+          cellSelect: function (cell, postion) {
+            if (!postion) return;
+            const r = postion.r;
+            const c = postion.c;
+            const coord = colToLetter(c) + (r + 1);
+
+            // Comunicar al iframe padre
+            if (window.parent) {
+              window.parent.postMessage({
+                type: 'EXCEL_CELL_SELECTED',
+                coordinate: coord,
+                row: r,
+                col: c
+              }, '*');
+            }
+          }
+        }
+      });
+    }, 50); // 50ms de gracia para que el DOM calcule estilos de layout
+  });
+
+  // Manejador de Tabs
+  function openCity(cityName) {
+    var i;
+    var x = document.getElementsByClassName("city");
+    for (i = 0; i < x.length; i++) {
+      x[i].style.display = "none";  
+    }
+    document.getElementById(cityName).style.display = "block";
+    
+    // Forzar re-cálculo de dimensiones cuando volvemos a la vista del excel
+    if (cityName === 'London' && window.luckysheet) {
+      setTimeout(function() {
+        luckysheet.resize();
+      }, 10);
+    }
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Definición de la carpeta raíz del Backend
+packages:
+  - '.'
+
+# Lista blanca oficial de pnpm v10+ para compilar binarios C++/Rust nativos
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - argon2
+  - esbuild
+  - prisma

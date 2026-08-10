@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  postgres_db:
+    image: pgvector/pgvector:pg16
+    container_name: metrologia_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: metrologia_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - metrologia_net
+
+  redis_cache:
+    image: redis:7-alpine
+    container_name: metrologia_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - metrologia_net
+
+  minio:
+    image: minio/minio:latest
+    container_name: metrologia_storage
+    restart: always
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: "admin_metrologia"
+      MINIO_ROOT_PASSWORD: "PasswordSegura123"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      metrologia_net:
+        aliases:
+          - minio-storage
+
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: DockerFile.backend
+    working_dir: /app
+    container_name: metrologia_backend
+    restart: always
+    ports:
+      - "3001:3001"
+    environment:
+      CI: "true"
+      PORT: 3001
+      DB_ENV: "local"
+      DATABASE_URL_LOCAL: "postgresql://postgres:password123@postgres_db:5432/metrologia_db"
+      DATABASE_URL_AWS: "postgresql://cristian:Cali1581@metrologiausc.ce3wseuwmnfw.us-east-1.rds.amazonaws.com:5432/metrologia_usc?schema=public"
+      REDIS_URL: "redis://redis_cache:6379"
+      MINIO_ENDPOINT: "http://minio-storage:9000"
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: "admin_metrologia"
+      MINIO_SECRET_KEY: "PasswordSegura123"
+      MINIO_BUCKET_NAME: "documentos-metrologia"
+    command: sh -c "pnpm exec prisma generate && pnpm dev"
+    volumes:
+      - ./Backend:/app
+      - /app/node_modules
+    depends_on:
+      - postgres_db
+      - redis_cache
+      - minio
+    networks:
+      - metrologia_net
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: DockerFile.frontend
+    working_dir: /app
+    container_name: metrologia_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      CI: "true"
+      DATABASE_URL_LOCAL: "postgresql://postgres:password123@postgres_db:5432/metrologia_db"
+      NEXT_PUBLIC_API_URL: "http://localhost:3001"
+      NEXT_PUBLIC_SOCKET_URL: "http://192.168.1.11:3001"
+      NEXT_PUBLIC_MINIO_URL: "http://localhost:9000"
+    command: sh -c "pnpm exec prisma generate && pnpm dev"
+    volumes:
+      - ./Frontend:/app                     # 👈 Mapea SOLO la carpeta ./Backend dentro de /app
+      - /app/node_modules
+      - /app/.next
+      
+   
+    depends_on:
+      - backend
+    networks:
+      - metrologia_net
+
+# Declaración de Volúmenes y Redes Globales
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  metrologia_net:
+    driver: bridge

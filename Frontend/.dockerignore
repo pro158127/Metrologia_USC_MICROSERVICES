@@ -1,0 +1,5 @@
+node_modules
+.next
+.git
+.env*
+Backend          <-- 🚫 Le indica a Docker que NO copie esta carpeta a la imagen de Next.js

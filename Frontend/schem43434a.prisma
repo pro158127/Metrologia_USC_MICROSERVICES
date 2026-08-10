@@ -1,0 +1,442 @@
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// ==========================================
+// MÓDULO 1: SEGURIDAD, USUARIOS Y SISTEMA
+// ==========================================
+
+model Usuario {
+  idUsuario      Int            @id @default(autoincrement()) @map("ID_USUARIO_AUTO_INCREMENT")
+  nombreCompleto String         @map("NOMBRE_COMPLETO")
+  contrasena     String         @map("CONTRASEÑA")
+  idRol          Int            @map("ID_ROL_FK")
+  correo         String         @unique @map("CORREO_INSTITUCION")
+  createdAt      DateTime       @default(now()) @map("CREATED_AT")
+  updatedAt      DateTime?      @updatedAt @map("UPDATED_AT")
+  estado         Boolean        @map("ESTADO")
+  intentos       Int            @default(0) @map("INTENTOS")
+  eliminado      Boolean        @default(false) @map("ELIMINADO")
+  
+  calibraciones  Calibracion[]
+  auditLogs      AuditLog[]
+  notificaciones Notificacion[]
+  rol            Roles          @relation(fields: [idRol], references: [idRol])
+
+  @@map("usuarios")
+}
+
+model Roles {
+  idRol             Int       @id @default(autoincrement()) @map("ID_ROL_INCREMENT")
+  nombreRol         String    @map("NOMBRE_ROL")
+  permisos          Json      @map("PERMISOS_JSON")
+  justificacion     String    @map("JUSTIFICACION")
+  directrizDirector Boolean   @map("DIRECTRIZ_DIRECTOR")
+
+  usuarios          Usuario[]
+
+  @@map("roles")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement()) @map("ID_AUDIT")
+  action    String   @map("ACTION")
+  tableName String   @map("TABLE_NAME")
+  recordId  String   @map("RECORD_ID")
+  userId    Int      @map("USER_ID")
+  createdAt DateTime @default(now()) @map("CREATED_AT")
+  details   Json     @map("DETAILS")
+  ip        String   @map("IP")
+
+  user      Usuario  @relation(fields: [userId], references: [idUsuario])
+
+  @@map("audit_logs")
+}
+
+model Notificacion {
+  idNotificacion Int      @id @default(autoincrement()) @map("ID_NOTIFICACION")
+  idUsuario      Int      @map("ID_USUARIO_FK")
+  mensaje        String   @map("MENSAJE") @db.Text
+  modulo         String   @map("MODULO")
+  visto          Boolean  @default(false) @map("VISTO")
+  nivelPrioridad String   @map("NIVEL_PRIORIDAD")
+  createdAt      DateTime @default(now()) @map("CREATED_AT")
+
+  usuario        Usuario  @relation(fields: [idUsuario], references: [idUsuario], onDelete: Cascade)
+
+  @@map("notificaciones")
+}
+
+model Tarifa {
+  idTarifa     Int               @id @default(autoincrement()) @map("ID_TARIFA")
+  magnitud     String            @map("MAGNITUD")
+  tipoServicio String            @map("TIPO_SERVICIO")
+  estado       String            @default("ACTIVO") @map("ESTADO")
+  historial    HistorialTarifa[]
+
+  @@map("tarifas")
+}
+
+model HistorialTarifa {
+  idHistorial  Int       @id @default(autoincrement()) @map("ID_HISTORIAL")
+  idTarifa     Int       @map("ID_TARIFA_FK")
+  precioMinimo Decimal   @map("PRECIO_MINIMO") @db.Decimal(12, 2)
+  fechaInicio  DateTime  @default(now()) @map("FECHA_INICIO")
+  fechaFin     DateTime? @map("FECHA_FIN")
+
+  tarifa       Tarifa    @relation(fields: [idTarifa], references: [idTarifa], onDelete: Cascade)
+
+  @@index([idTarifa, fechaInicio, fechaFin])
+  @@map("historial_tarifas")
+}
+
+enum FrecuenciaEjecucion {
+  UNA_VEZ
+  DIARIA
+  SEMANAL
+  PROGRAMADA_CRON
+}
+
+model ParametroSistema {
+  idParametro      Int                 @id @default(autoincrement()) @map("ID_PARAMETRO")
+  clave            String              @unique @map("CLAVE")
+  codigoScript     String?             @map("CODIGO_SCRIPT") @db.Text
+  frecuencia       FrecuenciaEjecucion @default(UNA_VEZ) @map("FRECUENCIA")
+  expresionCron    String?             @map("EXPRESION_CRON")
+  proximaEjecucion DateTime?           @map("PROXIMA_EJECUCION")
+  ultimaEjecucion  DateTime?           @map("ULTIMA_EJECUCION")
+
+  @@index([proximaEjecucion])
+  @@map("parametros_sistema")
+}
+
+model Plantilla {
+  idPlantilla Int         @id @default(autoincrement()) @map("ID_PLANTILLA")
+  modulo      String      @map("MODULO")
+  mapeoCampos Json        @map("MAPEO_CAMPOS_JSON")
+  activa      Boolean     @default(true) @map("ACTIVA")
+  documentos  Documento[]
+
+  @@map("plantillas")
+}
+
+// ==========================================
+// MÓDULO 2: ENTIDAD RAÍZ Y CLIENTES
+// ==========================================
+
+model Cliente {
+  idCliente      Int            @id @default(autoincrement()) @map("ID_CLIENTE")
+  nitCedula      String         @unique @map("NIT")
+  razonSocial    String         @map("RAZON_SOCIAL")
+  correo         String         @map("CORREO")
+  nombreContacto String?        @map("NOMBRE_CONTACTO")
+  telefono       String?        @map("TELEFONO")
+  observacion    String?        @map("OBSERVACION") @db.Text
+  tipoCliente    String         @default("EXTERNO") @map("TIPO_CLIENTE")
+
+  idRutDocumento Int?           @unique @map("ID_RUT_DOCUMENTO_FK")
+  rutDocumento   Documento?     @relation("ClienteRut", fields: [idRutDocumento], references: [idDocumento], onDelete: SetNull)
+
+  tramites       Tramite[]
+  cotizaciones   Cotizacion[]
+  ordenes        OrdenTrabajo[]
+
+  @@map("clientes")
+}
+
+model Tramite {
+  idTramite    Int               @id @default(autoincrement()) @map("ID_TRAMITE")
+  codigo       String            @unique @map("CODIGO_TRAMITE")
+  idCliente    Int?              @map("ID_CLIENTE_FK")
+  estadoFlujo  String            @default("EN_PROCESO") @map("ESTADO_FLUJO")
+  createdAt    DateTime          @default(now()) @map("CREATED_AT")
+
+  cliente      Cliente?          @relation(fields: [idCliente], references: [idCliente])
+  cotizaciones Cotizacion[]
+  ordenes      OrdenTrabajo[]
+  recepciones  RecepcionEquipo[]
+  documentos   Documento[]
+
+  @@map("tramites")
+}
+
+// ==========================================
+// MÓDULO 3: FLUJO METROLÓGICO TRANSACCIONAL
+// ==========================================
+
+model Cotizacion {
+  idCotizacion     Int                 @id @default(autoincrement()) @map("ID_COTIZACION")
+  codigo           String              @unique @map("CODIGO_COTIZACION")
+  idTramite        Int?                @map("ID_TRAMITE_FK")
+  idCliente        Int?                @map("ID_CLIENTE_FK")
+  contactoNombre   String?             @map("CONTACTO_NOMBRE")
+  contactoEmail    String?             @map("CONTACTO_EMAIL")
+  contactoTelefono String?             @map("CONTACTO_TELEFONO")
+  esInternoUSC     Boolean             @default(false) @map("ES_INTERNO_USC")
+  montoTotal       Decimal             @map("MONTO_TOTAL") @db.Decimal(12, 2)
+  estado           String              @default("BORRADOR") @map("ESTADO")
+  createdAt        DateTime            @default(now()) @map("CREATED_AT")
+  updatedAt        DateTime?           @updatedAt @map("UPDATED_AT")
+  viaticos         Decimal?            @default(0) @db.Decimal(12, 2)
+
+  tramite          Tramite?            @relation(fields: [idTramite], references: [idTramite])
+  cliente          Cliente?            @relation(fields: [idCliente], references: [idCliente])
+  detalles         CotizacionDetalle[]
+  ordenes          OrdenTrabajo[]
+  recepciones      RecepcionEquipo[]
+  documentos       Documento[]
+
+  @@index([createdAt])
+  @@map("cotizaciones")
+}
+
+model CotizacionDetalle {
+  idDetalle         Int        @id @default(autoincrement()) @map("ID_DETALLE")
+  idCotizacion      Int        @map("ID_COTIZACION_FK")
+  equipoDescripcion String     @map("EQUIPO_DESCRIPCION") @db.Text
+  tipoServicio      String     @map("TIPO_SERVICIO")
+  magnitud          String     @map("MAGNITUD")
+  normaTecnica      String?    @map("NORMA_TECNICA") @db.Text
+  cantidad          Int        @map("CANTIDAD")
+  valorUnitario     Decimal    @map("VALOR_UNITARIO") @db.Decimal(12, 2)
+  valorTotal        Decimal    @map("VALOR_TOTAL") @db.Decimal(12, 2)
+
+  cotizacion        Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
+
+  @@map("cotizacion_detalles")
+}
+
+model OrdenTrabajo {
+  idOrdenTrabajo         Int                   @id @default(autoincrement()) @map("ID_ORDEN_TRABAJO")
+  codigo                 String                @unique @map("CODIGO_OT")
+  idTramite              Int?                  @map("ID_TRAMITE_FK")
+  idCotizacion           Int?                  @map("ID_COTIZACION_FK")
+  idCliente              Int?                  @map("ID_CLIENTE_FK")
+  correoCertificado      String?               @map("CORREO_CERTIFICADO")
+  correoFactura          String?               @map("CORREO_FACTURA")
+  fechaLimiteFacturacion DateTime?             @map("FECHA_LIMITE_FACTURACION")
+  esInternoUSC           Boolean               @default(false) @map("ES_INTERNO_USC")
+  esEnSitio              Boolean               @default(false) @map("ES_EN_SITIO")
+  esLabPermanente        Boolean               @default(true) @map("ES_LAB_PERMANENTE")
+  personaContacto        String?               @map("PERSONA_CONTACTO")
+  telefonoContacto       String?               @map("TELEFONO_CONTACTO")
+  fechaCalibracion       DateTime?             @map("FECHA_CALIBRACION")
+  responsable            String?               @map("RESPONSABLE")
+  observaciones          String?               @map("OBSERVACIONES") @db.Text
+  estado                 String                @default("EN_PROCESO") @map("ESTADO")
+  estadoRevision         String                @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
+  motivoRechazo          String?               @map("MOTIVO_RECHAZO") @db.Text
+  createdAt              DateTime              @default(now()) @map("CREATED_AT")
+
+  tramite                Tramite?              @relation(fields: [idTramite], references: [idTramite])
+  cotizacion             Cotizacion?           @relation(fields: [idCotizacion], references: [idCotizacion])
+  cliente                Cliente?              @relation(fields: [idCliente], references: [idCliente])
+  instrumentos           OrdenTrabajoDetalle[]
+  recepciones            RecepcionEquipo[]
+  documentos             Documento[]
+
+  @@index([codigo])
+  @@index([fechaCalibracion])
+  @@map("ordenes_trabajo")
+}
+
+model OrdenTrabajoDetalle {
+  idDetalle              Int          @id @default(autoincrement()) @map("ID_DETALLE")
+  idOrdenTrabajo         Int          @map("ID_ORDEN_TRABAJO_FK")
+  item                   Int          @map("ITEM")
+  tipoServicio           String       @map("TIPO_SERVICIO")
+  instrumento            String       @map("INSTRUMENTO")
+  fabricante             String?      @map("FABRICANTE")
+  modelo                 String?      @map("MODELO")
+  serie                  String?      @map("SERIE")
+  codigoInventario       String?      @map("CODIGO_INVENTARIO")
+  ubicacion              String?      @map("UBICACION")
+  puntosCalibrar         String[]     @map("PUNTOS_CALIBRAR")
+  unidad                 String?      @map("UNIDAD")
+  intervaloRango         String?      @map("INTERVALO_RANGO")
+  resolucion             String?      @map("RESOLUCION")
+  declaracionConformidad Boolean      @default(false) @map("DECLARACION_CONFORMIDAD")
+  limiteControlEMC       String?      @map("LIMITE_CONTROL_EMC")
+  docEspecificacion      String?      @map("DOC_ESPECIFICACION")
+  reglaDecision          String?      @map("REGLA_DECISION")
+
+  ordenTrabajo           OrdenTrabajo @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo], onDelete: Cascade)
+
+  @@map("orden_trabajo_detalles")
+}
+
+model RecepcionEquipo {
+  idRecepcion          Int                      @id @default(autoincrement()) @map("ID_RECEPCION")
+  codigo               String                   @unique @map("CODIGO_RECEPCION")
+  idTramite            Int?                     @map("ID_TRAMITE_FK")
+  idCotizacion         Int?                     @map("ID_COTIZACION_FK")
+  idOrdenTrabajo       Int?                     @map("ID_ORDEN_TRABAJO_FK")
+  solicitante          String                   @map("SOLICITANTE")
+  nombreEntrega        String?                  @map("NOMBRE_ENTREGA")
+  sitioCalibracion     String                   @map("SITIO_CALIBRACION")
+  fechaRecepcion       DateTime                 @default(now()) @map("FECHA_RECEPCION")
+  fechaSalida          DateTime?                @map("FECHA_SALIDA")
+  nombreRecibe         String?                  @map("NOMBRE_RECIBE")
+  nombreEmpaca         String?                  @map("NOMBRE_EMPACA")
+  nombreCalibra        String?                  @map("NOMBRE_CALIBRA")
+  nombreRecibeServicio String?                  @map("NOMBRE_RECIBE_SERVICIO")
+  accesorios           String?                  @map("ACCESORIOS") @db.Text
+  pruebasCompletas     Boolean                  @default(true) @map("PRUEBAS_COMPLETAS")
+  observacionesPruebas String?                  @map("OBSERVACIONES_PRUEBAS") @db.Text
+  estado               String                   @default("RECIBIDO") @map("ESTADO")
+  createdAt            DateTime                 @default(now()) @map("CREATED_AT")
+
+  tramite              Tramite?                 @relation(fields: [idTramite], references: [idTramite])
+  cotizacion           Cotizacion?              @relation(fields: [idCotizacion], references: [idCotizacion])
+  ordenTrabajo         OrdenTrabajo?            @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo])
+  instrumentos         RecepcionEquipoDetalle[]
+  documentos           Documento[]
+
+  @@index([createdAt])
+  @@map("recepciones_equipo")
+}
+
+model RecepcionEquipoDetalle {
+  idInstrumento    Int             @id @default(autoincrement()) @map("ID_INSTRUMENTO")
+  idRecepcion      Int             @map("ID_RECEPCION_FK")
+  instrumento      String          @map("INSTRUMENTO")
+  marca            String?         @map("MARCA")
+  modelo           String?         @map("MODELO")
+  serie            String?         @map("SERIE")
+  codigoInventario String?         @map("CODIGO_INVENTARIO")
+  resolucion       String?         @map("RESOLUCION")
+  tipoSensorTemp   String?         @map("TIPO_SENSOR_TEMP")
+  estadoIBC        Json?           @map("ESTADO_IBC")
+  estampilla       String?         @map("ESTAMPILLA")
+  observaciones    String?         @map("OBSERVACIONES") @db.Text
+  
+  calibracion      Calibracion?
+  recepcion        RecepcionEquipo @relation(fields: [idRecepcion], references: [idRecepcion], onDelete: Cascade)
+
+  @@map("recepcion_equipo_detalles")
+}
+
+// ==========================================
+// MÓDULO 4: CALIBRACIÓN, CERTIFICADOS Y DOCUMENTOS (IA + PGVECTOR)
+// ==========================================
+
+model Calibracion {
+  idCalibracion Int                    @id @default(autoincrement()) @map("ID_CALIBRACION")
+  idInstrumento Int                    @unique @map("ID_INSTRUMENTO_FK")
+  idTecnico     Int                    @map("ID_TECNICO_FK")
+  datosTecnicos Json                   @map("DATOS_TECNICOS_JSON")
+  observaciones String?                @map("OBSERVACIONES") @db.Text
+  createdAt     DateTime               @default(now()) @map("CREATED_AT")
+
+  instrumento   RecepcionEquipoDetalle @relation(fields: [idInstrumento], references: [idInstrumento])
+  tecnico       Usuario                @relation(fields: [idTecnico], references: [idUsuario])
+  certificado   Certificado?
+
+  @@map("calibraciones")
+}
+
+model Certificado {
+  idCertificado Int                @id @default(autoincrement()) @map("ID_CERTIFICADO")
+  codigo        String             @unique @map("CODIGO_CERTIFICADO")
+  idCalibracion Int                @unique @map("ID_CALIBRACION_FK")
+  idDocumento   Int                @map("ID_DOCUMENTO_FK")
+
+  calibracion   Calibracion        @relation(fields: [idCalibracion], references: [idCalibracion])
+  documento     Documento          @relation(fields: [idDocumento], references: [idDocumento])
+  sellos        CertificadoSello[]
+
+  @@map("certificados")
+}
+
+enum ProveedorAlmacenamiento {
+  LOCAL
+  AWS_S3
+  GOOGLE_DRIVE
+}
+
+model Documento {
+  idDocumento    Int                     @id @default(autoincrement()) @map("ID_DOCUMENTO")
+  nombre         String                  @map("NOMBRE")
+  rutaUrl        String                  @map("RUTA_URL")
+  proveedor      ProveedorAlmacenamiento @default(LOCAL) @map("PROVEEDOR")
+  mimeType       String                  @map("MIME_TYPE")
+  createdAt      DateTime                @default(now()) @map("CREATED_AT")
+
+  idCotizacion   Int?                    @map("ID_COTIZACION_FK")
+  idOrdenTrabajo Int?                    @map("ID_ORDEN_TRABAJO_FK")
+  idRecepcion    Int?                    @map("ID_RECEPCION_FK")
+  idTramite      Int?                    @map("ID_TRAMITE_FK")
+  idPlantilla    Int?                    @map("ID_PLANTILLA_FK")
+
+  cotizacion     Cotizacion?             @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
+  ordenTrabajo   OrdenTrabajo?           @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo], onDelete: Cascade)
+  recepcion      RecepcionEquipo?        @relation(fields: [idRecepcion], references: [idRecepcion], onDelete: Cascade)
+  tramite        Tramite?                @relation(fields: [idTramite], references: [idTramite], onDelete: Cascade)
+  plantilla      Plantilla?              @relation(fields: [idPlantilla], references: [idPlantilla], onDelete: Restrict)
+  
+  clienteRut     Cliente?                @relation("ClienteRut")
+  versiones      VersionDocumento[]
+  chunksIA       DocumentChunk[]
+  certificados   Certificado[]
+  sellos         Sello[]
+
+  @@index([idCotizacion])
+  @@index([idOrdenTrabajo])
+  @@index([idRecepcion])
+  @@index([idTramite])
+  @@index([idPlantilla])
+  @@map("documentos")
+}
+
+model VersionDocumento {
+  idVersion   Int       @id @default(autoincrement()) @map("ID_VERSION")
+  idDocumento Int       @map("ID_DOCUMENTO_FK")
+  version     Int       @default(1) @map("VERSION")
+  rutaUrl     String    @map("RUTA_URL")
+  createdAt   DateTime  @default(now()) @map("CREATED_AT")
+
+  documento   Documento @relation(fields: [idDocumento], references: [idDocumento], onDelete: Cascade)
+
+  @@map("version_documentos")
+}
+
+model DocumentChunk {
+  idChunk     Int                         @id @default(autoincrement()) @map("ID_CHUNK")
+  idDocumento Int                         @map("ID_DOCUMENTO_FK")
+  contenido   String                      @map("CONTENIDO") @db.Text
+  embedding   Unsupported("vector(1536)")?
+
+  documento   Documento                   @relation(fields: [idDocumento], references: [idDocumento], onDelete: Cascade)
+
+  @@map("document_chunks")
+}
+
+model Sello {
+  idSello      Int                @id @default(autoincrement()) @map("ID_SELLO")
+  nombre       String             @map("NOMBRE")
+  idDocumento  Int                @map("ID_DOCUMENTO_FK")
+  estado       Boolean            @default(true) @map("ESTADO")
+
+  documento    Documento          @relation(fields: [idDocumento], references: [idDocumento])
+  certificados CertificadoSello[]
+
+  @@map("sellos")
+}
+
+model CertificadoSello {
+  idCertificado Int         @map("ID_CERTIFICADO_FK")
+  idSello       Int         @map("ID_SELLO_FK")
+
+  certificado   Certificado @relation(fields: [idCertificado], references: [idCertificado])
+  sello         Sello       @relation(fields: [idSello], references: [idSello])
+
+  @@id([idCertificado, idSello])
+  @@map("certificado_sellos")
+}
