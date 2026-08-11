@@ -386,7 +386,7 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
 
 // 3. Componente Padre (`MainRenderer`)
 
-export function MainRenderer() {
+export function MainRendererreport() {
   const [facturaSearch, setFacturaSearch] = useState("");
   const [showTrazabilidad, setShowTrazabilidad] = useState(false);
 
@@ -415,4 +415,4 @@ export function MainRenderer() {
 }
 
 // 4. Exportación por defecto
-export default MainRenderer;
+export default MainRendererreport;

@@ -9,9 +9,14 @@ import { Administracion } from "./module/Administracion";
 import ClientMainRenderer from "./module/gestion_clientes/page";
 import ClienteDetailPage from "./module/gestion_clientes/perfil/[id]/page";
 import Cotizaciones from "./module/cotizacion";
+import Dashboard from "./dashboard";
 import OrdenesTrabajo from "./module/ordenes_ot";
 import  { MainRenderers } from  "./module/recepciones";
 import SocketDebugger from "../componets/debugges_webscoekt ";
+import RevisionCertificados from "./module/Revison_certifados";
+import CalibracionInformesMockup from "./module/Calibracion_informes";
+import MainRendererenv from "./module/Envio_entrega";
+import MainRendererreport from "./module/reportes";
 // Tipado formal para las funciones de navegación
 import MainRenderer2 from "./module/import_ot";
 export interface Perfil {
@@ -59,14 +64,16 @@ interface ModuloActivoProps {
   modulo: ModuleKey;
   clienteId: number | null;                 // ← el ID del cliente seleccionado
   onSelectCliente: (id: number) => void;   // ← navega a perfil
-  onVolver: () => void;                    // ← vuelve a lista
+  onVolver: () => void;     
+  onNavigarte: (modulo: ModuleKey) =>void;               // ← vuelve a lista
 }
 
 const ModuloActivo = ({
     modulo, 
   clienteId, 
   onSelectCliente, 
-  onVolver 
+  onVolver ,
+  onNavigarte
 }: ModuloActivoProps)=> {
   switch (modulo) {
     case "administracion":
@@ -87,6 +94,16 @@ const ModuloActivo = ({
       return <MainRenderers />;
     case "importarOrden":
       return <MainRenderer2 />;
+    case "revision":
+      return <RevisionCertificados/>
+    case "dashboard":
+      return <Dashboard onNavigate={onNavigarte}/>
+    case "calibracion":
+      return <CalibracionInformesMockup/>
+    case "entrega":
+      return<MainRendererenv/>
+    case "reportes":
+      return <MainRendererreport/>
     default:
       return null;
   }
@@ -157,7 +174,7 @@ const handleVolverClientes = useCallback(() => {
         <main className="flex-1 overflow-auto bg-[#eff5ff]">
           <ModuloActivo modulo={activeModule}   clienteId={cliente}
   onSelectCliente={handleSelectCliente}
-  onVolver={handleVolverClientes}  />
+  onVolver={handleVolverClientes}  onNavigarte={(m:ModuleKey) => setActiveModule(m)} />
         </main>
       </div>
 

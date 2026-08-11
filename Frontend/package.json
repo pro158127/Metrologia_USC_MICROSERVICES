@@ -26,7 +26,7 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
-    "facade ": "link:@univerjs/preset-sheets-core/lib/facade",
+    "facade": "link:@univerjs/preset-sheets-core/lib/facade",
     "import": "^0.0.6",
     "lucide-react": "^1.23.0",
     "mammoth": "^1.12.0",

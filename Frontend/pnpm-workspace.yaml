@@ -3,7 +3,14 @@ packages:
   - '.'
 
 allowBuilds:
+  '@prisma/client': false
+  '@prisma/engines': false
+  argon2: false
+  esbuild: false
+  prisma: false
   protobufjs: false
+  sharp: false
+  unrs-resolver: false
 
 # Lista blanca oficial de pnpm v10+ para compilar binarios nativos
 onlyBuiltDependencies:
