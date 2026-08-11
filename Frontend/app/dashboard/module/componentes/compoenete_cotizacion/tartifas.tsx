@@ -12,7 +12,7 @@ import {
   Calendar,
   Filter,
 } from "lucide-react";
-import { useDbRealtime } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 import {
   obtenerTodasLasTarifas,
   crearTarifa,
@@ -507,9 +507,8 @@ const CatalogRow = ({
 // Componente principal
 // ----------------------------------------------------------------------
 export const CatalogTableView = () => {
-  const { dbState, setDbState } = useDbRealtime();
-  const { tarifas } = dbState;
-
+  const tarifas = useDbTable("tarifas");
+  const { setDbState } = useDbActions();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMagnitud, setSelectedMagnitud] = useState("TODAS");
   const [selectedTipoServicio, setSelectedTipoServicio] = useState("TODOS");

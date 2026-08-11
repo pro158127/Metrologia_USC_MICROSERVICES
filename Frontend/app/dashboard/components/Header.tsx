@@ -4,7 +4,7 @@ import { useState,useMemo,useEffect } from "react";
 import { Menu,Check, Bell, ChevronDown, CheckCircle, X, Ruler,Trash2 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { warn } from "console";
-import RealtimeTablesState, { useDbRealtime } from "@/app/componets/tables_recharge";
+import RealtimeTablesState, { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 
 
 import { 
@@ -25,8 +25,8 @@ const priorityStyles: Record<string, { bg: string; text: string; label: string }
 
 export default function NotificationCenter() {
   const [showPanel, setShowPanel] = useState(false);
-  const { dbState, setDbState } = useDbRealtime();
-  const { notificaciones } = dbState;
+  const notificaciones = useDbTable("notificaciones");
+  const { setDbState } = useDbActions();
   const { data: session } = useSession();
   const currentUserId = session?.user?.id_user;
 

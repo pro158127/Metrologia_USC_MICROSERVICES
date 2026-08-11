@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState,useCallback } from "react";
 import { Plus, Search, Eye, X, Award } from "lucide-react";
 import CatalogTableView from "./componentes/compoenete_cotizacion/tartifas";
 import { AiAgentWidget } from "./componentes/AI_MODULE/AiAgentWidget";
-import { useDbRealtime } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 import {
   obtenerTodasLasCotizaciones,
   crearCotizacion,
@@ -893,8 +893,9 @@ type TarifaOption = {
 // ... (todos los tipos y constantes que ya tienes, incluyendo estadoStyle, QuoteItem, etc.)
 import { obtenerUsuariosPorPermiso } from "@/app/action_module/administration";
 export default function Cotizaciones() {
-  const { dbState, setDbState } = useDbRealtime();
-  const { cotizaciones } = dbState;
+  const cotizaciones = useDbTable("cotizaciones");
+  const usuarios = useDbTable("usuarios");
+  const { setDbState } = useDbActions();
 
   const [view, setView] = useState<"list" | "create" | "catalog">("list");
   const [search, setSearch] = useState("");
@@ -1254,7 +1255,7 @@ export default function Cotizaciones() {
     if (!selectedQuotation?.historialEstados) return [];
 
     return selectedQuotation.historialEstados.map((h: any) => {
-      const usuario = dbState.usuarios?.find((e) => e.idUsuario === h.idUsuario);
+      const usuario = usuarios?.find((e) => e.idUsuario === h.idUsuario);
       return {
         id: h.id,
         estadoAnterior: h.estadoAnterior ?? null,
@@ -1266,7 +1267,7 @@ export default function Cotizaciones() {
           : undefined,
       };
     });
-  }, [selectedQuotation?.historialEstados, dbState.usuarios]);
+  }, [selectedQuotation?.historialEstados, usuarios]);
 
   // ==========================================
   // RENDER

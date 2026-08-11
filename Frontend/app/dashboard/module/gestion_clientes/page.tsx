@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { Search, Plus, Eye, Edit, X, CheckCircle, CircleSlash, Upload, FileText, RefreshCw } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { ClienteModel, useDbRealtime } from "@/app/componets/tables_recharge";
+import { ClienteModel, useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada,crearDocumento, actualizarCliente ,cambiarEstadoCliente} from "@/app/action_module/modulo_cliente";
 import { Perfil } from "../../page";
 // Tipado formal para la navegación
@@ -429,8 +429,8 @@ interface ModuloActivoProps {
   onVolver: () => void;                    // ← vuelve a lista
 }
 export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
-  const { dbState, setDbState } = useDbRealtime();
-  const { clientes } = dbState;
+  const clientes = useDbTable("clientes");
+  const { setDbState } = useDbActions();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("Todos");
   const { data: session } = useSession();

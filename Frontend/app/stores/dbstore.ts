@@ -25,6 +25,16 @@ const initialState: RealtimeTablesState = {
   recepcion_equipo_detalles: [],
   documentos: [],
   version_documentos: [],
+  calibraciones: [],
+  certificados: [],
+  certificado_sellos: [],
+  document_chunks: [],
+  historial_estado_cotizacion: [],
+  historial_tarifas: [],
+  parametros_sistema: [],
+  sellos: [],
+  tramites: [],
+  version_plantillas: [],
 };
 
 export const useDbStore = create<

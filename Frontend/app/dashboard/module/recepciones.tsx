@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 
 // Importar el contexto y los tipos
-import { useDbRealtime } from "./../../componets/tables_recharge";
+import { useDbTable, useDbActions } from "./../../componets/tables_recharge";
 import type {
   RecepcionEquipoModel,
   ClienteModel,
@@ -900,8 +900,13 @@ const FormFooterActions = ({
 // ============================================================
 import { getRecepcionesEnriquecidas,getInitialData } from "@/app/action_module/recepciones";
 export function MainRenderers() {
-  // --- Contexto global ---
-  const { dbState,setDbState } = useDbRealtime();
+  // --- Estado global por tabla (solo se re-renderiza si esa tabla cambia) ---
+  const recepcionesEquipo = useDbTable("recepciones_equipo");
+  const cotizacionesStore = useDbTable("cotizaciones");
+  const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
+  const clientesStore = useDbTable("clientes");
+  const tarifasStore = useDbTable("tarifas");
+  const { setDbState } = useDbActions();
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
@@ -942,7 +947,7 @@ export function MainRenderers() {
 useEffect(() => {
   const fetchInitialData = async () => {
     // Si ya hay datos, evitamos recargar
-    if (dbState.recepciones_equipo.length > 0) return;
+    if (recepcionesEquipo.length > 0) return;
     try {
       const data = await getInitialData();
       // Actualizamos el contexto global
@@ -964,15 +969,15 @@ useEffect(() => {
   // Lista de recepciones enriquecidas
   const recepcionesEnriquecidas = useMemo<RecepcionConInfo[]>(() => {
     // Usamos las recepciones del contexto
-    const recepciones = dbState.recepciones_equipo || [];
+    const recepciones = recepcionesEquipo || [];
     const cotizacionesMap = new Map(
-      dbState.cotizaciones?.map((c) => [c.idCotizacion, c]) || []
+      cotizacionesStore?.map((c) => [c.idCotizacion, c]) || []
     );
     const ordenesMap = new Map(
-      dbState.ordenes_trabajo?.map((o) => [o.idOrdenTrabajo, o]) || []
+      ordenesTrabajoStore?.map((o) => [o.idOrdenTrabajo, o]) || []
     );
     const clientesMap = new Map(
-      dbState.clientes?.map((c) => [c.idCliente, c]) || []
+      clientesStore?.map((c) => [c.idCliente, c]) || []
     );
 
 
@@ -1005,7 +1010,7 @@ useEffect(() => {
         raw: rec,
       };
     });
-  }, [dbState.recepciones_equipo, dbState.cotizaciones, dbState.ordenes_trabajo, dbState.clientes]);
+  }, [recepcionesEquipo, cotizacionesStore, ordenesTrabajoStore, clientesStore]);
 
   // Clientes únicos para filtro
   const clientesUnicos = useMemo(() => {
@@ -1017,11 +1022,11 @@ useEffect(() => {
   }, [recepcionesEnriquecidas]);
 
   // Tarifas disponibles para autocomplete
-  const tarifasDisponibles = dbState.tarifas || [];
+  const tarifasDisponibles = tarifasStore || [];
 
   // Cotizaciones y órdenes para datalist en el formulario
-  const cotizaciones = dbState.cotizaciones || [];
-  const ordenesTrabajo = dbState.ordenes_trabajo || [];
+  const cotizaciones = cotizacionesStore || [];
+  const ordenesTrabajo = ordenesTrabajoStore || [];
 
 
 
@@ -1329,7 +1334,7 @@ useEffect(() => {
             fechaSalida={formulario.fechaSalida}
             nombreQuienRecibe={formulario.nombreQuienRecibe}
             nombreQuienEmpaca={formulario.nombreQuienEmpaca}
-            clientes={dbState.clientes || []}
+            clientes={clientesStore || []}
             cotizaciones={cotizaciones}
             ordenesTrabajo={ordenesTrabajo}
             onUpdateGeneral={handleUpdateGeneral}

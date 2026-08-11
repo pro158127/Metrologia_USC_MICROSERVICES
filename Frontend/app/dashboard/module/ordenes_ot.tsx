@@ -1574,10 +1574,16 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
 // 3. COMPONENTE PADRE
 // ==========================================
 import { obtenerDatosIniciales } from "@/app/action_module/ordenes";
-import { useDbRealtime,OrdenTrabajoModel,UsuarioModel,CotizacionModel,RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";{ useDbRealtime } "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, OrdenTrabajoModel, UsuarioModel, CotizacionModel, RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";
 export const OrdenesTrabajo = () => {
-  // Conexión al estado global y a las funciones de recarga en tiempo real
-  const { dbState, setDbState } = useDbRealtime();
+  // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
+  const usuarios = useDbTable("usuarios");
+  const roles = useDbTable("roles");
+  const ordenesTrabajo = useDbTable("ordenes_trabajo");
+  const clientes = useDbTable("clientes");
+  const documentos = useDbTable("documentos");
+  const tarifas = useDbTable("tarifas");
+  const { setDbState } = useDbActions();
 
   // Vista actual (kanban, lista o detalle de OT)
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
@@ -1621,8 +1627,8 @@ export const OrdenesTrabajo = () => {
    * Obtiene los técnicos con roles específicos desde los datos de usuarios y roles.
    */
   const technicians = useMemo(() => {
-    const tecnicos = dbState.usuarios.filter((u) =>
-      dbState.roles.some(
+    const tecnicos = usuarios.filter((u) =>
+      roles.some(
         (rol) =>
           rol.nombreRol === "Técnico" ||
           rol.nombreRol === "Coordinadora" ||
@@ -1631,7 +1637,7 @@ export const OrdenesTrabajo = () => {
       (u.elminado === true || u.estado === false) // Nota: condición extraña, revisar lógica de negocio
     );
     return tecnicos.map((u) => u.nombreCompleto);
-  }, [dbState.usuarios, dbState.roles]);
+  }, [usuarios, roles]);
 
   const machineOptions = [
     "Balanza analítica",
@@ -1646,7 +1652,7 @@ export const OrdenesTrabajo = () => {
    * arma el objeto OTType y lo establece como seleccionada.
    */
   const openOT = (otPreview: Partial<OTBase>) => {
-    const otCompleta = dbState.ordenes_trabajo.find(
+    const otCompleta = ordenesTrabajo.find(
       (o) => o.idOrdenTrabajo.toString() === otPreview.id
     );
     if (!otCompleta) {
@@ -1654,7 +1660,7 @@ export const OrdenesTrabajo = () => {
       return;
     }
 
-    const clienteData = dbState.clientes.find(
+    const clienteData = clientes.find(
       (c) => c.idCliente === otCompleta.idCliente
     );
 
@@ -1685,7 +1691,7 @@ export const OrdenesTrabajo = () => {
     // Obtener la última versión de los documentos asociados a la cotización
     const version = (() => {
       if (otCompleta.idCotizacion == null) return 0;
-      const docs = dbState.documentos.filter(
+      const docs = documentos.filter(
         (d) => d.idCotizacion === otCompleta.idCotizacion
       );
       const ultima = docs
@@ -1942,8 +1948,8 @@ export const OrdenesTrabajo = () => {
    * Además, calcula las advertencias individuales de cada orden.
    */
   const otss: Partial<OTBase>[] = useMemo(() => {
-    return dbState.ordenes_trabajo.map((orden) => {
-      const cliente = dbState.clientes.find((c) => c.idCliente === orden.idCliente);
+    return ordenesTrabajo.map((orden) => {
+      const cliente = clientes.find((c) => c.idCliente === orden.idCliente);
       const ordenWarnings: Warning[] = [];
 
       // Retraso basado en fecha límite de facturación
@@ -1978,7 +1984,7 @@ export const OrdenesTrabajo = () => {
         warns: ordenWarnings,
       };
     });
-  }, [dbState.ordenes_trabajo, dbState.clientes]);
+  }, [ordenesTrabajo, clientes]);
 
   /**
    * Filtra las órdenes según el texto de búsqueda (código o cliente).
@@ -2067,7 +2073,7 @@ const handleRemoveInstrument = (id: string) => {
             saveOrderEdits={saveOrderEdits}
             onAddInstrument={handleAddInstrument}
             onRemoveInstrument={handleRemoveInstrument}
-            tarifas={dbState.tarifas}
+            tarifas={tarifas}
           />
         </div>
       )}
