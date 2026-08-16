@@ -24,6 +24,7 @@ export type CotizacionModel = Prisma.CotizacionGetPayload<{
     detalles: true;
     cliente: true;
     historialEstados: true;
+    Historiacambios:true;
   };
 }>;
 export type OrdenTrabajoModel = Prisma.OrdenTrabajoGetPayload<{

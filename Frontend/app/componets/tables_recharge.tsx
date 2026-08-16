@@ -173,6 +173,7 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
         ciudad: rawData.ciudad ?? rawData.ciudad ?? null,
         createdAt: rawData.CREATED_AT ?? rawData.createat,
         updatedAt: rawData.UPDATED_AT ?? rawData.updatedAt,
+        dirrecion: rawData.dirrecion
       };
 
     case "cotizaciones":
@@ -415,7 +416,7 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const userIdValido = session?.user?.id_user ?? session?.user?.id;
-  const SOCKET_URL = "http://192.168.1.11:3001";
+  const SOCKET_URL = "http://localhost:3001";
   const TABLAS_PLANTILLAS = ["plantillas"];
 
   const { updateTable, setDbState } = useDbStore(

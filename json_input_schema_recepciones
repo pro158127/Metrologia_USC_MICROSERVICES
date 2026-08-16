@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "templateType": "RECEPCION",
+  "version": "004",
+  "description": "Contrato de entrada para la plantilla de Recepción, Reporte y Entrega de Instrumentos del Laboratorio de Metrología (R-CM010 Versión 004)",
+  "fields": {
+    "scalars": [
+      {
+        "key": "codigo_formato",
+        "label": "Código del Formato",
+        "dataType": "STRING",
+        "required": true,
+        "defaultValue": "R-CM010"
+      },
+      {
+        "key": "version_formato",
+        "label": "Versión del Formato",
+        "dataType": "STRING",
+        "required": true,
+        "defaultValue": "004"
+      },
+      {
+        "key": "fecha_vigencia_formato",
+        "label": "Fecha de Vigencia del Formato",
+        "dataType": "DATE",
+        "required": true
+      },
+      {
+        "key": "solicitante",
+        "label": "Solicitante",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "nombre_quien_entrega",
+        "label": "Nombre quién entrega",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "no_cotizacion",
+        "label": "No. Cotización de Referencia (Cot)",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "sitio_laboratorio_permanente",
+        "label": "Sitio de calibración - Laboratorio permanente",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "sitio_instalaciones_cliente",
+        "label": "Sitio de calibración - Instalaciones del cliente",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "fecha_recepcion",
+        "label": "Fecha de recepción",
+        "dataType": "DATE",
+        "required": true
+      },
+      {
+        "key": "nombre_quien_recibe",
+        "label": "Nombre quién recibe",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "fecha_salida",
+        "label": "Fecha de salida",
+        "dataType": "DATE",
+        "required": false
+      },
+      {
+        "key": "nombre_quien_empaca",
+        "label": "Nombre quién empaca",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "accesorios",
+        "label": "Accesorios",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "estado_bueno",
+        "label": "Estado General - Bueno",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "estado_malo",
+        "label": "Estado General - Malo",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "pruebas_pesaje_si",
+        "label": "¿Se realizaron todas las pruebas a los equipos de pesaje? - SI",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "pruebas_pesaje_no",
+        "label": "¿Se realizaron todas las pruebas a los equipos de pesaje? - NO",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "pruebas_pesaje_justificacion_no",
+        "label": "Si la respuesta es NO, ¿Por qué?",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "nombre_quien_calibra",
+        "label": "Nombre quién calibra",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "nombre_quien_recibe_servicio",
+        "label": "Nombre quién recibe el servicio",
+        "dataType": "STRING",
+        "required": false
+      }
+    ],
+    "tables": [
+      {
+        "key": "tabla_recepcion_instrumentos",
+        "label": "Instrumentos Recibidos y Estado de Inspección",
+        "required": true,
+        "columns": [
+          {
+            "key": "instrumento",
+            "label": "Instrumento",
+            "dataType": "STRING",
+            "required": true
+          },
+          {
+            "key": "marca",
+            "label": "Marca",
+            "dataType": "STRING",
+            "required": false
+          },
+          {
+            "key": "modelo",
+            "label": "Modelo",
+            "dataType": "STRING",
+            "required": false
+          },
+          {
+            "key": "serie",
+            "label": "Serie",
+            "dataType": "STRING",
+            "required": true
+          },
+          {
+            "key": "codigo_interno",
+            "label": "Código Interno / Inventario",
+            "dataType": "STRING",
+            "required": false
+          },
+          {
+            "key": "resolucion",
+            "label": "Resolución",
+            "dataType": "STRING",
+            "required": false
+          },
+          {
+            "key": "tipo_sensor_int",
+            "label": "Tipo sensor temp - Interno (Int)",
+            "dataType": "BOOLEAN",
+            "required": false
+          },
+          {
+            "key": "tipo_sensor_ext",
+            "label": "Tipo sensor temp - Externo (Ext)",
+            "dataType": "BOOLEAN",
+            "required": false
+          },
+          {
+            "key": "estado_ibc_e",
+            "label": "Estado del IBC - E",
+            "dataType": "BOOLEAN",
+            "required": false
+          },
+          {
+            "key": "estado_ibc_t",
+            "label": "Estado del IBC - T",
+            "dataType": "BOOLEAN",
+            "required": false
+          },
+          {
+            "key": "estado_ibc_d",
+            "label": "Estado del IBC - D",
+            "dataType": "BOOLEAN",
+            "required": false
+          },
+          {
+            "key": "estado_ibc_a",
+            "label": "Estado del IBC - A",
+            "dataType": "BOOLEAN",
+            "required": false
+          },
+          {
+            "key": "estampilla",
+            "label": "Estampilla",
+            "dataType": "STRING",
+            "required": false
+          },
+          {
+            "key": "observaciones",
+            "label": "Observaciones",
+            "dataType": "STRING",
+            "required": false
+          }
+        ]
+      }
+    ]
+  }
+}

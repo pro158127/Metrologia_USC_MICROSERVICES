@@ -3,13 +3,9 @@
 
 import prisma from '@/app/lib/data_base/prisma';
 
-/**
- * Obtiene todos los datos iniciales necesarios para el módulo de órdenes.
- * Se llama una sola vez al montar el componente.
- */
 export async function obtenerDatosIniciales() {
   try {
-    const [ordenes, clientes, usuarios,roles,tarifas,version] = await Promise.all([
+    const [ordenes, clientes, usuarios, roles, tarifas, version] = await Promise.all([
       prisma.ordenTrabajo.findMany({
         include: {
           cliente: true,
@@ -20,29 +16,29 @@ export async function obtenerDatosIniciales() {
       }),
 
       prisma.cliente.findMany(),
+
       prisma.usuario.findMany({
-        omit:{
-             contraseña:true
+        omit: {
+          contraseña: true,
         },
         include: { rol: true },
         where: { elminado: false },
       }),
 
+      // Asegúrate de usar la propiedad exacta generada por Prisma Client (Roles)
       prisma.roles.findMany(),
-      
-     prisma.tarifa.findMany(
-        {
-             include:{
-                historial:true
-             }
-        }
-     ),
+
+      prisma.tarifa.findMany({
+        include: {
+          historial: true,
+        },
+      }),
 
      prisma.documento.findMany({
-     include:{
-      versiones:true
-     }
-     })
+        include: {
+          versiones: true,
+        },
+      }),
     ]);
 
     return {
@@ -51,13 +47,18 @@ export async function obtenerDatosIniciales() {
       usuarios,
       roles,
       tarifas,
-      version
-
+      version,
     };
   } catch (error) {
     console.error('Error cargando datos iniciales:', error);
-    throw new Error('No se pudieron cargar los datos iniciales');
+    // Devuelve arreglos vacíos explícitos en lugar de undefined o lanzar throw
+    return {
+      ordenes: [],
+      clientes: [],
+      usuarios: [],
+      roles: [],
+      tarifas: [],
+      version: [],
+    };
   }
 }
-
-// ... resto de acciones (crear, actualizar, etc.)

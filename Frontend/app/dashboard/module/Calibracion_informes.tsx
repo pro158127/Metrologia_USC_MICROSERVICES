@@ -380,17 +380,19 @@ export const CalibracionInformes: React.FC = () => {
     loadTable("certificados");
     loadTable("ordenes_trabajo");
     loadTable("clientes");
+    loadTable("recepcion_equipo_detalles")
+    loadTable("calibraciones")
   }, [loadTable]);
-
+console.log(calibraciones,"calibracion list")
   // ==========================================
   // DATOS DERIVADOS DEL STORE (sin mocks)
   // ==========================================
   const instrumentosBase: InstrumentoAsignado[] = useMemo(() => {
+    console.log(idTecnico)
     if (!idTecnico || Number.isNaN(idTecnico)) return [];
-    return calibraciones
-      .filter((cal) => cal.idTecnico === idTecnico)
+    return [...calibraciones].filter((cal) => cal.idTecnico === idTecnico)
       .map((cal) => {
-        const detalle = recepcionDetalles.find((r) => r.idInstrumento === cal.idInstrumento);
+        const detalle = [...recepcionDetalles].find((r) => r.idInstrumento === cal.idInstrumento);
         const orden = ordenes.find((o) =>
           (o.instrumentos ?? []).some((i) => i.idDetalle === cal.idInstrumento)
         );

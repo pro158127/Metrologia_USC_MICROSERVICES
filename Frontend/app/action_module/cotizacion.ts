@@ -350,6 +350,7 @@ export async function obtenerTodasLasCotizaciones(
           cliente: true,
           detalles: true,
           historialEstados:true,
+          Historiacambios:true,
           _count: {
             select: {
               ordenes: true,

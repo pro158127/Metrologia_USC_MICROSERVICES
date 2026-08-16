@@ -597,7 +597,7 @@ export function MainRendererenv() {
         const factura = facturas.find((f) => f.idOrdenTrabajo === ot.idOrdenTrabajo);
         return {
           id: ot.codigo,
-          cliente: ot.cliente?.razonSocial ?? ot.Razon_social ?? "",
+          cliente: ot.cliente?.razonSocial ?? "",
           correo: ot.correoCertificado ?? ot.cliente?.correo ?? "",
           certs: ot.instrumentos?.length ?? 0,
           valor: formatValor(Number(factura?.valor ?? 0)),

@@ -30,6 +30,7 @@ import type {
   CreateQuotationWizardProps,
 } from "@/tipos/cotizacion";
 import { transicionesValidas } from "@/tipos/cotizacion";
+import { useSession } from "next-auth/react";
 
 // ==========================================
 // Tipos y Estilos
@@ -216,24 +217,41 @@ const ItemsTable = ({
                   </select>
                 </td>
                 <td className="py-2.5 px-3 text-slate-500 font-mono font-medium">{fila.norma}</td>
-                <td className="py-2.5 px-3">
-                  <input
-                    type="number"
-                    min="1"
-                    value={fila.cantidad}
-                    onChange={(e) => manejarCambioFila(index, "cantidad", parseInt(e.target.value) || 1, target)}
-                    className="w-16 p-2 border border-slate-200 rounded-xl font-mono text-center outline-none"
-                  />
-                </td>
-                <td className="py-2.5 px-3">
-                  <input
-                    type="number"
-                    min="0"
-                    value={fila.valorUnitario}
-                    onChange={(e) => manejarCambioFila(index, "valorUnitario", parseFloat(e.target.value) || 0, target)}
-                    className="w-24 p-2 border border-slate-200 rounded-xl font-mono outline-none"
-                  />
-                </td>
+   <td className="py-2.5 px-3">
+  <input
+    type="number"
+    min="1"
+    
+    max="100"
+    value={fila.cantidad === 0 ? "" : fila.cantidad} // 👈 Muestra vacante el input si el estado llega a 0
+    onFocus={(e) => e.target.select()}
+    onChange={(e) => {
+      const val = e.target.value;
+      // Si el usuario borra el campo, enviamos 0 temporalmente en lugar de forzar un 1 de inmediato
+      const valorValido = val === "" ? 0 : parseInt(val, 10);
+
+      manejarCambioFila(index, "cantidad", valorValido, target);
+    }}
+    onBlur={() => {
+      // Si el usuario deja la casilla en blanco o en 0 y cambia de campo, reseteamos a 1
+      if (!fila.cantidad || fila.cantidad < 1) {
+        manejarCambioFila(index, "cantidad", 1, target);
+      }
+    }}
+    className="w-16 p-2 border border-slate-200 rounded-xl font-mono text-center outline-none focus:ring-2 focus:ring-teal-500"
+  />
+</td>
+      <td className="py-2.5 px-3">
+  <input
+    type="number"
+    min="0"
+    step="any"
+    value={fila.valorUnitario}
+    readOnly // 👈 Inhabilita la edición por parte del usuario
+    tabIndex={-1} // 👈 Evita que el cursor se detenga en este campo al presionar la tecla Tab
+    className="w-28 p-2 border border-slate-200 rounded-xl font-mono text-right bg-slate-100 text-slate-500 cursor-not-allowed outline-none select-none"
+  />
+</td>
                 <td className="py-2.5 px-3 text-center">
                   <button onClick={() => eliminarFila(fila.id, target)} className="p-1.5 text-slate-400 hover:text-rose-500 rounded-lg">
                     <X size={15} />
@@ -249,6 +267,7 @@ const ItemsTable = ({
 };
 
 export const VersionModal: React.FC<VersionModalProps> = ({
+
   isOpen,
   onClose,
   modalItems,
@@ -266,6 +285,7 @@ export const VersionModal: React.FC<VersionModalProps> = ({
   tarifasOptions,
   getMagnitudesByTipo,
   getInstrumentosByMagnitudAndTipo,
+  usu_rol,
 }) => {
   // Estado para alternar entre edición y confirmación de historial
   const [step, setStep] = useState<'EDIT' | 'CONFIRM_VERSION'>('EDIT');
@@ -273,7 +293,7 @@ export const VersionModal: React.FC<VersionModalProps> = ({
   // Estado local para los campos requeridos por `HistorialCambios`
   const [auditForm, setAuditForm] = useState<cambiospayload>({
     descripcion: '',
-    aprobo: '',
+    aprobo: usu_rol,
     requiereValidacionHoja: false,
     observaciones: '',
   });
@@ -284,7 +304,7 @@ export const VersionModal: React.FC<VersionModalProps> = ({
 
   const handleClose = () => {
     setStep('EDIT');
-    setAuditForm({ descripcion: '', aprobo: '', requiereValidacionHoja: false, observaciones: '' });
+    setAuditForm({ descripcion: '', aprobo: usu_rol, requiereValidacionHoja: false, observaciones: '' });
     setFormErrors({});
     onClose();
   };
@@ -511,6 +531,7 @@ export const TimelineHistorial: React.FC<TimelineHistorialProps> = ({
   items,
   loading = false,
   estadoActual,
+ 
 }) => {
   // Determinar el índice del estado actual (último estado del historial o el pasado por prop)
   const ultimoEstado =
@@ -600,7 +621,7 @@ export const TimelineHistorial: React.FC<TimelineHistorialProps> = ({
               {registro && (
                 <div className="mt-1 text-[9px] text-slate-500 text-center leading-tight">
                   <div className="font-medium truncate max-w-[80px]">
-                    {registro.usuario?.nombreCompleto || `Usuario #${registro.idUsuario}`}
+                    {registro.usuario?.nombreCompleto}
                   </div>
                   <div className="tabular-nums">
                     {new Date(registro.createdAt).toLocaleDateString("es-CO", {
@@ -710,6 +731,7 @@ const QuotationDetailView = ({
   historialitems,
   formatCurrency,
   loadingHistorial,
+  onopentable,
 }: QuotationDetailViewProps) => {
   const historial: HistorialItem[] = historialitems || [];
 
@@ -721,6 +743,9 @@ const QuotationDetailView = ({
           <div className="text-xs text-slate-500 font-medium">Información sincronizada con PostgreSQL</div>
         </div>
         <div className="flex flex-wrap gap-2">
+                 <button type="button" onClick={onopentable} className="rounded-xl bg-[#5680F9] px-3 py-2 text-xs font-bold text-white hover:bg-[#4069E2] transition-colors shadow-sm shadow-[#5680F9]/10">
+            Mostrar cambios
+          </button>
           <button type="button" onClick={openVersionModal} className="rounded-xl bg-[#5680F9] px-3 py-2 text-xs font-bold text-white hover:bg-[#4069E2] transition-colors shadow-sm shadow-[#5680F9]/10">
             Generar nueva versión
           </button>
@@ -927,13 +952,129 @@ const CreateQuotationWizard = ({
     </div>
   );
 };
+import { ModalHistorialCambiosProps } from "@/tipos/cotizacion";
+export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
+  isOpen,
+  onClose,
+  codigo_cotizacion,
+  historial,
+  isLoading = false,
+}) => {
+  if (!isOpen) return null;
 
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-5xl rounded-2xl bg-white p-6 shadow-xl border border-slate-100 flex flex-col max-h-[85vh]">
+        
+        {/* Cabecera del Modal */}
+        <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-800">
+              Historial de Cambios e Inmutabilidad
+            </h3>
+            <p className="text-xs text-slate-500 font-mono mt-0.5">
+              Cotización : #{codigo_cotizacion}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Cuerpo / Tabla Inmutable */}
+        <div className="overflow-x-auto flex-1 rounded-xl border border-slate-200">
+          <table className="w-full text-left text-sm text-slate-600">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+              <tr>
+                <th className="py-3 px-3">Versión</th>
+                <th className="py-3 px-3">Fecha</th>
+                <th className="py-3 px-3">Descripción</th>
+                <th className="py-3 px-3 text-center">Req. H. Life</th>
+                <th className="py-3 px-3">Aprobó</th>
+                <th className="py-3 px-3">Observaciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400 font-mono text-xs">
+                    Cargando trazabilidad del historial...
+                  </td>
+                </tr>
+              ) : historial.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400 font-mono text-xs">
+                    No hay registros de cambios asociados a esta cotización.
+                  </td>
+                </tr>
+              ) : (
+                historial.map((registro) => (
+                  <tr key={registro.id} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="py-2.5 px-3 font-mono font-medium text-slate-700">
+                      v{registro.numeroVersion}
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-xs text-slate-500 whitespace-nowrap">
+                      {new Date(registro.fechaCambio).toLocaleDateString("es-CO", {
+                        year: "numeric",
+                        month: "short",
+                        day: "2-digit",
+                      })}
+                    </td>
+                    <td className="py-2.5 px-3 text-slate-700 max-w-xs truncate">
+                      {registro.descripcion}
+                    </td>
+                    <td className="py-2.5 px-3 text-center">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          registro.requiereValidacionHoja
+                            ? "bg-amber-50 text-amber-700 border border-amber-200"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {registro.requiereValidacionHoja ? "Sí" : "No"}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 font-medium text-slate-700 whitespace-nowrap">
+                      {registro.aprobo}
+                    </td>
+                    <td className="py-2.5 px-3 text-slate-500 text-xs italic max-w-xs truncate">
+                      {registro.observaciones || "N/A"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pie del Modal */}
+        <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-4">
+          <span className="text-xs text-slate-400 font-mono">
+            Registros inmutables auditados por el sistema
+          </span>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl text-sm transition-colors"
+          >
+            Cerrar
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+};
 // ==========================================
 // COMPONENTE PRINCIPAL
 // ==========================================
 
 import { obtenerUsuariosPorPermiso } from "@/app/action_module/administration";
+import { HistorialCambioItem } from "@/tipos/cotizacion";
 export default function Cotizaciones() {
+
   const cotizacionesStore = useDbTable("cotizaciones") as unknown as CotizacionVista[];
   const usuarios = useDbTable("usuarios");
   const tarifasStore = useDbTable("tarifas");
@@ -956,7 +1097,14 @@ export default function Cotizaciones() {
   const [modalDescuento, setModalDescuento] = useState<number>(0);
   const [modalViaticos, setModalViaticos] = useState<number>(0);
   const [toast, setToast] = useState("");
+  const roles=useDbTable("roles");
+  const [isOpenTable,setOpenTable]=useState(false)
 
+    const rolesMap = useMemo(() => {
+      const map = new Map<number, string>();
+      roles?.forEach((r) => map.set(Number(r.idRol), r.nombreRol));
+      return map;
+    }, [roles]);
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
@@ -997,6 +1145,8 @@ export default function Cotizaciones() {
           correo: c.cliente?.correo ?? null,
         },
         historialEstados: c.historialEstados,
+        historial_cambio:c.Historiacambios,
+        
       }));
 
       setDbState((prev) => ({
@@ -1029,6 +1179,8 @@ export default function Cotizaciones() {
     cargarCotizaciones();
     loadTable("tarifas");
     loadTable("clientes");
+    loadTable("usuarios");
+
   }, [cargarCotizaciones, loadTable]);
 
   // ==========================================
@@ -1187,56 +1339,56 @@ export default function Cotizaciones() {
     else setModalItems((prev) => prev.filter((f) => f.id !== idParaEliminar));
   }, []);
 
-  const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
-    index: number,
-    propiedad: K,
-    valor: QuoteItem[K],
-    target: "create" | "modal"
-  ) => {
-    const listaOrigen = target === "create" ? items : modalItems;
-    const filasActualizadas = [...listaOrigen];
-    const fila = { ...filasActualizadas[index] };
+const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
+  index: number,
+  propiedad: K,
+  valor: QuoteItem[K],
+  target: "create" | "modal"
+) => {
+  const listaOrigen = target === "create" ? items : modalItems;
+  const filasActualizadas = [...listaOrigen];
+  const fila = { ...filasActualizadas[index] };
 
-    if (propiedad === "tipoServicio") {
-      fila.tipoServicio = valor as string;
-      fila.magnitud = "";
-      fila.instrumento = "";
-      fila.norma = "N/A";
-      fila.valorUnitario = 0;
-    } else if (propiedad === "magnitud") {
-      fila.magnitud = valor as string;
-      fila.instrumento = "";
-      fila.norma = "N/A";
-      fila.valorUnitario = 0;
-      if (valor === "Temperatura" || valor === "Humedad") {
-        fila.lugarCalibracion = "Laboratorio";
-      }
-    } else if (propiedad === "instrumento") {
-      fila.instrumento = valor as string;
-      const tarifaEncontrada = tarifasOptions.find(
-        (t) =>
-          t.instrumento === valor &&
-          t.magnitud === fila.magnitud &&
-          t.tipoServicio === fila.tipoServicio
-      );
-      if (tarifaEncontrada) {
-        fila.norma = tarifaEncontrada.norma;
-        fila.valorUnitario = tarifaEncontrada.precio;
-      } else {
-        fila.norma = "N/A";
-        fila.valorUnitario = 0;
-      }
+  if (propiedad === "tipoServicio") {
+    fila.tipoServicio = valor as string;
+    fila.magnitud = "";
+    fila.instrumento = "";
+    fila.norma = "N/A";
+    fila.valorUnitario = 0;
+  } else if (propiedad === "magnitud") {
+    fila.magnitud = valor as string;
+    fila.instrumento = "";
+    fila.norma = "N/A";
+    fila.valorUnitario = 0;
+    if (valor === "Temperatura" || valor === "Humedad") {
+      fila.lugarCalibracion = "Laboratorio";
+    }
+  } else if (propiedad === "instrumento") {
+    fila.instrumento = valor as string;
+    const tarifaEncontrada = tarifasOptions.find(
+      (t) =>
+        t.instrumento === valor &&
+        t.magnitud === fila.magnitud &&
+        t.tipoServicio === fila.tipoServicio
+    );
+    if (tarifaEncontrada) {
+      fila.norma = tarifaEncontrada.norma;
+      fila.valorUnitario = tarifaEncontrada.precio;
     } else {
-      filasActualizadas[index] = { ...filasActualizadas[index], [propiedad]: valor };
+      fila.norma = "N/A";
+      fila.valorUnitario = 0;
     }
+  } else {
+    // 👈 Solución: Mutamos directamente el borrador 'fila'
+    fila[propiedad] = valor;
+  }
 
-    if (propiedad !== "lugarCalibracion") {
-      filasActualizadas[index] = fila;
-    }
+  // 👈 Asignación limpia del borrador actualizado
+  filasActualizadas[index] = fila;
 
-    if (target === "create") setItems(filasActualizadas);
-    else setModalItems(filasActualizadas);
-  }, [items, modalItems, tarifasOptions]);
+  if (target === "create") setItems(filasActualizadas);
+  else setModalItems(filasActualizadas);
+}, [items, modalItems, tarifasOptions]);
 
   // ==========================================
   // DATOS DERIVADOS (useMemo)
@@ -1258,7 +1410,10 @@ export default function Cotizaciones() {
     if (!selectedQuotation?.historialEstados) return [];
 
     return selectedQuotation.historialEstados.map((h: HistorialEstadoCotizacionModel) => {
+      console.log("entroo aqui ")
+      console.log(h.idUsuario)
       const usuario = usuarios?.find((e) => e.idUsuario === h.idUsuario);
+      console.log(usuario)
       return {
         id: h.id,
         estadoAnterior: h.estadoAnterior ?? null,
@@ -1270,16 +1425,44 @@ export default function Cotizaciones() {
           : undefined,
       };
     });
-  }, [selectedQuotation?.historialEstados, usuarios]);
+  }, [selectedQuotation, usuarios]);
+  const {data:sesion}=useSession()
+  const nombre_ROL=useMemo(()=>{
+    if(!isVersionModalOpen) return null ;
+    return `${sesion?.user?.name}/${sesion?.user.role}`
+  },[isVersionModalOpen])
 
   // ==========================================
   // RENDER
   // ==========================================
+
+
+const historial_talble: HistorialCambioItem[] = useMemo(() => {
+  // 1. Retornamos un arreglo vacío en lugar de 'null' para cumplir con el tipo HistorialCambioItem[]
+  if (!isOpenTable) return [];
+
+  // 2. flatMap aplanarás los arrays de historial_cambio de todas las cotizaciones
+  return cotizacionesStore.flatMap((cotizacion) => {
+    return (cotizacion.historial_cambio || []).map((item): HistorialCambioItem => ({
+      id: item.id,
+      numeroVersion: item.numeroVersion,
+      fechaCambio: item.fechaCambio,
+      descripcion: item.descripcion,
+      requiereValidacionHoja: item.requiereValidacionHoja,
+      observaciones: item.observaciones ?? null,
+      aprobo: item.aprobo,
+      idCotizacion: cotizacion.idCotizacion, // O item.idCotizacion si ya viene dentro del item
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    }));
+  });
+}, [isOpenTable, cotizacionesStore]);
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification toast={toast} />
 
       <VersionModal
+         usu_rol={nombre_ROL??"no hay"}
         isOpen={isVersionModalOpen}
         onClose={() => setIsVersionModalOpen(false)}
         modalItems={modalItems}
@@ -1297,6 +1480,7 @@ export default function Cotizaciones() {
         tarifasOptions={tarifasOptions}
         getMagnitudesByTipo={getMagnitudesByTipo}
         getInstrumentosByMagnitudAndTipo={getInstrumentosByMagnitudAndTipo}
+              
       />
 
       <HeaderBar
@@ -1345,6 +1529,7 @@ export default function Cotizaciones() {
 
           {selectedQuotation && (
             <QuotationDetailView
+            onopentable={()=>setOpenTable(true)}
               selectedQuotation={selectedQuotation}
               openVersionModal={openVersionModal}
               showToast={showToast}
@@ -1352,6 +1537,7 @@ export default function Cotizaciones() {
               formatCurrency={formatCurrency}
               historialitems={historialFormateado}
               loadingHistorial={loadingCotizaciones}
+          
             />
           )}
         </>
@@ -1384,6 +1570,7 @@ export default function Cotizaciones() {
       )}
 
       {view === "catalog" && <CatalogTableView />}
+      <ModalHistorialCambios codigo_cotizacion={selectedQuotation?.codigo??""}historial={historial_talble} isOpen={isOpenTable}onClose={()=>setOpenTable(false)} />
 
       <AiAgentWidget activeContext={selectedQuotation} />
     </div>

@@ -18,6 +18,7 @@ export interface CrearClienteInput {
   telefono?: string;
   observacion?: string;
   tipoCliente?: tipocliente;
+  dirrecion :string ;
   ciudad?: string;
   idRutDocumento?: number;
 }
@@ -43,6 +44,7 @@ export type ClienteFormData = {
   tipoCliente: tipocliente;
   idRutDocumento: number | null;
   ciudad: string | null;
+  dirrecion :string;
 };
 
 export type ClienteFormSaveData = Partial<ClienteFormData> & {

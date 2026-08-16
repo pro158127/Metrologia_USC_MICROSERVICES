@@ -177,7 +177,7 @@ const handleVolverClientes = useCallback(() => {
   onVolver={handleVolverClientes}  onNavigarte={(m:ModuleKey) => setActiveModule(m)} />
         </main>
       </div>
-
+<SocketDebugger/>
       
     </div>
   );

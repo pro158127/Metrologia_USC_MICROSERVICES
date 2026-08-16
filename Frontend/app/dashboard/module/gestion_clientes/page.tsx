@@ -4,7 +4,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { Search, Plus, Eye, Edit, X, CheckCircle, CircleSlash, Upload, FileText, RefreshCw } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable,useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
 import type { ClienteModel } from "@/tipos/entidades";
 import type {
   ClienteVista,
@@ -210,6 +210,8 @@ export const ClientFormModal = ({
                   <option key={ciudad} value={ciudad}>{ciudad}</option>
                 ))}
               </select>
+
+          
             </div>
             <div>
               <label className="block text-slate-400 font-bold mb-1">Tipo de Cliente</label>
@@ -221,7 +223,18 @@ export const ClientFormModal = ({
                 <option value="NATURAL">Natural</option>
                 <option value="JURIDICO">Jurídico</option>
               </select>
+          
             </div>
+                  <div>
+              <label className="block text-slate-400 font-bold mb-1">Dirrecion</label>
+              <input
+                type="text"
+                value={formData.dirrecion || ""}
+                onChange={(e) => setFormData({ ...formData, dirrecion: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white outline-none focus:border-[#5680F9]"
+              />
+            </div>
+
             <RutFileInput
               isEditMode={isEditMode}
               selectedFile={selectedFile}
@@ -295,17 +308,18 @@ const CustomerTableRow = ({
       <td className="px-4 py-3.5 font-bold text-slate-700">{c.razonSocial}</td>
       <td className="px-4 py-3.5 text-slate-500 font-mono">{c.nitCedula}</td>
       <td className="px-4 py-3.5 text-slate-500">{c.ciudad}</td>
+            <td className="px-4 py-3.5 text-slate-500">{c.dirrecion}</td>
       <td className="px-4 py-3.5 text-slate-500 font-mono">{c.telefono}</td>
       <td className="px-4 py-3.5 text-slate-400 font-mono">{fecha}</td>
       <td className="px-4 py-3.5">
         <span
           className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${
-            c.estado === "ACTIVO"
+            c.status||c.estado === "ACTIVO"
               ? "bg-emerald-50 text-emerald-700 border-emerald-100"
               : "bg-rose-50 text-rose-700 border-rose-100"
           }`}
         >
-          {c.estado}
+          {c.status||c.estado}
         </span>
       </td>
       <td className="px-4 py-3.5">
@@ -314,6 +328,7 @@ const CustomerTableRow = ({
             <button
               type="button"
               onClick={() => {
+                console.log(c.idCliente);
                 onSelectCliente(c.idCliente);
               }}
               className="p-1.5 rounded-lg bg-blue-50 text-[#5680F9] hover:bg-blue-100 transition-colors"
@@ -402,7 +417,7 @@ const ClientControls = ({
 // 3. COMPONENTE PADRE (MainRenderer)
 export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps) {
   const clientes = useDbTable("clientes") as unknown as ClienteVista[];
-  const { setDbState } = useDbActions();
+  const {loadTable}=useDbActions()
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("Todos");
   const { data: session } = useSession();
@@ -465,6 +480,7 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
           observacion: data.observacion ?? "",
           tipoCliente: data.tipoCliente,
           idRutDocumento: (await resul1).data?.idDocumento,
+          dirrecion:data.dirrecion??"sin dirrecion",
           ciudad: data.ciudad ?? "Cali",
         });
         if (!result.success) throw new Error(result.error || "Error al crear cliente");
@@ -482,9 +498,11 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
           nombreContacto: data.nombreContacto ?? "",
           telefono: data.telefono ?? "",
           observacion: data.observacion ?? "",
+          dirrecion:data.dirrecion??"sin dirrecion",
           tipoCliente: data.tipoCliente,
           idRutDocumento: data.idRutDocumento ?? undefined,
           ciudad: data.ciudad ?? "Cali",
+          
         });
         if (!result.success) throw new Error(result.error || "Error al actualizar cliente");
       } catch (error) {
@@ -514,13 +532,17 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
   }, [clientes]);
 
   const filtered = useMemo(() => {
+    console.log(clientes)
+    console.log("recarga  despues de hace cambio o nincial ")
     return clientes.filter((c) => {
       const matchSearch =
         c.razonSocial.toLowerCase().includes(search.toLowerCase()) ||
         c.nitCedula.includes(search);
       return matchSearch && (filter === "Todos" || c.estado === (filter === "ACTIVO" ? "ACTIVO" : "INACTIVO"));
     });
-  }, [clientes, search, filter]);
+    
+  }, [clientes, search, filter,loadTable]);
+
 
   const permisos = useMemo<PermisosUsuario | undefined>(
     () => session?.user?.permissions?.permisos,
@@ -528,39 +550,11 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
   );
 
   useEffect(() => {
-    async function inital() {
-      try {
-        const result = await obtenerClientes();
-        if (!result.success) throw new Error("Error al consultar clientes");
-        const data = result?.data;
+    loadTable("clientes")
 
-        const format_data: ClienteVista[] = (data ?? []).map((b) => ({          correo: b.correo,
-          nitCedula: b.nitCedula,
-          razonSocial: b.razonSocial,
-          idCliente: b.idCliente,
-          idRutDocumento: b.idRutDocumento,
-          estado: b.status,
-          nombreContacto: b.nombreContacto,
-          observacion: b.observacion,
-          telefono: b.telefono,
-          tipoCliente: b.tipoCliente,
-          ciudad: b.ciudad ?? "sin ciudad",
-          createat: new Date(b.createat).toLocaleDateString("es-CO") as unknown as Date,
-          updatedAt: new Date(b.updatedAt).toLocaleDateString("es-CO") as unknown as Date,
-          dirrecion: b.dirrecion,
-          status: b.status,
-        }));
 
-        setDbState((prevdata) => ({
-          ...prevdata,
-          clientes: (format_data ?? []) as unknown as ClienteModel[],
-        }));
-      } catch (error) {
-        console.error(error);
-      }
-    }
-    inital();
-  }, [setDbState]);
+
+}, [loadTable]);
 
   return (
     <div className="w-full bg-transparent p-4">
@@ -577,7 +571,7 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
-              {["Razón Social", "NIT", "Ciudad", "Teléfono", "Último servicio", "Estado", "Acciones"].map((h) => (
+              {["Razón Social", "NIT", "Ciudad", "Dirrecion","Teléfono", "Último servicio", "Estado", "Acciones"].map((h) => (
                 <th key={h} className="px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                   {h}
                 </th>

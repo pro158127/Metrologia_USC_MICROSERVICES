@@ -133,6 +133,7 @@ export type CotizacionVista = {
     correo: string | null;
   } | null;
   historialEstados: HistorialEstadoCotizacionModel[];
+  historial_cambio : HistorialCambioItem[],
 };
 
 // ============================================================
@@ -166,6 +167,7 @@ export interface ItemsTableProps {
 }
 
 export interface VersionModalProps {
+  usu_rol:string;
   isOpen: boolean;
   onClose: () => void;
   modalItems: QuoteItem[];
@@ -192,6 +194,7 @@ export interface VersionModalProps {
 
 export interface TimelineHistorialProps {
   items: HistorialItem[];
+
   loading?: boolean;
   estadoActual?: string;
 }
@@ -212,6 +215,8 @@ export interface QuotationDetailViewProps {
   historialitems: HistorialItem[];
   formatCurrency: (v: number) => string;
   loadingHistorial: boolean;
+  onopentable:() => void;
+  
 }
 
 export interface CreateQuotationWizardProps {
@@ -241,4 +246,27 @@ export interface CreateQuotationWizardProps {
   tarifasOptions: TarifaOption[];
   getMagnitudesByTipo: (tipo: string) => string[];
   getInstrumentosByMagnitudAndTipo: (magnitud: string, tipo: string) => TarifaOption[];
+}
+
+// Interfaz que refleja el modelo Prisma para el frontend
+export interface HistorialCambioItem {
+  id: string;
+  numeroVersion: string;
+  fechaCambio: string | Date;
+  descripcion: string;
+  requiereValidacionHoja: boolean;
+  observaciones?: string | null;
+  aprobo: string;
+  idCotizacion: number;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+}
+
+// Props del componente Modal
+export interface ModalHistorialCambiosProps {
+  isOpen: boolean;
+  onClose: () => void;
+  codigo_cotizacion: string;
+  historial: HistorialCambioItem[];
+  isLoading?: boolean;
 }

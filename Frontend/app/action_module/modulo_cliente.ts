@@ -202,12 +202,17 @@ export async function obtenerTrazabilidadCliente(idCliente: number) {
   try {
     const session = await auth();
     if (!session?.user) {
+      console.log("usuario no iniciado");
       return { success: false, error: 'No autenticado' };
     }
 
     const perm = await validarPermiso('ver_historial');
-    if (!perm.autorizado) return { success: false, error: perm.error };
+    if (!perm.autorizado) { 
+      console.log("usuario sin permiso");
+      return { success: false, error: perm.error };
+    }
 
+    // 1. Consulta base del cliente con sus documentos y cotizaciones
     const cliente = await prisma.cliente.findUnique({
       where: { idCliente },
       include: {
@@ -215,9 +220,7 @@ export async function obtenerTrazabilidadCliente(idCliente: number) {
           include: {
             versiones: {
               include: {
-                usuario: {
-                  select: { idUsuario: true, nombreCompleto: true, correo: true }
-                }
+                usuario: { select: { idUsuario: true, nombreCompleto: true, correo: true } }
               },
               orderBy: { version: 'desc' }
             }
@@ -231,9 +234,7 @@ export async function obtenerTrazabilidadCliente(idCliente: number) {
               include: {
                 versiones: {
                   include: {
-                    usuario: {
-                      select: { idUsuario: true, nombreCompleto: true, correo: true }
-                    }
+                    usuario: { select: { idUsuario: true, nombreCompleto: true, correo: true } }
                   },
                   orderBy: { version: 'desc' }
                 }
@@ -252,9 +253,7 @@ export async function obtenerTrazabilidadCliente(idCliente: number) {
                               include: {
                                 versiones: {
                                   include: {
-                                    usuario: {
-                                      select: { idUsuario: true, nombreCompleto: true, correo: true }
-                                    }
+                                    usuario: { select: { idUsuario: true, nombreCompleto: true, correo: true } }
                                   },
                                   orderBy: { version: 'desc' }
                                 }
@@ -270,27 +269,7 @@ export async function obtenerTrazabilidadCliente(idCliente: number) {
                   include: {
                     versiones: {
                       include: {
-                        usuario: {
-                          select: { idUsuario: true, nombreCompleto: true, correo: true }
-                        }
-                      },
-                      orderBy: { version: 'desc' }
-                    }
-                  }
-                }
-              }
-            },
-            ordenes: {
-              orderBy: { createdAt: 'desc' },
-              include: {
-                instrumentos: true,
-                documentos: {
-                  include: {
-                    versiones: {
-                      include: {
-                        usuario: {
-                          select: { idUsuario: true, nombreCompleto: true, correo: true }
-                        }
+                        usuario: { select: { idUsuario: true, nombreCompleto: true, correo: true } }
                       },
                       orderBy: { version: 'desc' }
                     }
@@ -304,10 +283,60 @@ export async function obtenerTrazabilidadCliente(idCliente: number) {
     });
 
     if (!cliente) {
+      console.log("no se encuentra el cliente");
       return { success: false, error: 'Cliente no encontrado' };
     }
 
-    return { success: true, data: cliente };
+    // 2. Mapeamos las cotizaciones para adjuntarles las órdenes de forma segura
+    const cotizacionIds = cliente.cotizaciones.map((c) => c.idCotizacion);
+
+    // Intento aislado para obtener las órdenes sin romper la respuesta del cliente
+    let ordenesPorCotizacion: Record<number, any[]> = {};
+    try {
+      const ordenes = await prisma.ordenTrabajo.findMany({
+        where: { idCotizacion: { in: cotizacionIds } },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          instrumentos: true,
+          documentos: {
+            include: {
+              versiones: {
+                include: {
+                  usuario: { select: { idUsuario: true, nombreCompleto: true, correo: true } }
+                },
+                orderBy: { version: 'desc' }
+              }
+            }
+          }
+        }
+      });
+
+      // Agrupamos las órdenes por su idCotizacion
+      ordenesPorCotizacion = ordenes.reduce((acc, orden) => {
+        if (!acc[orden?.idCotizacion??0]) acc[orden?.idCotizacion??0] = [];
+        acc[orden.idCotizacion??0].push(orden);
+        return acc;
+      }, {} as Record<number, any[]>);
+
+    } catch (ordenesError) {
+      console.error('⚠️ [Trazabilidad] No se pudieron cargar las órdenes de trabajo:', ordenesError);
+      // No lanzamos el error: permitimos que continúe devolviendo la información del cliente
+    }
+
+    // 3. Reconstruimos el objeto final inyectando las órdenes en cada cotización
+    const cotizacionesConOrdenes = cliente.cotizaciones.map((cotizacion) => ({
+      ...cotizacion,
+      ordenes: ordenesPorCotizacion[cotizacion.idCotizacion] || []
+    }));
+
+    return {
+      success: true,
+      data: {
+        ...cliente,
+        cotizaciones: cotizacionesConOrdenes
+      }
+    };
+
   } catch (error) {
     console.error('Error en obtenerTrazabilidadCliente:', error);
     return { success: false, error: 'Error interno del servidor al consultar la trazabilidad' };

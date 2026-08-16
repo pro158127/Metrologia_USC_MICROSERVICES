@@ -432,7 +432,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       .slice(0, 4)
       .map((o) => ({
         ot: o.codigo,
-        cliente: o.cliente?.razonSocial  ?? "",
+        cliente: o.cliente?.razonSocial ?? "",
         tecnico: o.responsable ?? "",
         tipo: o.estado ?? "",
         fecha: formatFechaCorta(o.createdAt),

@@ -37,6 +37,8 @@ import {
   ListViewTableProps,
   defaultInstrumentos,
   kanbanColumns,
+  OTasiignemet,
+  Tecnico,
 } from "@/tipos/tipo_ordenes_de_trabajo";
 
 // ==========================================
@@ -193,16 +195,9 @@ const OrderAlertsBanner = ({
 export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   editingTechnician,
   setEditingTechnician,
-  machineOptions,
+  instrumentosCot,
   technicians,
-  assignedMachines,
-  activeMachine,
-  setActiveMachine,
-  handleMachineSelection,
-  machineAssignments,
-  toggleMachineAssignment,
-  updateMachineQuantity,
-  assignTechnician,
+  onAssignTechnician,
 }) => {
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
@@ -212,165 +207,42 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
             <Layers size={13} /> Gestión de Personal y Equipamiento
           </h3>
           <p className="text-[11px] text-slate-400">
-            Asignación física de metrólogos y volumen de maquinaria para la ejecución.
+            Asignación directa de metrólogos por cada equipo en la orden de trabajo.
           </p>
         </div>
         <button
           onClick={() => setEditingTechnician(!editingTechnician)}
           className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-700 transition cursor-pointer border-none shadow-sm"
         >
-          {editingTechnician ? "Ocultar Panel Asignación" : "Asignar Técnico / Máquina"}
+          {editingTechnician ? "Ocultar Panel Asignación" : "Asignar Técnico"}
         </button>
       </div>
 
       {editingTechnician && (
-        <div className="space-y-5 animate-fadeIn">
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Panel Izquierdo: Selección y Cantidades */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-3">
-                Maquinaria / Equipamiento en esta OT
-              </div>
-              <div className="grid gap-2">
-                {machineOptions.map((machine) => {
-                  const isSelected = assignedMachines.includes(machine);
-                  const isActive = activeMachine === machine;
-                  const currentQty = machineAssignments[machine]?.quantity || 1;
+        <div className="space-y-3 animate-fadeIn">
+          {instrumentosCot.map((item) => (
+            <div
+              key={item.id_instrumento}
+              className="flex items-center justify-between p-3 border border-slate-200 rounded-xl bg-slate-50"
+            >
+              <span className="text-xs font-bold text-slate-800">
+                {item.instrumento}
+              </span>
 
-                  return (
-                    <div
-                      key={machine}
-                      onClick={() => isSelected && setActiveMachine(machine)}
-                      className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-semibold transition cursor-pointer ${
-                        isActive
-                          ? "bg-blue-600 border-blue-600 text-white shadow-sm"
-                          : isSelected
-                          ? "bg-blue-50 border-blue-200 text-blue-900 hover:bg-blue-100/70"
-                          : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleMachineSelection(machine)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="rounded text-blue-600 focus:ring-blue-400 w-3.5 h-3.5"
-                        />
-                        <span className="font-bold">{machine}</span>
-                      </div>
-
-                      {/* Control de Cantidad por Instrumento */}
-                      {isSelected && (
-                        <div
-                          className="flex items-center gap-2"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className={`flex items-center border rounded-lg overflow-hidden ${
-                            isActive ? "border-blue-400 bg-blue-700" : "border-slate-300 bg-white"
-                          }`}>
-                            <button
-                              type="button"
-                              onClick={() => updateMachineQuantity(machine, Math.max(1, currentQty - 1))}
-                              className="p-1 hover:bg-black/10 transition"
-                            >
-                              <Minus size={10} />
-                            </button>
-                            <span className="px-2 text-[11px] font-bold min-w-[20px] text-center">
-                              {currentQty}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => updateMachineQuantity(machine, currentQty + 1)}
-                              className="p-1 hover:bg-black/10 transition"
-                            >
-                              <Plus size={10} />
-                            </button>
-                          </div>
-
-                          {!isActive && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 font-bold">
-                              Ver Metrólogos
-                            </span>
-                          )}
-                          {isActive && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500 text-white font-bold">
-                              Editando
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <select
+                value={item.asignado || ""}
+                onChange={(e) => onAssignTechnician(item.asignado,item.id_instrumento)}
+                className="text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Sin Asignar --</option>
+                {technicians.map((tech) => (
+                  <option key={tech.idUsuario} value={tech.idUsuario}>
+                    {tech.nombreCompleto}
+                  </option>
+                ))}
+              </select>
             </div>
-
-            {/* Panel Derecho: Asignación de Metrólogos */}
-            <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col justify-between">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-3">
-                  Panel de Configuración de Personal
-                </div>
-                {!activeMachine ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-xs text-slate-400 font-medium">
-                    Seleccione o active un equipo en el panel izquierdo para gestionar sus técnicos asignados.
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-blue-200 p-4 bg-gradient-to-b from-blue-50/40 to-white shadow-sm animate-fadeIn">
-                    <div className="flex justify-between items-start mb-3 border-b border-blue-100 pb-2">
-                      <div>
-                        <span className="text-[10px] text-blue-500 font-extrabold uppercase tracking-widest block">
-                          Equipo Seleccionado
-                        </span>
-                        <span className="font-black text-sm text-slate-800">{activeMachine}</span>
-                        <span className="text-xs text-slate-500 ml-2">
-                          (Unidades: {machineAssignments[activeMachine]?.quantity || 1})
-                        </span>
-                      </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold uppercase tracking-wider">
-                        Activo
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mb-4">
-                      Vincule los metrólogos autorizados para calibrar estas unidades:
-                    </p>
-                    <div className="grid gap-2 grid-cols-2">
-                      {technicians.map((tech) => {
-                        const assigned = machineAssignments[activeMachine]?.technicians?.includes(tech);
-                        return (
-                          <button
-                            key={`${activeMachine}-${tech}`}
-                            type="button"
-                            onClick={() => toggleMachineAssignment(activeMachine, tech)}
-                            className={`text-left rounded-xl border px-3 py-2 text-xs font-semibold transition cursor-pointer flex items-center justify-between ${
-                              assigned
-                                ? "bg-slate-900 border-slate-900 text-white font-bold shadow-sm"
-                                : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
-                            }`}
-                          >
-                            <span>{tech}</span>
-                            {assigned && <span className="text-[10px] bg-emerald-500 text-white px-1.5 py-0.2 rounded-full">✓</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {activeMachine && (
-                <div className="flex justify-end mt-4 pt-3 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={assignTechnician}
-                    className="rounded-xl bg-emerald-600 text-white px-5 py-2 text-xs font-bold hover:bg-emerald-700 shadow-sm border-none cursor-pointer transition"
-                  >
-                    Guardar y Vincular Asignación
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+          ))}
         </div>
       )}
     </div>
@@ -1019,7 +891,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                     className="w-full mt-1 border border-slate-200 rounded-xl p-2 text-xs bg-white outline-none focus:border-blue-500"
                   >
                     {technicians.map((t) => (
-                      <option key={t}>{t}</option>
+                      <option key={t.idUsuario}>{t.nombreCompleto}</option>
                     ))}
                   </select>
                 </label>
@@ -1451,24 +1323,37 @@ export const OrdenesTrabajo = () => {
   /**
    * Obtiene los técnicos con roles específicos desde los datos de usuarios y roles.
    */
-  const technicians = useMemo(() => {
-    const tecnicos = usuarios.filter((u) =>
+  const technicians:Tecnico[]= useMemo(() => {
+    console.log("entrooooo23")
+    const usuarioss=[...usuarios]
+    console.log(usuarioss,"esto es ss")
+    const tecnicos = usuarioss.filter((u) =>
       roles.some(
         (rol) =>
-          rol.nombreRol === "Técnico" ||
-          rol.nombreRol === "Coordinadora" ||
-          rol.nombreRol === "Director Técnico"
+          rol.nombreRol == "Técnico" ||
+          rol.nombreRol == "Coordinadora" ||
+          rol.nombreRol == "Director Técnico"
       ) &&
-      (u.elminado === true || u.estado === false)
+      (u.elminado === false && u.estado === true)
     );
-    return tecnicos.map((u) => u.nombreCompleto);
-  }, [usuarios, roles]);
+    const parse:Tecnico[]=tecnicos.map((e)=>({idUsuario:e.idUsuario,nombreCompleto:e.nombreCompleto}))
+    return parse
+  }, [...usuarios, ...roles]);
 
-  // Opciones de maquinaria derivadas del catálogo real de tarifas
-  const machineOptions = useMemo(
-    () => Array.from(new Set((tarifas || []).map((t) => t.Instrumento).filter(Boolean))),
-    [tarifas]
-  );
+  console.log(technicians,"esto essss")
+
+
+  const instrumentos_cot:OTasiignemet[]= useMemo(()=>{
+   const ot=ordenesTrabajo.find((e)=>e.idOrdenTrabajo==Number(selectedOT?.id))
+   const parse:OTasiignemet[]=ot?.instrumentos.map((e):OTasiignemet=>{
+    return({
+      asignado:e.asignado,
+      id_instrumento:e.idDetalle,
+      instrumento:e.instrumento,
+    })
+   })??[]
+   return parse
+  },[selectedOT,ordenesTrabajo])
 
   /**
    * Abre una OT desde la vista de lista/tablero: busca los datos completos en dbState,
@@ -1551,7 +1436,7 @@ export const OrdenesTrabajo = () => {
       direccionSolicitante: otCompleta.cliente?.dirrecion ?? "",
       ciudadSolicitante: otCompleta.cliente?.ciudad || "sin ciudad",
       contactoSolicitante: otCompleta.cliente?.nombreContacto || "sin contacto",
-      telefonoSolicitante: otCompleta.telefonoContacto_solcitante || "",
+      telefonoSolicitante: otCompleta?.telefonoContacto_solcitante|| "",
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
       responsableUsc: otCompleta.responsable || "",
@@ -1590,50 +1475,7 @@ export const OrdenesTrabajo = () => {
   };
 
   // Handlers para la sección de asignación de técnicos/máquinas
-  const handleMachineSelection = (machine: string) => {
-    setAssignedMachines((prev) => {
-      const isCurrentlySelected = prev.includes(machine);
-      let nextMachines: string[];
-      if (isCurrentlySelected) {
-        nextMachines = prev.filter((m) => m !== machine);
-        setMachineAssignments((prevAssignments) => {
-          const nextAssignments = { ...prevAssignments };
-          delete nextAssignments[machine];
-          return nextAssignments;
-        });
-        if (activeMachine === machine) {
-          setActiveMachine(nextMachines.length > 0 ? nextMachines[0] : null);
-        }
-      } else {
-        nextMachines = [...prev, machine];
-        setActiveMachine(machine);
-      }
-      return nextMachines;
-    });
-  };
 
-  const toggleMachineAssignment = (machine: string, technician: string) => {
-    setMachineAssignments((prev) => {
-      const current = prev[machine]?.technicians || [];
-      const next = current.includes(technician)
-        ? current.filter((t) => t !== technician)
-        : [...current, technician];
-      return {
-        ...prev,
-        [machine]: { quantity: prev[machine]?.quantity || 1, technicians: next },
-      };
-    });
-    if (!assignedTechnicians.includes(technician)) {
-      setAssignedTechnicians((prev) => [...prev, technician]);
-    }
-  };
-
-  const updateMachineQuantity = (machine: string, quantity: number) => {
-    setMachineAssignments((prev) => ({
-      ...prev,
-      [machine]: { quantity, technicians: prev[machine]?.technicians || [] },
-    }));
-  };
 
   const updateOrderDraft = <K extends keyof EditableOrderFields>(
     field: K,
@@ -1702,13 +1544,14 @@ export const OrdenesTrabajo = () => {
     async function initdata() {
       try {
         const res = await obtenerDatosIniciales();
+       
 
         // Procesamos cada conjunto de datos
         for (let i = 0; i < 6; i++) {
           switch (i) {
             case 0: {
               // Usuarios: omitimos el campo contraseña por seguridad
-              const parsedUsers = res.usuarios.map((e): Omit<UsuarioModel, "contraseña"> => ({
+              const parsedUsers = res?.usuarios.map((e): Omit<UsuarioModel, "contraseña"> => ({
                 idUsuario: e.idUsuario,
                 correo: e.correo,
                 createdAt: e.createdAt,
@@ -1719,15 +1562,17 @@ export const OrdenesTrabajo = () => {
                 nombreCompleto: e.nombreCompleto,
                 updatedAt: e.updatedAt,
               }));
+           
+
               setDbState((prev) => ({ ...prev, usuarios: parsedUsers }));
               break;
             }
             case 1: {
-              setDbState((prev) => ({ ...prev, ordenes_trabajo: res.ordenes }));
+              setDbState((prev) => ({ ...prev, ordenes_trabajo: res?.ordenes }));
               break;
             }
             case 2: {
-              setDbState((prev) => ({ ...prev, clientes: res.clientes }));
+              setDbState((prev) => ({ ...prev, clientes: res?.clientes }));
               break;
             }
             case 3: {
@@ -1753,6 +1598,7 @@ export const OrdenesTrabajo = () => {
               break;
           }
         }
+        console.log(...usuarios,"aqui estaaa")
       } catch (error) {
         console.error("Error al obtener datos iniciales:", error);
       }
@@ -1894,18 +1740,11 @@ const handleRemoveInstrument = (id: string) => {
           <OrderAlertsBanner selectedOT={selectedOT} warnings={warnings} />
 
           <StaffAssignmentSection
-            editingTechnician={editingTechnician}
-            setEditingTechnician={setEditingTechnician}
-            machineOptions={machineOptions}
-            technicians={technicians}
-            assignedMachines={assignedMachines}
-            activeMachine={activeMachine}
-            setActiveMachine={setActiveMachine}
-            handleMachineSelection={handleMachineSelection}
-            machineAssignments={machineAssignments}
-            toggleMachineAssignment={toggleMachineAssignment}
-            updateMachineQuantity={updateMachineQuantity}
-            assignTechnician={assignTechnician}
+          instrumentosCot={instrumentos_cot}
+          technicians={technicians}
+          editingTechnician={editingTechnician}
+          setEditingTechnician={(u:boolean)=>setEditingTechnician(u)}
+          onAssignTechnician={(idUsuario:number,id_instrumentos:number)=>updateInstrumentDraft(id_instrumentos.toString(),"asignado",idUsuario)}
           />
 
           <OrderFormRCM05

@@ -7,6 +7,7 @@
 // ============================================================
 
 import type { ReactNode } from "react";
+import { Init } from "v8";
 
 // ============================================================
 // 1. ENUMS (espejo de EstadoOT y estadopay del schema Prisma)
@@ -254,16 +255,10 @@ export interface ComboboxInstrumentoProps {
 export interface StaffAssignmentSectionProps {
   editingTechnician: boolean;
   setEditingTechnician: (val: boolean) => void;
-  machineOptions: string[];
-  technicians: string[];
-  assignedMachines: string[];
-  activeMachine: string | null;
-  setActiveMachine: (val: string | null) => void;
-  handleMachineSelection: (machine: string) => void;
-  machineAssignments: MachineAssignmentsMap;
-  toggleMachineAssignment: (machine: string, tech: string) => void;
-  updateMachineQuantity: (machine: string, quantity: number) => void;
-  assignTechnician: () => void;
+  technicians: Tecnico[];
+  instrumentosCot:OTasiignemet[]
+  onAssignTechnician:( idUsuario: number,id_instrumento:number) => void;
+
 }
 
 export interface InstrumentosTableProps {
@@ -293,7 +288,7 @@ export interface OrderFormRCM05Props {
     field: K,
     value: Instrument[K]
   ) => void;
-  technicians: string[];
+  technicians: Tecnico[];
   saveOrderEdits: () => void;
   onAddInstrument: () => void;
   onRemoveInstrument: (id: string) => void;
@@ -349,3 +344,14 @@ export const kanbanColumns: { key: EstadoOrden; label: string; color: string }[]
   { key: "Certificado_aprobado", label: "Certificado aprobado", color: "#22C55E" },
   { key: "Certificado_enviado", label: "Certificado enviado", color: "#4C36D0" },
 ];
+
+export interface OTasiignemet{
+  id_instrumento:number;
+  asignado:number;
+  instrumento:string;
+
+}
+export interface Tecnico {
+  idUsuario: number;
+  nombreCompleto: string;
+}

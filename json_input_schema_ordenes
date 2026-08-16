@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "templateType": "ORDEN_TRABAJO",
+  "version": "008",
+  "description": "Contrato de entrada para la plantilla de Orden de Trabajo del Laboratorio de Metrología (R-CM005)",
+  "fields": {
+    "scalars": [
+      {
+        "key": "codigo_formato",
+        "label": "Código del Formato",
+        "dataType": "STRING",
+        "required": true,
+        "defaultValue": "R-CM005"
+      },
+      {
+        "key": "version_formato",
+        "label": "Versión del Formato",
+        "dataType": "STRING",
+        "required": true,
+        "defaultValue": "008"
+      },
+      {
+        "key": "fecha_vigencia",
+        "label": "Fecha de Vigencia del Formato",
+        "dataType": "DATE",
+        "required": true
+      },
+      {
+        "key": "cert_razon_social",
+        "label": "Datos Certificado - Razón Social",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "cert_nit",
+        "label": "Datos Certificado - NIT",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "cert_email_certificados",
+        "label": "Correo para envío de certificados de calibración",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "cert_fecha_limite_facturacion",
+        "label": "Fecha límite para facturación",
+        "dataType": "DATE",
+        "required": false
+      },
+      {
+        "key": "cert_direccion",
+        "label": "Datos Certificado - Dirección",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "cert_ciudad",
+        "label": "Datos Certificado - Ciudad",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "cert_email_factura",
+        "label": "Correo para el envío de Factura",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "calib_interno_usc",
+        "label": "Calibración Interno USC",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "calib_en_sitio",
+        "label": "Calibración En sitio",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "calib_persona_contacto",
+        "label": "Información Calibración - Persona a contactar",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "calib_telefono",
+        "label": "Información Calibración - Teléfono",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "calib_fecha",
+        "label": "Información Calibración - Fecha",
+        "dataType": "DATE",
+        "required": false
+      },
+      {
+        "key": "calib_laboratorio_permanente",
+        "label": "Calibración Laboratorio permanente",
+        "dataType": "BOOLEAN",
+        "required": false
+      },
+      {
+        "key": "calib_hora",
+        "label": "Información Calibración - Hora",
+        "dataType": "STRING",
+        "required": false
+      },
+      {
+        "key": "solicitante_razon_social",
+        "label": "Información Solicitante - Razón Social",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "solicitante_nit",
+        "label": "Información Solicitante - NIT",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "no_orden_trabajo",
+        "label": "Consecutivo - No. Orden de Trabajo",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "no_cotizacion",
+        "label": "Consecutivo - No. Cotización",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "solicitante_direccion",
+        "label": "Información Solicitante - Dirección",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "solicitante_ciudad",
+        "label": "Información Solicitante - Ciudad",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "responsable",
+        "label": "Consecutivo - Responsable",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "fecha_diligenciamiento",
+        "label": "Consecutivo - Fecha de Diligenciamiento",
+        "dataType": "DATE",
+        "required": true
+      },
+      {
+        "key": "solicitante_contacto",
+        "label": "Información Solicitante - Contacto",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "solicitante_telefono",
+        "label": "Información Solicitante - Teléfono",
+        "dataType": "STRING",
+        "required": true
+      },
+      {
+        "key": "requiere_anexo_instrumentos",
+        "label": "¿Requiere de un anexo para el ingreso de información de más instrumentos?",
+        "dataType": "BOOLEAN",
+        "required": true,
+        "description": "Bandera booleana (SI/NO). Si es TRUE, activa el renderizado y mapeo de la tabla de anexo adicional."
+      },
+      {
+        "key": "observaciones",
+        "label": "Observaciones generales",
+        "dataType": "STRING",
+        "required": false
+      }
+    ],
+    "tables": [
+      {
+        "key": "tabla_instrumentos_principal",
+        "label": "Información de los Instrumentos (Principal - Ítems 1 al 10)",
+        "required": true,
+        "maxRowsLimit": 10,
+        "columns": [
+          { "key": "item", "label": "Ítem", "dataType": "INTEGER", "required": true },
+          { "key": "tipo_servicio", "label": "Tipo de Servicio", "dataType": "STRING", "required": true },
+          { "key": "instrumento", "label": "Instrumento", "dataType": "STRING", "required": true },
+          { "key": "fabricante", "label": "Fabricante", "dataType": "STRING", "required": false },
+          { "key": "modelo", "label": "Modelo", "dataType": "STRING", "required": false },
+          { "key": "serie", "label": "Serie", "dataType": "STRING", "required": true },
+          { "key": "codigo_interno", "label": "Código Interno / Inventario", "dataType": "STRING", "required": false },
+          { "key": "ubicacion", "label": "Ubicación", "dataType": "STRING", "required": false },
+          { "key": "puntos_a_calibrar", "label": "Puntos a calibrar", "dataType": "STRING", "required": false },
+          { "key": "unidad", "label": "Unidad", "dataType": "STRING", "required": false },
+          { "key": "intervalo_medicion", "label": "Intervalo o Medición", "dataType": "STRING", "required": false },
+          { "key": "resolucion_division", "label": "Resolución o División de escala", "dataType": "STRING", "required": false },
+          { "key": "declaracion_conformidad", "label": "Declaración de Conformidad", "dataType": "STRING", "required": false },
+          { "key": "emp_ajuste_control", "label": "EMP (Ajuste de Control)", "dataType": "STRING", "required": false },
+          { "key": "documento_especificacion", "label": "Documento de Especificación", "dataType": "STRING", "required": false },
+          { "key": "regla_decision", "label": "Regla de Decisión", "dataType": "STRING", "required": false }
+        ]
+      },
+      {
+        "key": "tabla_instrumentos_anexo",
+        "label": "Anexo para Información de los Instrumentos Adicionales (Ítems 11 al 30)",
+        "required": false,
+        "dependsOn": {
+          "fieldKey": "requiere_anexo_instrumentos",
+          "value": true
+        },
+        "description": "Tabla secundaria que se renderiza debajo de observaciones (fila 38) cuando 'requiere_anexo_instrumentos' es TRUE.",
+        "columns": [
+          { "key": "item", "label": "Ítem", "dataType": "INTEGER", "required": true },
+          { "key": "instrumento", "label": "Instrumento", "dataType": "STRING", "required": true },
+          { "key": "marca", "label": "Marca", "dataType": "STRING", "required": false },
+          { "key": "modelo", "label": "Modelo", "dataType": "STRING", "required": false },
+          { "key": "serie", "label": "Serie", "dataType": "STRING", "required": true },
+          { "key": "codigo_interno", "label": "Código Interno / Inventario", "dataType": "STRING", "required": false },
+          { "key": "ubicacion", "label": "Ubicación", "dataType": "STRING", "required": false },
+          { "key": "puntos_a_calibrar", "label": "Puntos a calibrar", "dataType": "STRING", "required": false },
+          { "key": "unidad", "label": "Unidad", "dataType": "STRING", "required": false },
+          { "key": "intervalo_medicion", "label": "Intervalo o Medición", "dataType": "STRING", "required": false },
+          { "key": "resolucion_division", "label": "Resolución o División de escala", "dataType": "STRING", "required": false },
+          { "key": "declaracion_conformidad", "label": "Declaración de Conformidad", "dataType": "STRING", "required": false },
+          { "key": "emp_limite_control", "label": "EMP (Límite de control)", "dataType": "STRING", "required": false },
+          { "key": "documento_especificacion", "label": "Documento de Especificación", "dataType": "STRING", "required": false },
+          { "key": "regla_decision", "label": "Regla de Decisión", "dataType": "STRING", "required": false }
+        ]
+      }
+    ]
+  }
+}

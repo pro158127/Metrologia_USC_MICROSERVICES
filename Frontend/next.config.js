@@ -2,7 +2,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // En Next.js 15+/16 la propiedad oficial para orígenes permitidos en dev:
-  allowedDevOrigins: ['192.168.1.11'],
+  allowedDevOrigins: ['172.19.0.6'],
 
   // Proxy: redirige /api/* al contenedor del backend, EXCEPTO /api/auth/*
   async rewrites() {

@@ -173,6 +173,7 @@ import { obtenerTrazabilidadCliente } from "@/app/action_module/modulo_cliente";
 import FileViewer from "@/app/utils/FileViewer";
 
 export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetailPageProps) {
+  console.log(id_cliente,"hlaaa")
   const [is_open_documento, setIsOpenDocumento] = useState(false);
   const [searchCodigo, setSearchCodigo] = useState("");
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
@@ -185,6 +186,7 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
     async function fetchTrazabilidad() {
       try {
         const data = await obtenerTrazabilidadCliente(id_cliente || 0);
+        console.log(data,"aqui")
         const resultado = data?.data ?? null;
         setTrazabilidad(resultado);
         console.log("Trazabilidad del cliente:", resultado);

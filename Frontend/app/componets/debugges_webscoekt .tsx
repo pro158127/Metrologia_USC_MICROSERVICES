@@ -6,12 +6,11 @@ import { io } from "socket.io-client";
 export default function SocketDebugger() {
   const [status, setStatus] = useState("Desconectado");
   const [logs, setLogs] = useState<string[]>([]);
-
   useEffect(() => {
     console.log("🚀 [SocketDebugger] Componente cliente montado en el navegador.");
 
     // Cambia el puerto si tu Fastify corre en otro puerto (ej. 4000 o 3001)
-    const socket = io("http://192.168.1.11:3001", {
+    const socket = io( "http://localhost:3001", {
       transports: ["websocket", "polling"],
     });
 
