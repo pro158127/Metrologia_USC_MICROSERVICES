@@ -321,7 +321,7 @@ const ServiceDistributionPieChartSection: React.FC = () => {
                 <Cell key={index} fill={entry.color === "#6366F1" ? "#5680F9" : entry.color === "#8B5CF6" ? "#818CF8" : "#C7D2FE"} />
               ))}
             </Pie>
-            <Tooltip contentStyle={{ background: "#0f172a", border: "none", borderRadius: 12, color: "#ffffff", fontSize 11 }} formatter={(val: any) => [`${val}%`]} />
+            <Tooltip contentStyle={{ background: "#0f172a", border: "none", borderRadius: 12, color: "#ffffff", fontSize:11 }} formatter={(val: any) => [`${val}%`]} />
           </PieChart>
         </ResponsiveContainer>
       </div>

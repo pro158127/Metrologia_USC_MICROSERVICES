@@ -178,7 +178,7 @@ const handleVolverClientes = useCallback(() => {
         </main>
       </div>
 
-      <SocketDebugger/>
+      
     </div>
   );
 };
