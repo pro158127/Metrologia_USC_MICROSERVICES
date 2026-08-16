@@ -1,5 +1,7 @@
+"use client";
+
 // 1. Imports
-import React from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   Wrench,
   FileText,
@@ -22,100 +24,48 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import type {
+  DashboardProps,
+  PendingCertsTableProps,
+  WelcomeHeaderSectionProps,
+  KpiGridSectionProps,
+  SystemAlertsSectionProps,
+  QuotesBarChartSectionProps,
+  ServiceDistributionPieChartSectionProps,
+  KpiData,
+  BarChartPoint,
+  PieSlice,
+  PendingCertRow,
+  AlertItem,
+  SystemStat,
+  RecentActivityItem,
+} from "@/tipos/dashboard";
+import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 
-// Interfaces
-interface DashboardProps {
-  onNavigate: (module: any) => void;
-}
+// ========== UTILIDADES DE FORMATO ==========
+const formatMoneda = (val: number) =>
+  new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(val);
 
-interface PendingCertsTableProps {
-  onNavigate: (module: any) => void;
-}
+const porcentaje = (parte: number, total: number) =>
+  total > 0 ? `${Math.round((parte / total) * 100)}%` : "0%";
 
-// Constantes de datos
-const kpiData = [
-  {
-    icon: <Wrench size={22} className="text-slate-900" />,
-    label: "OT Activas",
-    value: "23",
-    sub: "esta semana",
-    trend: "+3",
-    up: true,
-    color: "#6366F1",
-    bg: "#EEF2FF",
-  },
-  {
-    icon: <FileText size={22} className="text-slate-900" />,
-    label: "Cotizaciones pendientes",
-    value: "8",
-    sub: "sin respuesta",
-    trend: "+2",
-    up: false,
-    color: "#F59E0B",
-    bg: "#FFFBEB",
-  },
-  {
-    icon: <DollarSign size={22} className="text-slate-900" />,
-    label: "Ingresos del mes",
-    value: "$14.28M",
-    sub: "vs mes anterior",
-    trend: "+12%",
-    up: true,
-    color: "#16A34A",
-    bg: "#ECFDF5",
-  },
-  {
-    icon: <Award size={22} className="text-slate-900" />,
-    label: "Certificados emitidos",
-    value: "87",
-    sub: "de 100-150 esperados",
-    trend: "87%",
-    up: true,
-    color: "#8B5CF6",
-    bg: "#F5F3FF",
-  },
-];
+const formatFechaCorta = (fecha: string | Date | null) => {
+  if (!fecha) return "";
+  const d = typeof fecha === "string" ? new Date(fecha) : fecha;
+  return d.toLocaleString("es-CO", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
 
-const barData = [
-  { mes: "Ene", emitidas: 42, aprobadas: 31 },
-  { mes: "Feb", emitidas: 56, aprobadas: 48 },
-  { mes: "Mar", emitidas: 38, aprobadas: 29 },
-  { mes: "Abr", emitidas: 65, aprobadas: 55 },
-  { mes: "May", emitidas: 71, aprobadas: 62 },
-  { mes: "Jun", emitidas: 58, aprobadas: 47 },
-];
-
-const pieData = [
-  { name: "Acreditados", value: 68, color: "#6366F1" },
-  { name: "No acreditados", value: 22, color: "#8B5CF6" },
-  { name: "Internos USC", value: 10, color: "#A5B4FC" },
-];
-
-const pendingCerts = [
-  { ot: "OT-2026-089", cliente: "Empresa ABC S.A.S", tecnico: "J. Martínez", tipo: "Acreditado", fecha: "Hoy 10:23" },
-  { ot: "OT-2026-087", cliente: "Clínica del Sur", tecnico: "M. Torres", tipo: "No acreditado", fecha: "Hoy 09:15" },
-  { ot: "OT-2026-085", cliente: "USC Ingeniería", tecnico: "J. Martínez", tipo: "Acreditado", fecha: "Ayer" },
-  { ot: "OT-2026-083", cliente: "Metales del Valle", tecnico: "P. Ríos", tipo: "Acreditado", fecha: "Ayer" },
-];
-
-const alerts = [
-  { type: "warning", icon: <AlertTriangle size={14} />, text: "3 OT con retraso mayor a 3 días", bg: "#FEF3C7", border: "#FDE68A", color: "#B45309" },
-  { type: "error", icon: <Lock size={14} />, text: "1 cuenta bloqueada: secretaria@usc.edu.co", bg: "#FEE2E2", border: "#FECACA", color: "#BE123C" },
-  { type: "warning", icon: <Clock size={14} />, text: "Plantilla de certificación vence en 15 días", bg: "#FFFBEB", border: "#FDE68A", color: "#92400E" },
-];
-
-const systemStats = [
-  { label: "Disponibilidad", value: "98.7%" },
-  { label: "Cumplimiento", value: "91.2%" },
-  { label: "SLA", value: "72h" },
-  { label: "NPS", value: "84" },
-];
-
-const recentActivity = [
-  { text: "Certificado OT-086 aprobado", time: "10:45 AM" },
-  { text: "Cotización 26-0046A enviada", time: "09:30 AM" },
-  { text: "Usuario técnico creado", time: "08:15 AM" },
-];
+const formatHora = (fecha: string | Date | null) => {
+  if (!fecha) return "";
+  const d = typeof fecha === "string" ? new Date(fecha) : fecha;
+  return d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+};
 
 // Reusable Tailwind Style Maps (> 3 repeticiones)
 const cardContainerStyle =
@@ -123,7 +73,7 @@ const cardContainerStyle =
 
 // 2. Declaración de Componentes Hijos (Extraídos)
 
-const WelcomeHeaderSection: React.FC = () => {
+const WelcomeHeaderSection: React.FC<WelcomeHeaderSectionProps> = ({ systemStats }) => {
   return (
     <div className={`mb-6 ${cardContainerStyle}`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -148,7 +98,7 @@ const WelcomeHeaderSection: React.FC = () => {
   );
 };
 
-const KpiGridSection: React.FC = () => {
+const KpiGridSection: React.FC<KpiGridSectionProps> = ({ kpiData }) => {
   return (
     <div className="grid gap-4 xl:grid-cols-4 xl:gap-6 mb-6">
       {kpiData.map((kpi, index) => (
@@ -170,7 +120,7 @@ const KpiGridSection: React.FC = () => {
   );
 };
 
-const PendingCertificatesSection: React.FC<PendingCertsTableProps> = ({ onNavigate }) => {
+const PendingCertificatesSection: React.FC<PendingCertsTableProps> = ({ onNavigate, pendingCerts, pendingCount }) => {
   return (
     <section className={cardContainerStyle}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -182,7 +132,7 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps> = ({ onNaviga
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-100 px-3 py-1.5 text-xs font-bold text-rose-700">
           <span className="inline-flex h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
-          12 pendientes
+          {pendingCount} pendientes
         </div>
       </div>
 
@@ -232,7 +182,7 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps> = ({ onNaviga
   );
 };
 
-const SystemAlertsSection: React.FC = () => {
+const SystemAlertsSection: React.FC<SystemAlertsSectionProps> = ({ alerts, recentActivity }) => {
   return (
     <section className={cardContainerStyle}>
       <h2 className="text-base font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
@@ -266,7 +216,7 @@ const SystemAlertsSection: React.FC = () => {
   );
 };
 
-const QuotesBarChartSection: React.FC = () => {
+const QuotesBarChartSection: React.FC<QuotesBarChartSectionProps> = ({ barData }) => {
   return (
     <section className={cardContainerStyle}>
       <div className="flex items-center justify-between gap-4">
@@ -305,7 +255,7 @@ const QuotesBarChartSection: React.FC = () => {
   );
 };
 
-const ServiceDistributionPieChartSection: React.FC = () => {
+const ServiceDistributionPieChartSection: React.FC<ServiceDistributionPieChartSectionProps> = ({ pieData }) => {
   return (
     <section className={cardContainerStyle}>
       <div>
@@ -321,7 +271,7 @@ const ServiceDistributionPieChartSection: React.FC = () => {
                 <Cell key={index} fill={entry.color === "#6366F1" ? "#5680F9" : entry.color === "#8B5CF6" ? "#818CF8" : "#C7D2FE"} />
               ))}
             </Pie>
-            <Tooltip contentStyle={{ background: "#0f172a", border: "none", borderRadius: 12, color: "#ffffff", fontSize 11 }} formatter={(val: any) => [`${val}%`]} />
+            <Tooltip contentStyle={{ background: "#0f172a", border: "none", borderRadius: 12, color: "#ffffff", fontSize: 11 }} formatter={(val) => [`${val}%`]} />
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -354,17 +304,228 @@ const FooterSection: React.FC = () => {
 // 3. Declaración del Componente Padre (`MainRenderer` / `Dashboard`)
 
 export function Dashboard({ onNavigate }: DashboardProps) {
+  const cotizaciones = useDbTable("cotizaciones");
+  const ordenes = useDbTable("ordenes_trabajo");
+  const certificados = useDbTable("certificados");
+  const facturas = useDbTable("facturas");
+  const clientes = useDbTable("clientes");
+  const { loadTable } = useDbActions();
+
+  useEffect(() => {
+    loadTable("cotizaciones");
+    loadTable("ordenes_trabajo");
+    loadTable("certificados");
+    loadTable("facturas");
+    loadTable("clientes");
+  }, [loadTable]);
+
+  const ordenesActivas = useMemo(
+    () => ordenes.filter((o) => o.estado !== "Certificado_enviado").length,
+    [ordenes]
+  );
+
+  const cotizacionesPendientes = useMemo(
+    () =>
+      cotizaciones.filter((c) => c.estado === "BORRADOR" || c.estado === "ENVIADA").length,
+    [cotizaciones]
+  );
+
+  const facturasMes = useMemo(() => {
+    const now = new Date();
+    return facturas.filter((f) => {
+      const d = new Date(f.fecha);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+  }, [facturas]);
+
+  const ingresosMes = useMemo(
+    () => facturasMes.reduce((acc, f) => acc + Number(f.valor ?? 0), 0),
+    [facturasMes]
+  );
+
+  const kpiData = useMemo<KpiData[]>(() => {
+    const mesActual = new Date().toLocaleString("es-CO", { month: "long" });
+    return [
+      {
+        icon: <Wrench size={22} className="text-slate-900" />,
+        label: "OT Activas",
+        value: String(ordenesActivas),
+        sub: `de ${ordenes.length} OTs totales`,
+        trend: porcentaje(ordenesActivas, ordenes.length),
+        up: true,
+        color: "#6366F1",
+        bg: "#EEF2FF",
+      },
+      {
+        icon: <FileText size={22} className="text-slate-900" />,
+        label: "Cotizaciones pendientes",
+        value: String(cotizacionesPendientes),
+        sub: `de ${cotizaciones.length} cotizaciones`,
+        trend: porcentaje(cotizacionesPendientes, cotizaciones.length),
+        up: false,
+        color: "#F59E0B",
+        bg: "#FFFBEB",
+      },
+      {
+        icon: <DollarSign size={22} className="text-slate-900" />,
+        label: "Ingresos del mes",
+        value: formatMoneda(ingresosMes),
+        sub: `${facturasMes.length} facturas en ${mesActual}`,
+        trend: porcentaje(facturasMes.length, facturas.length),
+        up: true,
+        color: "#16A34A",
+        bg: "#ECFDF5",
+      },
+      {
+        icon: <Award size={22} className="text-slate-900" />,
+        label: "Certificados emitidos",
+        value: String(certificados.length),
+        sub: "emitidos en total",
+        trend: porcentaje(certificados.length, certificados.length),
+        up: true,
+        color: "#8B5CF6",
+        bg: "#F5F3FF",
+      },
+    ];
+  }, [ordenesActivas, ordenes, cotizacionesPendientes, cotizaciones, ingresosMes, facturasMes, facturas, certificados]);
+
+  const barData = useMemo<BarChartPoint[]>(() => {
+    const now = new Date();
+    const points: BarChartPoint[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mes = d.toLocaleString("es-CO", { month: "short" });
+      const emitidas = cotizaciones.filter((c) => {
+        const cd = new Date(c.createdAt);
+        return cd.getMonth() === d.getMonth() && cd.getFullYear() === d.getFullYear();
+      }).length;
+      const aprobadas = cotizaciones.filter((c) => {
+        const cd = new Date(c.createdAt);
+        return (
+          cd.getMonth() === d.getMonth() &&
+          cd.getFullYear() === d.getFullYear() &&
+          c.estado === "APROBADA"
+        );
+      }).length;
+      points.push({ mes, emitidas, aprobadas });
+    }
+    return points;
+  }, [cotizaciones]);
+
+  const pieData = useMemo<PieSlice[]>(() => {
+    const estados = ordenes.reduce<Record<string, number>>((acc, o) => {
+      const key = o.estado ?? "Sin estado";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    const colors = ["#6366F1", "#8B5CF6", "#A5B4FC", "#22C55E", "#F59E0B", "#F87171", "#94A3B8"];
+    return Object.entries(estados).map(([name, value], index) => ({
+      name,
+      value,
+      color: colors[index % colors.length],
+    }));
+  }, [ordenes]);
+
+  const pendingCerts = useMemo<PendingCertRow[]>(() => {
+    return ordenes
+      .filter((o) => o.estadoRevision === "PENDIENTE_REVISION")
+      .slice(0, 4)
+      .map((o) => ({
+        ot: o.codigo,
+        cliente: o.cliente?.razonSocial ?? o.Razon_social ?? "",
+        tecnico: o.responsable ?? "",
+        tipo: o.estado ?? "",
+        fecha: formatFechaCorta(o.createdAt),
+      }));
+  }, [ordenes]);
+
+  const alerts = useMemo<AlertItem[]>(() => {
+    const otsSinResponsable = ordenes.filter((o) => !o.responsable).length;
+    const otsConRetraso = ordenes.filter((o) => {
+      if (!o.fechaLimiteFacturacion) return false;
+      return new Date(o.fechaLimiteFacturacion) < new Date();
+    }).length;
+    const pendientes = ordenes.filter((o) => o.estadoRevision === "PENDIENTE_REVISION").length;
+    const items: AlertItem[] = [];
+    if (otsConRetraso > 0) {
+      items.push({
+        type: "warning",
+        icon: <AlertTriangle size={14} />,
+        text: `${otsConRetraso} OT con fecha límite de facturación vencida`,
+        bg: "#FEF3C7",
+        border: "#FDE68A",
+        color: "#B45309",
+      });
+    }
+    if (otsSinResponsable > 0) {
+      items.push({
+        type: "warning",
+        icon: <Clock size={14} />,
+        text: `${otsSinResponsable} OT sin responsable asignado`,
+        bg: "#FFFBEB",
+        border: "#FDE68A",
+        color: "#92400E",
+      });
+    }
+    if (pendientes > 0) {
+      items.push({
+        type: "error",
+        icon: <Lock size={14} />,
+        text: `${pendientes} certificados pendientes de revisión`,
+        bg: "#FEE2E2",
+        border: "#FECACA",
+        color: "#BE123C",
+      });
+    }
+    return items;
+  }, [ordenes]);
+
+  const systemStats = useMemo<SystemStat[]>(() => {
+    return [
+      { label: "Clientes", value: String(clientes.length) },
+      { label: "Cotizaciones", value: String(cotizaciones.length) },
+      { label: "OT activas", value: String(ordenesActivas) },
+      { label: "Facturas", value: String(facturas.length) },
+    ];
+  }, [clientes, cotizaciones, ordenesActivas, facturas]);
+
+  const recentActivity = useMemo<RecentActivityItem[]>(() => {
+    const actividades: RecentActivityItem[] = [];
+    const ultimaCotizacion = cotizaciones[0];
+    const ultimaOt = ordenes[0];
+    const ultimaFactura = facturas[0];
+    if (ultimaCotizacion) {
+      actividades.push({
+        text: `Cotización ${ultimaCotizacion.codigo} en estado ${ultimaCotizacion.estado}`,
+        time: formatHora(ultimaCotizacion.createdAt),
+      });
+    }
+    if (ultimaOt) {
+      actividades.push({
+        text: `OT ${ultimaOt.codigo} en estado ${ultimaOt.estado ?? ""}`,
+        time: formatHora(ultimaOt.createdAt),
+      });
+    }
+    if (ultimaFactura) {
+      actividades.push({
+        text: `Factura ${ultimaFactura.numero} emitida`,
+        time: formatHora(ultimaFactura.fecha),
+      });
+    }
+    return actividades;
+  }, [cotizaciones, ordenes, facturas]);
+
   return (
     <div className="p-8 overflow-y-auto h-full bg-[#F8FAFC] text-slate-900">
-      <WelcomeHeaderSection />
-      <KpiGridSection />
+      <WelcomeHeaderSection systemStats={systemStats} />
+      <KpiGridSection kpiData={kpiData} />
       <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
-        <PendingCertificatesSection onNavigate={onNavigate} />
-        <SystemAlertsSection />
+        <PendingCertificatesSection onNavigate={onNavigate} pendingCerts={pendingCerts} pendingCount={pendingCerts.length} />
+        <SystemAlertsSection alerts={alerts} recentActivity={recentActivity} />
       </div>
       <div className="grid gap-4 xl:grid-cols-[3fr_2fr] mb-6">
-        <QuotesBarChartSection />
-        <ServiceDistributionPieChartSection />
+        <QuotesBarChartSection barData={barData} />
+        <ServiceDistributionPieChartSection pieData={pieData} />
       </div>
       <FooterSection />
     </div>

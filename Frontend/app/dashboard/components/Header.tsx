@@ -4,7 +4,8 @@ import { useState,useMemo,useEffect } from "react";
 import { Menu,Check, Bell, ChevronDown, CheckCircle, X, Ruler,Trash2 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { warn } from "console";
-import RealtimeTablesState, { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import type RealtimeTablesState from "@/tipos/store";
 
 
 import { 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, MouseEvent } from 'react';
+import React, { useState, useRef, useEffect, useMemo, MouseEvent } from 'react';
 import { 
   X, 
   Upload, 
@@ -16,63 +16,49 @@ import {
   Layers,
   Award
 } from 'lucide-react';
-
-// ============================================================================
-// 1. TIPOS Y MODELOS DE DATOS (Intercambiables con PostgreSQL / Prisma)
-// ============================================================================
-
-export interface BoundingBox {
-  x: number;      // Porcentaje relativo 0-100%
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface WatermarkArea {
-  id: string;
-  label: string;
-  box: BoundingBox;
-  opacity: number; // 0.1 a 1.0
-}
-
-export interface SealConfig {
-  id: string;
-  nombre: string;
-  descripcion?: string;
-  templatePdfUrl: string | null;
-  documentArea: BoundingBox | null;
-  watermarkAreas: WatermarkArea[];
-  updatedAt?: string;
-}
-
-// Datos Mock iniciales para simular respuesta de la BD
-const INITIAL_SEALS_MOCK: SealConfig[] = [
-  {
-    id: 'sello_01',
-    nombre: 'Plantilla Oficial Metrología USC',
-    descripcion: 'Marco institucional para certificados de calibración de balanzas.',
-    templatePdfUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=600&q=80',
-    documentArea: { x: 10, y: 15, width: 80, height: 70 },
-    watermarkAreas: [
-      {
-        id: 'wm_1',
-        label: 'Sello Calidad ISO',
-        box: { x: 75, y: 80, width: 20, height: 15 },
-        opacity: 0.85,
-      },
-    ],
-    updatedAt: '2026-07-28',
-  },
-];
+import type { SealConfig, BoundingBox, WatermarkArea, SelloConfigModalProps } from '@/tipos/sellos';
+import type { SelloModel } from '@/tipos/entidades';
+import { useDbTable, useDbActions } from '@/app/componets/tables_recharge';
 
 // ============================================================================
 // 2. COMPONENTE PADRE: GESTOR Y GALERÍA DE SELLOS
 // ============================================================================
 
 function SelloManagementDashboard() {
-  // Estado local que simula los registros de la Base de Datos
-  const [seals, setSeals] = useState<SealConfig[]>(INITIAL_SEALS_MOCK);
-  
+  const sellosStore = useDbTable('sellos');
+  const { loadTable } = useDbActions();
+
+  // Estado local que sincroniza los registros de la Base de Datos
+  const [seals, setSeals] = useState<SealConfig[]>([]);
+  const sincronizadoRef = useRef(false);
+
+  // Mapeo de SelloModel → SealConfig
+  const sellosMapeados = useMemo<SealConfig[]>(
+    () =>
+      sellosStore.map((s) => ({
+        id: String(s.idSello),
+        nombre: s.nombre,
+        templatePdfUrl: null,
+        documentArea: null,
+        watermarkAreas: [],
+      })),
+    [sellosStore]
+  );
+
+  // Cargar sellos desde el store
+  useEffect(() => {
+    loadTable('sellos');
+  }, [loadTable]);
+
+  // Inicializar el estado local una sola vez cuando el store tenga datos
+  useEffect(() => {
+    if (sincronizadoRef.current) return;
+    if (sellosMapeados.length > 0) {
+      setSeals(sellosMapeados);
+      sincronizadoRef.current = true;
+    }
+  }, [sellosMapeados]);
+
   // Estado para controlar qué sello se está editando en el modal (null = cerrado)
   const [editingSeal, setEditingSeal] = useState<SealConfig | null>(null);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -119,6 +105,8 @@ function SelloManagementDashboard() {
         { ...updatedConfig, updatedAt: new Date().toISOString().split('T')[0] },
       ];
     });
+
+    loadTable('sellos');
 
     setIsModalOpen(false);
     setEditingSeal(null);
@@ -287,12 +275,6 @@ function SelloManagementDashboard() {
 // ============================================================================
 // 3. COMPONENTE HIJO: MODAL EDITOR DE COORDENADAS (MAPPER & PREVIEW)
 // ============================================================================
-
-interface SelloConfigModalProps {
-  sealData: SealConfig;
-  onClose: () => void;
-  onSave: (config: SealConfig) => void;
-}
 
 export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModalProps) {
   const [activeTab, setActiveTab] = useState<'MAPPER' | 'PREVIEW'>('MAPPER');

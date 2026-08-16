@@ -24,77 +24,21 @@ import {
 // Importar el contexto y los tipos
 import { useDbTable, useDbActions } from "./../../componets/tables_recharge";
 import type {
+  FilaInstrumento,
+  FormularioRecepcion,
+  RecepcionConInfo,
+  FilterBarProps,
+  RecepcionCardProps,
+  DatosGeneralesSectionProps,
+  TablaInstrumentosProps,
+  InspeccionYFirmasSectionProps,
+  FormFooterActionsProps,
   RecepcionEquipoModel,
   ClienteModel,
   CotizacionModel,
   OrdenTrabajoModel,
   TarifaModel,
-} from "./../../componets/tables_recharge";
-
-// ============================================================
-// 1. TIPOS LOCALES (estado del formulario)
-// ============================================================
-
-interface FilaInstrumento {
-  // Identificador temporal (solo para UI)
-  id: string;
-  // Campos que se guardan en RecepcionEquipoDetalle
-  instrumento: string;
-  marca: string;
-  modelo: string;
-  serie: string;
-  codigoInterno: string; // codigoInventario
-  resolucion: string;
-  // Estado IBC como objeto
-  ibcE: boolean;
-  ibcT: boolean;
-  ibcD: boolean;
-  ibcA: boolean;
-  sensorInt: boolean;
-  sensorExt: boolean;
-  estampilla: string;
-  observaciones: string;
-  // Para control de UI
-  verificadoExcel: boolean;
-  observacionesSecretaria: string;
-  // Referencia a tarifa seleccionada (opcional)
-  idTarifaSeleccionada?: number;
-}
-
-// Estado completo del formulario de recepción
-interface FormularioRecepcion {
-  // Cabecera (RecepcionEquipo)
-  solicitante: string;
-  nombreQuienEntrega: string;
-  cotizacionCodigo: string; // para buscar ID
-  ordenTrabajoCodigo: string; // para buscar ID
-  sitioCalibracion: "Laboratorio permanente" | "Instalaciones del cliente" | "";
-  fechaRecepcion: string;
-  fechaSalida: string;
-  nombreQuienRecibe: string;
-  nombreQuienEmpaca: string;
-  accesorios: string;
-  pruebasCompletas: boolean; // true = SI, false = NO
-  observacionesPruebas: string; // el "por qué"
-  nombreQuienCalibra: string;
-  nombreQuienRecibeServicio: string;
-  // Detalles
-  instrumentos: FilaInstrumento[];
-}
-
-// Para la vista de lista (recepciones enriquecidas)
-interface RecepcionConInfo {
-  idRecepcion: number;
-  codigo: string;
-  clienteNombre: string;
-  fecha: string;
-  cantidadInstrumentos: number;
-  // Códigos combinados
-  codigoCotizacion?: string;
-  codigoOT?: string;
-  // Objeto original
-  raw: RecepcionEquipoModel;
-}
+} from "@/tipos/recepciones";
 
 // ============================================================
 // 2. FUNCIÓN PARA CREAR FILA VACÍA
@@ -175,23 +119,13 @@ const FilterBar = ({
   filtroMes,
   filtroDia,
   clientesUnicos,
+  aniosDisponibles,
   onClienteChange,
   onAnioChange,
   onMesChange,
   onDiaChange,
   onAgregarRecepcion,
-}: {
-  filtroCliente: string;
-  filtroAnio: string;
-  filtroMes: string;
-  filtroDia: string;
-  clientesUnicos: string[];
-  onClienteChange: (val: string) => void;
-  onAnioChange: (val: string) => void;
-  onMesChange: (val: string) => void;
-  onDiaChange: (val: string) => void;
-  onAgregarRecepcion: () => void;
-}) => {
+}: FilterBarProps) => {
   const MESES = [
     { value: "all", label: "Todos los meses" },
     { value: "01", label: "Enero" },
@@ -246,8 +180,11 @@ const FilterBar = ({
           className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-3 py-1.5 outline-none font-medium text-slate-700"
         >
           <option value="all">Todos los años</option>
-          <option value="2025">2025</option>
-          <option value="2026">2026</option>
+          {aniosDisponibles.map((anio) => (
+            <option key={anio} value={anio}>
+              {anio}
+            </option>
+          ))}
         </select>
         <select
           value={filtroMes}
@@ -284,13 +221,7 @@ const FilterBar = ({
 };
 
 // 3.4 Tarjeta de Recepción (antes OrdenTrabajoCard)
-const RecepcionCard = ({
-  recepcionInfo,
-  onSelect,
-}: {
-  recepcionInfo: RecepcionConInfo;
-  onSelect: (recepcion: RecepcionEquipoModel) => void;
-}) => {
+const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
   return (
     <div
       onClick={() => onSelect(recepcionInfo.raw)}
@@ -342,25 +273,20 @@ const DatosGeneralesSection = ({
   ordenesTrabajo,
   // Función de actualización
   onUpdateGeneral,
-}: {
-  solicitante: string;
-  nombreQuienEntrega: string;
-  cotizacionCodigo: string;
-  ordenTrabajoCodigo: string;
-  sitioCalibracion: "Laboratorio permanente" | "Instalaciones del cliente" | "";
-  fechaRecepcion: string;
-  fechaSalida: string;
-  nombreQuienRecibe: string;
-  nombreQuienEmpaca: string;
-  clientes: ClienteModel[];
-  cotizaciones: CotizacionModel[];
-  ordenesTrabajo: OrdenTrabajoModel[];
-  onUpdateGeneral: (field: string, value: string) => void;
-}) => {
+}: DatosGeneralesSectionProps) => {
   // Listas para datalist
-  const clientesList = clientes.map((c) => c.razonSocial).filter(Boolean);
-  const cotizacionesList = cotizaciones.map((c) => c.codigo).filter(Boolean);
-  const ordenesList = ordenesTrabajo.map((o) => o.codigo).filter(Boolean);
+  const clientesList = useMemo(
+    () => clientes.map((c) => c.razonSocial).filter(Boolean),
+    [clientes]
+  );
+  const cotizacionesList = useMemo(
+    () => cotizaciones.map((c) => c.codigo).filter(Boolean),
+    [cotizaciones]
+  );
+  const ordenesList = useMemo(
+    () => ordenesTrabajo.map((o) => o.codigo).filter(Boolean),
+    [ordenesTrabajo]
+  );
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-sm p-5">
@@ -514,13 +440,7 @@ const TablaInstrumentos = ({
   onFilaChange,
   onAgregarFila,
   onEliminarFila,
-}: {
-  instrumentos: FilaInstrumento[];
-  tarifasDisponibles: TarifaModel[];
-  onFilaChange: (index: number, propiedad: keyof FilaInstrumento, valor: any) => void;
-  onAgregarFila: () => void;
-  onEliminarFila: (index: number) => void;
-}) => {
+}: TablaInstrumentosProps) => {
   // Función para sugerir instrumentos desde tarifas
   const sugerenciasTarifas = useMemo(() => {
     return tarifasDisponibles.map((t) => ({
@@ -747,14 +667,7 @@ const InspeccionYFirmasSection = ({
   nombreQuienCalibra,
   nombreQuienRecibeServicio,
   onUpdateGeneral,
-}: {
-  accesorios: string;
-  pruebasCompletas: boolean;
-  observacionesPruebas: string;
-  nombreQuienCalibra: string;
-  nombreQuienRecibeServicio: string;
-  onUpdateGeneral: (field: string, value: string | boolean) => void;
-}) => {
+}: InspeccionYFirmasSectionProps) => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
       <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm md:col-span-1">
@@ -860,10 +773,7 @@ const InspeccionYFirmasSection = ({
 const FormFooterActions = ({
   actaGuardada,
   onGenerarActa,
-}: {
-  actaGuardada: boolean;
-  onGenerarActa: () => void;
-}) => {
+}: FormFooterActionsProps) => {
   return (
     <>
       <div className="flex items-center justify-between p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex-wrap gap-4">
@@ -966,51 +876,33 @@ useEffect(() => {
   fetchInitialData();
 }, []);
   // --- Derivaciones desde dbState ---
-  // Lista de recepciones enriquecidas
-  const recepcionesEnriquecidas = useMemo<RecepcionConInfo[]>(() => {
-    // Usamos las recepciones del contexto
-    const recepciones = recepcionesEquipo || [];
-    const cotizacionesMap = new Map(
-      cotizacionesStore?.map((c) => [c.idCotizacion, c]) || []
-    );
-    const ordenesMap = new Map(
-      ordenesTrabajoStore?.map((o) => [o.idOrdenTrabajo, o]) || []
-    );
-    const clientesMap = new Map(
-      clientesStore?.map((c) => [c.idCliente, c]) || []
-    );
+  // Lista de recepciones enriquecidas (server action)
+  const [recepcionesEnriquecidas, setRecepcionesEnriquecidas] = useState<RecepcionConInfo[]>([]);
 
+  useEffect(() => {
+    let activo = true;
+    getRecepcionesEnriquecidas()
+      .then((data) => {
+        if (activo) setRecepcionesEnriquecidas(data);
+      })
+      .catch((error) => {
+        console.error(error);
+      });
+    return () => {
+      activo = false;
+    };
+  }, []);
 
-    return recepciones.map((rec) => {
-      // Obtener cliente desde cotización u orden de trabajo
-      let clienteNombre = "Cliente no especificado";
-      if (rec.cotizacion?.cliente) {
-        clienteNombre = rec.cotizacion.cliente.razonSocial || "Sin razón social";
-      } else if (rec.ordenTrabajo?.cliente) {
-        clienteNombre = rec.ordenTrabajo.cliente.razonSocial || "Sin razón social";
-      } else if (rec.idCotizacion) {
-        const cot = cotizacionesMap.get(rec.idCotizacion);
-        if (cot?.cliente) clienteNombre = cot.cliente.razonSocial || "Sin razón social";
-      } else if (rec.idOrdenTrabajo) {
-        const ot = ordenesMap.get(rec.idOrdenTrabajo);
-        if (ot?.cliente) clienteNombre = ot.cliente.razonSocial || "Sin razón social";
+  // Años disponibles para el filtro (derivados de recepcionesEquipo)
+  const aniosDisponibles = useMemo(() => {
+    const set = new Set<string>();
+    recepcionesEquipo.forEach((rec) => {
+      if (rec.fechaRecepcion) {
+        set.add(new Date(rec.fechaRecepcion).getFullYear().toString());
       }
-
-      const codigoCotizacion = rec.cotizacion?.codigo || "";
-      const codigoOT = rec.ordenTrabajo?.codigo || "";
-
-      return {
-        idRecepcion: rec.idRecepcion,
-        codigo: rec.codigo || `REC-${rec.idRecepcion}`,
-        clienteNombre,
-        fecha: rec.fechaRecepcion ? new Date(rec.fechaRecepcion).toISOString().split("T")[0] : "",
-        cantidadInstrumentos: rec.instrumentos?.length || 0,
-        codigoCotizacion,
-        codigoOT,
-        raw: rec,
-      };
     });
-  }, [recepcionesEquipo, cotizacionesStore, ordenesTrabajoStore, clientesStore]);
+    return Array.from(set).sort((a, b) => Number(b) - Number(a));
+  }, [recepcionesEquipo]);
 
   // Clientes únicos para filtro
   const clientesUnicos = useMemo(() => {
@@ -1047,13 +939,6 @@ useEffect(() => {
   }, [recepcionesEnriquecidas, filtroCliente, filtroDia, filtroAnio, filtroMes]);
 
   // --- Funciones del formulario ---
-  const actualizarFormulario = useCallback((campo: keyof FormularioRecepcion, valor: any) => {
-    setFormulario((prev) => ({
-      ...prev,
-      [campo]: valor,
-    }));
-  }, []);
-
   const handleUpdateGeneral = useCallback((field: string, value: string | boolean) => {
     setFormulario((prev) => ({
       ...prev,
@@ -1062,10 +947,10 @@ useEffect(() => {
   }, []);
 
   const handleFilaChange = useCallback(
-    (index: number, propiedad: keyof FilaInstrumento, valor: any) => {
+    (index: number, propiedad: keyof FilaInstrumento, valor: FilaInstrumento[keyof FilaInstrumento]) => {
       setFormulario((prev) => {
         const instrumentos = [...prev.instrumentos];
-        instrumentos[index] = { ...instrumentos[index], [propiedad]: valor };
+        instrumentos[index] = { ...instrumentos[index], [propiedad]: valor } as FilaInstrumento;
         return { ...prev, instrumentos };
       });
     },
@@ -1102,33 +987,36 @@ useEffect(() => {
       const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
       const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
       // Instrumentos
-      const instrumentos = (recepcion.instrumentos || []).map((det) => ({
-        id: generarIdUnico(),
-        instrumento: det.instrumento || "",
-        marca: det.marca || "",
-        modelo: det.modelo || "",
-        serie: det.serie || "",
-        codigoInterno: det.codigoInventario || "",
-        resolucion: det.resolucion || "",
-        ibcE: (det.estadoIBC as any)?.E || false,
-        ibcT: (det.estadoIBC as any)?.T || false,
-        ibcD: (det.estadoIBC as any)?.D || false,
-        ibcA: (det.estadoIBC as any)?.A || false,
-        sensorInt: false, // No existe en schema, se deja false por defecto
-        sensorExt: false,
-        estampilla: det.estampilla || "",
-        observaciones: det.observaciones || "",
-        verificadoExcel: true,
-        observacionesSecretaria: "",
-        idTarifaSeleccionada: undefined,
-      }));
+      const instrumentos = (recepcion.instrumentos || []).map((det) => {
+        const estadoIBC = det.estadoIBC as Record<string, boolean> | null | undefined;
+        return {
+          id: generarIdUnico(),
+          instrumento: det.instrumento || "",
+          marca: det.marca || "",
+          modelo: det.modelo || "",
+          serie: det.serie || "",
+          codigoInterno: det.codigoInventario || "",
+          resolucion: det.resolucion || "",
+          ibcE: estadoIBC?.E || false,
+          ibcT: estadoIBC?.T || false,
+          ibcD: estadoIBC?.D || false,
+          ibcA: estadoIBC?.A || false,
+          sensorInt: false, // No existe en schema, se deja false por defecto
+          sensorExt: false,
+          estampilla: det.estampilla || "",
+          observaciones: det.observaciones || "",
+          verificadoExcel: true,
+          observacionesSecretaria: "",
+          idTarifaSeleccionada: undefined,
+        };
+      });
 
       setFormulario({
         solicitante: recepcion.solicitante || "",
         nombreQuienEntrega: recepcion.nombreEntrega || "",
         cotizacionCodigo,
         ordenTrabajoCodigo,
-        sitioCalibracion: (recepcion.sitioCalibracion as any) || "",
+        sitioCalibracion: recepcion.sitioCalibracion || "",
         fechaRecepcion: recepcion.fechaRecepcion
           ? new Date(recepcion.fechaRecepcion).toISOString().split("T")[0]
           : "",
@@ -1241,19 +1129,8 @@ useEffect(() => {
       // Reemplazar con fetch real cuando el backend esté listo
       console.log("📤 Enviando mutación:", payload);
 
-      // Simular respuesta exitosa
-      const response = {
-        recepcion: {
-          idRecepcion: 999,
-          codigo: `REC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`,
-          // ... resto de campos
-        },
-        documentoGenerado: null,
-        excelGenerado: true,
-      };
-
       setActaGuardada(true);
-      showToast(`✅ Recepción guardada correctamente: ${response.recepcion.codigo}`);
+      showToast(`✅ Recepción guardada correctamente.`);
 
       // Opcional: si es nueva, actualizar la lista (el contexto se actualizará vía socket)
       // Forzar recarga de la lista
@@ -1292,6 +1169,7 @@ useEffect(() => {
             filtroMes={filtroMes}
             filtroDia={filtroDia}
             clientesUnicos={clientesUnicos}
+            aniosDisponibles={aniosDisponibles}
             onClienteChange={setFiltroCliente}
             onAnioChange={(anio) => {
               setFiltroAnio(anio);

@@ -1,17 +1,24 @@
 'use client';
 
 // 1. IMPORTS
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import { Search, Plus, Eye, Edit, X, CheckCircle, CircleSlash, Upload, FileText, RefreshCw } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { ClienteModel, useDbTable, useDbActions } from "@/app/componets/tables_recharge";
-import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada,crearDocumento, actualizarCliente ,cambiarEstadoCliente} from "@/app/action_module/modulo_cliente";
-import { Perfil } from "../../page";
-// Tipado formal para la navegación
-
-interface MainRendererProps {
-  changepage: Perfil;
-}
+import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import type { ClienteModel } from "@/tipos/entidades";
+import type {
+  ClienteVista,
+  ClienteFormData,
+  ClienteFormSaveData,
+  PermisosUsuario,
+  ModalHeaderProps,
+  RutFileInputProps,
+  ClientFormModalProps,
+  CustomerTableRowProps,
+  ClientControlsProps,
+  ClientesModuloProps,
+} from "@/tipos/clientes";
+import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada, crearDocumento, actualizarCliente, cambiarEstadoCliente } from "@/app/action_module/modulo_cliente";
 
 const CIUDADES_COLOMBIA = [
   "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena", 
@@ -29,11 +36,7 @@ const ModalHeader = ({
   isEditMode,
   razonSocial,
   onClose,
-}: {
-  isEditMode: boolean;
-  razonSocial?: string;
-  onClose: () => void;
-}) => (
+}: ModalHeaderProps) => (
   <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-4">
     <h3 className="text-base font-bold">
       {isEditMode ? `Editar Cliente: ${razonSocial}` : "Nuevo Cliente"}
@@ -56,12 +59,7 @@ const RutFileInput = ({
   selectedFile,
   idRutDocumento,
   onFileChange,
-}: {
-  isEditMode: boolean;
-  selectedFile: File | null;
-  idRutDocumento: any;
-  onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-}) => (
+}: RutFileInputProps) => (
   <div className="md:col-span-2">
     <label className="block text-slate-400 font-bold mb-1">
       {isEditMode ? "Documento RUT (Actualizar o Reemplazar)" : "Adjuntar Documento RUT *"}
@@ -100,22 +98,16 @@ const RutFileInput = ({
  * Formulario Modal de Creación / Edición
  */
 
-import { CrearClienteInput,ActualizarClienteInput } from "@/app/action_module/modulo_cliente";
 export const ClientFormModal = ({
   isOpen,
   client,
   onClose,
   onSave,
-}: {
-  isOpen: boolean;
-  client: ClienteModel | null;
-  onClose: () => void;
-  onSave: (data: Partial<any> & { rutFile?: File | null }, mode: "create" | "edit") => void;
-}) => {
+}: ClientFormModalProps) => {
   if (!isOpen) return null;
 
   const isEditMode = client !== null;
-  const [formData, setFormData] = useState<Partial<any>>(
+  const [formData, setFormData] = useState<Partial<ClienteFormData>>(
     isEditMode
       ? { ...client }
       : {
@@ -223,7 +215,7 @@ export const ClientFormModal = ({
               <label className="block text-slate-400 font-bold mb-1">Tipo de Cliente</label>
               <select
                 value={formData.tipoCliente || "NATURAL"}
-                onChange={(e) => setFormData({ ...formData, tipoCliente: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, tipoCliente: e.target.value as "NATURAL" | "JURIDICO" })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white outline-none focus:border-[#5680F9]"
               >
                 <option value="NATURAL">Natural</option>
@@ -276,21 +268,13 @@ const CustomerTableRow = ({
   handleEdit,
   handleToggleStatus,
   onSelectCliente,
-    onVolver,
-}: {
-  c: any;
-  permisos: any;
-  handleEdit: (cliente: any) => void;
-  handleToggleStatus: (id: number) => void;
-   onSelectCliente: (id: number) => void;   // ← navega a perfil
-  onVolver: () => void;    
-}) => {
+}: CustomerTableRowProps) => {
   const [fecha, setFecha] = useState<string>("Cargando...");
 
   useEffect(() => {
     let isMounted = true;
     obtenerUltimaCotizacionFinalizada(c.idCliente)
-      .then((ultimo_date: any) => {
+      .then((ultimo_date) => {
         if (!isMounted) return;
         const fechaFormateada = ultimo_date?.data
           ? new Date(ultimo_date.data).toLocaleDateString("es-CO")
@@ -376,14 +360,7 @@ const ClientControls = ({
   setFilter,
   onNewClient,
   permisos,
-}: {
-  search: string;
-  setSearch: (v: string) => void;
-  filter: string;
-  setFilter: (v: string) => void;
-  onNewClient: () => void;
-  permisos: any;
-}) => (
+}: ClientControlsProps) => (
   <div className="flex items-center gap-3 mb-4 flex-wrap">
     <div className="relative flex-1 min-w-64">
       <Search size={15} color="#9CA3AF" className="absolute left-3 top-1/2 -translate-y-1/2" />
@@ -423,13 +400,8 @@ const ClientControls = ({
 );
 
 // 3. COMPONENTE PADRE (MainRenderer)
-interface ModuloActivoProps {
-               // ← el ID del cliente seleccionado
-  onSelectCliente: (id: number) => void;   // ← navega a perfil
-  onVolver: () => void;                    // ← vuelve a lista
-}
-export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
-  const clientes = useDbTable("clientes");
+export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps) {
+  const clientes = useDbTable("clientes") as unknown as ClienteVista[];
   const { setDbState } = useDbActions();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("Todos");
@@ -438,22 +410,22 @@ export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<ClienteModel | null>(null);
 
-  const handleEdit = (client: ClienteModel) => {
+  const handleEdit = useCallback((client: ClienteVista) => {
     setSelectedClient(client);
     setIsModalOpen(true);
-  };
+  }, []);
 
-  const handleNewClient = () => {
+  const handleNewClient = useCallback(() => {
     setSelectedClient(null);
     setIsModalOpen(true);
-  };
+  }, []);
 
-  const handleSave = async(data: Partial<any>, mode: "create" | "edit") => {
+  const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit") => {
     const formData = new FormData();
-    let url_ar="";
+    let url_ar = "";
     if (mode === "create") {
-    if (data.rutFile) {
-        formData.append("file", data.rutFile as Blob); // Ajusta la clave si tu backend espera otro nombre
+      if (data.rutFile) {
+        formData.append("file", data.rutFile as Blob);
       }
 
       try {
@@ -469,70 +441,91 @@ export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
         const result = await response.json();
         console.log("Archivo subido con éxito:", result);
 
-        // Mapea la propiedad correcta que retorne tu endpoint
         url_ar = result.rutaUrl || result.url || result.data?.rutaUrl || "";
       } catch (error) {
         console.error("Error al subir el archivo:", error);
-        return; // Detiene la ejecución si falla el upload
+        return;
       }
 
       console.log("Crear cliente con datos:", data, "Ruta URL:", url_ar);
-      try{
-        const resul1=crearDocumento({nombre:`Rut_${data.nitCedula}`,rutaUrl:url_ar,mimeType:(data.rutFile as File).type,proveedor:"AWS_S3"});
+      try {
+        const resul1 = crearDocumento({
+          nombre: `Rut_${data.nitCedula}`,
+          rutaUrl: url_ar,
+          mimeType: (data.rutFile as File).type,
+          proveedor: "AWS_S3",
+        });
         console.log("Resultado de crearDocumento:", await resul1, "Ruta URL:", url_ar);
-        const result = await crearCliente({correo:data.correo, nitCedula:data.nitCedula, razonSocial:data.razonSocial, nombreContacto:data.nombreContacto, telefono:data.telefono, observacion:data.observacion, tipoCliente:data.tipoCliente, idRutDocumento:(await resul1).data?.idDocumento, ciudad:data.ciudad});
+        const result = await crearCliente({
+          correo: data.correo ?? "",
+          nitCedula: data.nitCedula ?? "",
+          razonSocial: data.razonSocial ?? "",
+          nombreContacto: data.nombreContacto ?? "",
+          telefono: data.telefono ?? "",
+          observacion: data.observacion ?? "",
+          tipoCliente: data.tipoCliente,
+          idRutDocumento: (await resul1).data?.idDocumento,
+          ciudad: data.ciudad ?? "Cali",
+        });
         if (!result.success) throw new Error(result.error || "Error al crear cliente");
-      }
-
-      catch(error){
+      } catch (error) {
         console.error("Error al crear cliente:", error);
       }
-
     }
     if (mode === "edit") {
-      // Lógica para actualizar un cliente existente
       console.log("Actualizar cliente con datos:", data);
-      try{
-        const result = await actualizarCliente(data.idCliente, {correo:data.correo, nitCedula:data.nitCedula, razonSocial:data.razonSocial, nombreContacto:data.nombreContacto, telefono:data.telefono, observacion:data.observacion, tipoCliente:data.tipoCliente, idRutDocumento:data.idRutDocumento, ciudad:data.ciudad});
+      try {
+        const result = await actualizarCliente(data.idCliente!, {
+          correo: data.correo ?? "",
+          nitCedula: data.nitCedula ?? "",
+          razonSocial: data.razonSocial ?? "",
+          nombreContacto: data.nombreContacto ?? "",
+          telefono: data.telefono ?? "",
+          observacion: data.observacion ?? "",
+          tipoCliente: data.tipoCliente,
+          idRutDocumento: data.idRutDocumento ?? undefined,
+          ciudad: data.ciudad ?? "Cali",
+        });
         if (!result.success) throw new Error(result.error || "Error al actualizar cliente");
-      }
-      catch(error){
+      } catch (error) {
         console.error("Error al actualizar cliente:", error);
       }
     }
 
-
-
-
     setIsModalOpen(false);
   };
 
-  const handleToggleStatus = (id: number) => {
-    try{
-      cambiarEstadoCliente(id, clientes.find((c: any) => c.idCliente === id)?.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO")
-      .then((result) => {
-        if (!result.success) throw new Error(result.error || "Error al cambiar estado del cliente");
-        console.log("Estado del cliente cambiado con éxito:", result);
-      })
-      .catch((error) => {
-        console.error("Error al cambiar estado del cliente:", error);
-      }); 
-    }
-    catch(error){
+  const handleToggleStatus = useCallback((id: number) => {
+    try {
+      cambiarEstadoCliente(
+        id,
+        clientes.find((c) => c.idCliente === id)?.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO"
+      )
+        .then((result) => {
+          if (!result.success) throw new Error(result.error || "Error al cambiar estado del cliente");
+          console.log("Estado del cliente cambiado con éxito:", result);
+        })
+        .catch((error) => {
+          console.error("Error al cambiar estado del cliente:", error);
+        });
+    } catch (error) {
       console.error("Error al cambiar estado del cliente:", error);
     }
+  }, [clientes]);
 
+  const filtered = useMemo(() => {
+    return clientes.filter((c) => {
+      const matchSearch =
+        c.razonSocial.toLowerCase().includes(search.toLowerCase()) ||
+        c.nitCedula.includes(search);
+      return matchSearch && (filter === "Todos" || c.estado === (filter === "ACTIVO" ? "ACTIVO" : "INACTIVO"));
+    });
+  }, [clientes, search, filter]);
 
-  };
-
-  const filtered = clientes.filter((c: any) => {
-    const matchSearch =
-      c.razonSocial.toLowerCase().includes(search.toLowerCase()) ||
-      c.nitCedula.includes(search);
-    return matchSearch && (filter === "Todos" || c.estado === (filter === "ACTIVO" ? "ACTIVO" : "INACTIVO"));
-  });
-
-  const permisos = session?.user?.permissions?.permisos;
+  const permisos = useMemo<PermisosUsuario | undefined>(
+    () => session?.user?.permissions?.permisos,
+    [session]
+  );
 
   useEffect(() => {
     async function inital() {
@@ -541,8 +534,7 @@ export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
         if (!result.success) throw new Error("Error al consultar clientes");
         const data = result?.data;
 
-        const format_data = data?.map((b: any): any => ({
-          correo: b.correo,
+        const format_data: ClienteVista[] = (data ?? []).map((b) => ({          correo: b.correo,
           nitCedula: b.nitCedula,
           razonSocial: b.razonSocial,
           idCliente: b.idCliente,
@@ -553,13 +545,15 @@ export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
           telefono: b.telefono,
           tipoCliente: b.tipoCliente,
           ciudad: b.ciudad ?? "sin ciudad",
-          createat: new Date(b.createat).toLocaleDateString("es-CO"),
-          updatedAt: new Date(b.updatedAt).toLocaleDateString("es-CO"),
+          createat: new Date(b.createat).toLocaleDateString("es-CO") as unknown as Date,
+          updatedAt: new Date(b.updatedAt).toLocaleDateString("es-CO") as unknown as Date,
+          dirrecion: b.dirrecion,
+          status: b.status,
         }));
 
-        setDbState((prevdata: any): any => ({
+        setDbState((prevdata) => ({
           ...prevdata,
-          clientes: format_data ?? [],
+          clientes: (format_data ?? []) as unknown as ClienteModel[],
         }));
       } catch (error) {
         console.error(error);
@@ -591,7 +585,7 @@ export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filtered.map((c: any) => (
+            {filtered.map((c) => (
               <CustomerTableRow
                 key={c.idCliente}
                 c={c}
@@ -599,7 +593,6 @@ export function MainRenderer({ onSelectCliente,onVolver }:ModuloActivoProps ) {
                 handleEdit={handleEdit}
                 handleToggleStatus={handleToggleStatus}
                 onSelectCliente={onSelectCliente}
-                onVolver={onVolver}
               />
             ))}
           </tbody>

@@ -2,105 +2,45 @@
 import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useSession } from 'next-auth/react';
-import { Prisma } from '@prisma/client';
 import processPlantillasRealtime from './recharge_config_platillas';
 import { useDbStore } from '@/app/stores/dbstore'; // ✅ Mayúscula D
 import { useShallow } from 'zustand/react/shallow'; // ✅ Importar useShallow
+import type RealtimeTablesState from '@/tipos/store';
 
-
-export type UsuarioModel = Prisma.UsuarioGetPayload<{ omit: { contraseña: true } }>;
-export type TarifaModel = Prisma.TarifaGetPayload<{ include: { historial: true } }>;
-export type NotificacionModel = Prisma.NotificacionGetPayload<{}>;
-export type AuditLogModel = Prisma.AuditLogGetPayload<{}>;
-export type RolesModel = Prisma.RolesGetPayload<{}>;
-export type PlantillaModel = Prisma.PlantillaGetPayload<{ include: { versiones: true } }>;
-export type VersionDocumentoModel = Prisma.VersionDocumentoGetPayload<{}>;
-export type DocumentoModel = Prisma.DocumentoGetPayload<{ include: { versiones: true } }>;
-export type RecepcionEquipoDetalleModel = Prisma.RecepcionEquipoDetalleGetPayload<{}>;
-export type OrdenTrabajoDetalleModel = Prisma.OrdenTrabajoDetalleGetPayload<{}>;
-export type CotizacionDetalleModel = Prisma.CotizacionDetalleGetPayload<{}>;
-export type ClienteModel = Prisma.ClienteGetPayload<{}>;
-export type CotizacionModel = Prisma.CotizacionGetPayload<{
-  include: {
-    detalles: true;
-    cliente: true;
-    historialEstados: true;
-  };
-}>;
-export type OrdenTrabajoModel = Prisma.OrdenTrabajoGetPayload<{
-  include: {
-    cliente: true;
-    cotizacion: {
-      include: {
-        cliente: true;
-      };
-    };
-    instrumentos?: true;
-  };
-}>;
-export type RecepcionEquipoModel = Prisma.RecepcionEquipoGetPayload<{
-  include: {
-    instrumentos: true;
-    cotizacion: {
-      include: { cliente: true };
-    };
-    ordenTrabajo: {
-      include: { cliente: true; cotizacion: true };
-    };
-    documentos: true;
-  };
-}>;
-export type UsuarioConRol = UsuarioModel & {
-  rolnombre: string;
-};
-export type CalibracionModel = Prisma.CalibracionGetPayload<{}>;
-export type CertificadoModel = Prisma.CertificadoGetPayload<{ include: { sellos: true } }>;
-export type CertificadoSelloModel = Prisma.CertificadoSelloGetPayload<{}>;
-export type DocumentChunkModel = Prisma.DocumentChunkGetPayload<{}>;
-export type HistorialEstadoCotizacionModel = Prisma.HistorialEstadoCotizacionGetPayload<{}>;
-export type HistorialTarifaModel = Prisma.HistorialTarifaGetPayload<{}>;
-export type ParametroSistemaModel = Prisma.ParametroSistemaGetPayload<{}>;
-export type SelloModel = Prisma.SelloGetPayload<{}>;
-export type VersionPlantillaModel = Prisma.VersionPlantillaGetPayload<{}>;
-export type TramiteModel = {
-  idTramite: number;
-  codigoTramite: string;
-  idCliente: number | null;
-  estadoFlujo: string;
-  createdAt: Date | string;
-};
 // ==========================================
-// 2. ESTADO GLOBAL DE TABLAS TIPADO
+// TIPOS CENTRALIZADOS (Frontend/tipos/)
+// Se re-exportan para compatibilidad con los consumidores actuales.
 // ==========================================
-export default interface RealtimeTablesState {
-
-  usuarios: UsuarioModel[];
-  tarifas: TarifaModel[];
-  notificaciones: NotificacionModel[];
-  audit_logs: AuditLogModel[];
-  roles: RolesModel[];
-  plantillas: PlantillaModel[];
-  clientes: ClienteModel[];
-  cotizaciones: CotizacionModel[];
-  cotizacion_detalles: CotizacionDetalleModel[];
-  ordenes_trabajo: OrdenTrabajoModel[];
-  orden_trabajo_detalles: OrdenTrabajoDetalleModel[];
-  recepciones_equipo: RecepcionEquipoModel[];
-  recepcion_equipo_detalles: RecepcionEquipoDetalleModel[];
-  documentos: DocumentoModel[];
-  version_documentos: VersionDocumentoModel[];
-  // ===== Toda la base de datos =====
-  calibraciones: CalibracionModel[];
-  certificados: CertificadoModel[];
-  certificado_sellos: CertificadoSelloModel[];
-  document_chunks: DocumentChunkModel[];
-  historial_estado_cotizacion: HistorialEstadoCotizacionModel[];
-  historial_tarifas: HistorialTarifaModel[];
-  parametros_sistema: ParametroSistemaModel[];
-  sellos: SelloModel[];
-  tramites: TramiteModel[];
-  version_plantillas: VersionPlantillaModel[];
-}
+export type {
+  UsuarioModel,
+  TarifaModel,
+  NotificacionModel,
+  AuditLogModel,
+  RolesModel,
+  PlantillaModel,
+  ClienteModel,
+  CotizacionModel,
+  CotizacionDetalleModel,
+  OrdenTrabajoModel,
+  OrdenTrabajoDetalleModel,
+  RecepcionEquipoModel,
+  RecepcionEquipoDetalleModel,
+  DocumentoModel,
+  VersionDocumentoModel,
+  CalibracionModel,
+  CertificadoModel,
+  CertificadoSelloModel,
+  DocumentChunkModel,
+  HistorialEstadoCotizacionModel,
+  HistorialTarifaModel,
+  ParametroSistemaModel,
+  SelloModel,
+  TramiteModel,
+  VersionPlantillaModel,
+  FacturaModel,
+  UsuarioConRol,
+} from '@/tipos/entidades';
+export type { default as RealtimeTablesState } from '@/tipos/store';
 
 // ==========================================
 // 4. FUNCIONES DE NORMALIZACIÓN (SIN CAMBIOS)
@@ -131,6 +71,7 @@ const obtenerLlavePrimaria = (tabla: string, dataMapeada: any): { nombreLlave: s
     case 'sellos':                 return { nombreLlave: 'idSello', idValor: Number(dataMapeada.idSello) };
     case 'tramites':               return { nombreLlave: 'idTramite', idValor: Number(dataMapeada.idTramite) };
     case 'version_plantillas':     return { nombreLlave: 'idVersionPlantilla', idValor: Number(dataMapeada.idVersionPlantilla) };
+    case 'facturas':               return { nombreLlave: 'idFactura', idValor: Number(dataMapeada.idFactura) };
     default:                          return { nombreLlave: 'id', idValor: Number(dataMapeada.id) };
   }
 };
@@ -152,6 +93,7 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
     rawData.ID_SELLO ?? rawData.idSello ??
     rawData.ID_TRAMITE ?? rawData.idTramite ??
     rawData.ID_VERSION_PLANTILLA ?? rawData.idVersionPlantilla ??
+    rawData.ID_FACTURA ?? rawData.idFactura ??
     rawData.idOrdenTrabajo
   );
 
@@ -435,6 +377,20 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
         iddocumentos: rawData.ID_DOCUMENTOS_FK != null ? Number(rawData.ID_DOCUMENTOS_FK) : (rawData.iddocumentos != null ? Number(rawData.iddocumentos) : null),
       };
 
+    case "facturas":
+      return {
+        idFactura: Number(rawData.ID_FACTURA ?? rawData.idFactura),
+        numero: rawData.NUMERO_FACTURA ?? rawData.numero ?? "",
+        idOrdenTrabajo: rawData.ID_ORDEN_TRABAJO_FK != null ? Number(rawData.ID_ORDEN_TRABAJO_FK) : (rawData.idOrdenTrabajo != null ? Number(rawData.idOrdenTrabajo) : null),
+        idCliente: rawData.ID_CLIENTE_FK != null ? Number(rawData.ID_CLIENTE_FK) : (rawData.idCliente != null ? Number(rawData.idCliente) : null),
+        fecha: rawData.FECHA ?? rawData.fecha,
+        valor: Number(rawData.VALOR ?? rawData.valor ?? 0),
+        estado: rawData.ESTADO ?? rawData.estado ?? "EMITIDA",
+        observacion: rawData.OBSERVACION ?? rawData.observacion ?? null,
+        ordenTrabajo: rawData.ordenTrabajo ?? rawData.ORDEN_TRABAJO ?? null,
+        cliente: rawData.cliente ?? rawData.CLIENTE ?? null,
+      };
+
     default:
       return { ...rawData, id: extractId };
   }
@@ -579,6 +535,7 @@ export const useDbRealtime = () => {
       sellos: state.sellos,
       tramites: state.tramites,
       version_plantillas: state.version_plantillas,
+      facturas: state.facturas,
     }))
   );
 

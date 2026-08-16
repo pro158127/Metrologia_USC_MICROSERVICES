@@ -1,5 +1,7 @@
 // 1. Imports
-import React, { useState } from "react";
+"use client";
+
+import React, { useState, useMemo, useCallback } from "react";
 import {
   BarChart,
   Bar,
@@ -12,48 +14,26 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Download, Search, FileText } from "lucide-react";
-
-// Constantes de datos
-const barData = [
-  { mes: "Ene", externo: 28, interno: 14 },
-  { mes: "Feb", externo: 38, interno: 18 },
-  { mes: "Mar", externo: 22, interno: 16 },
-  { mes: "Abr", externo: 45, interno: 20 },
-  { mes: "May", externo: 51, interno: 20 },
-  { mes: "Jun", externo: 40, interno: 18 },
-];
-
-const conversionData = [
-  { mes: "Ene", tasa: 74 },
-  { mes: "Feb", tasa: 86 },
-  { mes: "Mar", tasa: 76 },
-  { mes: "Abr", tasa: 85 },
-  { mes: "May", tasa: 87 },
-  { mes: "Jun", tasa: 81 },
-];
-
-const tecnicoData = [
-  { tecnico: "J. Martínez", ots: 32, equipos: 87, promedioDias: 3.2 },
-  { tecnico: "M. Torres", ots: 25, equipos: 68, promedioDias: 4.1 },
-  { tecnico: "P. Ríos", ots: 18, equipos: 49, promedioDias: 3.8 },
-];
-
-const certHistoricos = [
-  { cert: "CERT-2026-087", cliente: "Clínica del Sur IPS", nit: "800.456.789-2", instrumento: "Termómetro digital", fecha: "10/05/2026", tecnico: "M. Torres" },
-  { cert: "CERT-2026-071", cliente: "USC Ingeniería", nit: "891.100.022-5", instrumento: "Balanza OHAUS", fecha: "25/04/2026", tecnico: "J. Martínez" },
-  { cert: "CERT-2026-058", cliente: "Empresa ABC S.A.S", nit: "900.123.456-1", instrumento: "Manómetro Wika", fecha: "12/04/2026", tecnico: "P. Ríos" },
-];
-
-const kpis = [
-  { label: "Cotizaciones emitidas", val: "330", sub: "últimos 6 meses", color: "#5680F9", bg: "#EEF2FF", trend: "+18%" },
-  { label: "Tasa de conversión", val: "82%", sub: "promedio semestral", color: "#22C55E", bg: "#F0FDF4", trend: "+5pp" },
-  { label: "Ingresos externos", val: "$14.28M", sub: "facturados junio 2026", color: "#9A8CF3", bg: "#F5F3FF", trend: "+12%" },
-  { label: "Imputados USC", val: "$3.84M", sub: "servicios internos", color: "#F59C0B", bg: "#FFFBEB", trend: "+8%" },
-];
+import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
+import type { BarChartData, ConversionData, TecnicoResumen, CertificadoHistorico, Kpi, AuditTraceabilityRow, AuditTraceabilityReportProps } from "@/tipos/reportes";
 
 // Reusable Tailwind Style Maps (Sugerencia por alta repetibilidad de inputs/selects)
 const inputBaseStyles =
   "px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-700 outline-none focus:border-[#5680F9] focus:ring-1 focus:ring-[#5680F9] transition-all bg-white";
+
+const formatearMoneda = (value: number) =>
+  value.toLocaleString("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+/** Etiquetas de los últimos N meses (Ene, Feb, ...). */
+const mesesUltimos = (n: number): string[] => {
+  const labels: string[] = [];
+  const ahora = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1);
+    labels.push(d.toLocaleDateString("es-CO", { month: "short" }).replace(".", ""));
+  }
+  return labels;
+};
 
 // 2. Declaración de Componentes Hijos (Extraídos)
 
@@ -75,35 +55,51 @@ const HeaderSection: React.FC = () => {
   );
 };
 
-const FilterBar: React.FC = () => {
+const FilterBar: React.FC<{
+  clientes: string[];
+  tecnicos: string[];
+  tiposServicio: string[];
+}> = ({ clientes, tecnicos, tiposServicio }) => {
+
+ const [fechaInicio, setFechaInicio] = useState<string>(() => 
+  new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0]
+);
+
+const [fechaFin, setFechaFin] = useState<string>(() => 
+  new Date().toISOString().split("T")[0]
+);
   return (
     <div className="flex items-center gap-3 mb-6 p-4 rounded-[16px] border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] flex-wrap">
       <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Filtros:</span>
-      <input type="date" defaultValue="2026-01-01" className={inputBaseStyles} />
-      <input type="date" defaultValue="2026-06-09" className={inputBaseStyles} />
-      {["Tipo servicio", "Cliente", "Técnico"].map((f) => (
-        <select key={f} className={`${inputBaseStyles} cursor-pointer`}>
-          <option>{f} — Todos</option>
-          {f === "Tipo servicio" && (
-            <>
-              <option>Acreditado</option>
-              <option>No acreditado</option>
-            </>
-          )}
-          {f === "Técnico" && (
-            <>
-              <option>J. Martínez</option>
-              <option>M. Torres</option>
-              <option>P. Ríos</option>
-            </>
-          )}
+     <input
+  type="date"
+  value={fechaInicio}
+  onChange={(e) => setFechaInicio(e.target.value)}
+  className={inputBaseStyles}
+/>
+<input
+  type="date"
+  value={fechaFin}
+  onChange={(e) => setFechaFin(e.target.value)}
+  className={inputBaseStyles}
+/>
+      {[
+        { label: "Tipo servicio", options: tiposServicio },
+        { label: "Cliente", options: clientes },
+        { label: "Técnico", options: tecnicos },
+      ].map((f) => (
+        <select key={f.label} className={`${inputBaseStyles} cursor-pointer`}>
+          <option>{f.label} — Todos</option>
+          {f.options.slice(0, 20).map((o) => (
+            <option key={o}>{o}</option>
+          ))}
         </select>
       ))}
     </div>
   );
 };
 
-const KpiGrid: React.FC = () => {
+const KpiGrid: React.FC<{ kpis: Kpi[] }> = ({ kpis }) => {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       {kpis.map((k) => (
@@ -119,12 +115,14 @@ const KpiGrid: React.FC = () => {
           </div>
           <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-50">
             <span className="text-[11px] text-slate-400 font-medium">{k.sub}</span>
-            <span
-              className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border"
-              style={{ background: k.bg, color: k.color, borderColor: k.bg + "80" }}
-            >
-              {k.trend}
-            </span>
+            {k.trend && (
+              <span
+                className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border"
+                style={{ background: k.bg, color: k.color, borderColor: k.bg + "80" }}
+              >
+                {k.trend}
+              </span>
+            )}
           </div>
         </div>
       ))}
@@ -132,7 +130,10 @@ const KpiGrid: React.FC = () => {
   );
 };
 
-const ChartsSection: React.FC = () => {
+const ChartsSection: React.FC<{
+  barData: BarChartData[];
+  conversionData: ConversionData[];
+}> = ({ barData, conversionData }) => {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       <div className="rounded-[20px] border border-slate-100 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)]">
@@ -143,7 +144,7 @@ const ChartsSection: React.FC = () => {
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={barData}>
             <XAxis dataKey="mes" tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: "#94A3B8", fontSize 11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} />
             <Tooltip contentStyle={{ background: "#0F172A", border: "none", borderRadius: 12, color: "#fff", fontSize: 11 }} />
             <Bar dataKey="externo" name="Externo" fill="#5680F9" radius={[0, 0, 0, 0]} stackId="a" />
             <Bar dataKey="interno" name="Interno USC" fill="#AFC4FD" radius={[4, 4, 0, 0]} stackId="a" />
@@ -170,8 +171,8 @@ const ChartsSection: React.FC = () => {
           <LineChart data={conversionData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#F8FAFC" />
             <XAxis dataKey="mes" tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} unit="%" domain={[60, 100]} />
-            <Tooltip contentStyle={{ background: "#0F172A", border: "none", borderRadius: 12, color: "#fff", fontSize: 11 }} formatter={(v: any) => [`${v}%`]} />
+            <YAxis tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} unit="%" domain={[0, 100]} />
+            <Tooltip contentStyle={{ background: "#0F172A", border: "none", borderRadius: 12, color: "#fff", fontSize: 11 }} formatter={(v) => [`${v}%`]} />
             <Line type="monotone" dataKey="tasa" stroke="#22C55E" strokeWidth={2.5} dot={{ fill: "#22C55E", r: 4 }} />
           </LineChart>
         </ResponsiveContainer>
@@ -180,7 +181,7 @@ const ChartsSection: React.FC = () => {
   );
 };
 
-const TecnicoSummaryTable: React.FC = () => {
+const TecnicoSummaryTable: React.FC<{ tecnicoData: TecnicoResumen[] }> = ({ tecnicoData }) => {
   return (
     <div className="rounded-[20px] border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden mb-6">
       <div className="px-6 py-4 border-b border-slate-100">
@@ -220,7 +221,7 @@ const TecnicoSummaryTable: React.FC = () => {
                         : "bg-amber-50 text-amber-700 border-amber-100"
                     }`}
                   >
-                    {t.promedioDias} días
+                    {t.promedioDias.toFixed(1)} días
                   </span>
                 </td>
               </tr>
@@ -232,7 +233,7 @@ const TecnicoSummaryTable: React.FC = () => {
   );
 };
 
-const HistoricalCertificatesTable: React.FC = () => {
+const HistoricalCertificatesTable: React.FC<{ certHistoricos: CertificadoHistorico[] }> = ({ certHistoricos }) => {
   return (
     <div className="rounded-[20px] border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden mb-6">
       <div className="px-6 py-4 border-b border-slate-100">
@@ -287,18 +288,12 @@ const HistoricalCertificatesTable: React.FC = () => {
   );
 };
 
-interface AuditTraceabilityReportProps {
-  facturaSearch: string;
-  showTrazabilidad: boolean;
-  onSearchChange: (value: string) => void;
-  onGenerateReport: () => void;
-}
-
 const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
   facturaSearch,
   showTrazabilidad,
   onSearchChange,
   onGenerateReport,
+  filas,
 }) => {
   return (
     <div className="rounded-[20px] border border-slate-100 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] mb-6">
@@ -353,10 +348,7 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {[
-                  { factura: facturaSearch, cliente: "Empresa ABC S.A.S", fecha: "01/06/2026", valor: "$2.850.000", ots: "OT-2026-089", equipos: 3, cert: "CERT-2026-089" },
-                  { factura: facturaSearch, cliente: "Empresa ABC S.A.S", fecha: "01/06/2026", valor: "—", ots: "OT-2026-088", equipos: 2, cert: "—" },
-                ].map((t, i) => (
+                {filas.map((t, i) => (
                   <tr key={i} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-5 py-3.5 text-sm font-semibold text-[#5680F9]">{t.factura}</td>
                     <td className="px-5 py-3.5 text-sm font-semibold text-slate-700">{t.cliente}</td>
@@ -387,28 +379,187 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
 // 3. Componente Padre (`MainRenderer`)
 
 export function MainRendererreport() {
+  const cotizaciones = useDbTable("cotizaciones");
+  const ordenesTrabajo = useDbTable("ordenes_trabajo");
+  const certificados = useDbTable("certificados");
+  const calibraciones = useDbTable("calibraciones");
+  const facturas = useDbTable("facturas");
+  const clientes = useDbTable("clientes");
+  const tarifas = useDbTable("tarifas");
+  const usuarios = useDbTable("usuarios");
+  const { loadTable } = useDbActions();
+  const loading = useDbLoading("certificados");
+
   const [facturaSearch, setFacturaSearch] = useState("");
   const [showTrazabilidad, setShowTrazabilidad] = useState(false);
 
-  const handleGenerateReport = () => {
+  // Carga de tablas requeridas por el módulo
+  const inicializar = useCallback(() => {
+    loadTable("cotizaciones");
+    loadTable("ordenes_trabajo");
+    loadTable("facturas");
+    loadTable("clientes");
+    loadTable("tarifas");
+    loadTable("usuarios");
+    loadTable("certificados");
+  }, [loadTable]);
+
+  React.useEffect(() => {
+    inicializar();
+  }, [inicializar]);
+
+  // ==========================================
+  // DATOS DERIVADOS (useMemo)
+  // ==========================================
+  const meses = useMemo(() => mesesUltimos(6), []);
+
+  const barData: BarChartData[] = useMemo(() => {
+    return meses.map((mes) => {
+      const index = meses.indexOf(mes);
+      const fechaRef = new Date();
+      const target = new Date(fechaRef.getFullYear(), fechaRef.getMonth() - (meses.length - 1 - index), 1);
+      const delMes = (d: Date | string | null | undefined) => {
+        if (!d) return false;
+        const dt = new Date(d);
+        return dt.getMonth() === target.getMonth() && dt.getFullYear() === target.getFullYear();
+      };
+      const delMesCount = ordenesTrabajo.filter((o) => delMes(o.createdAt));
+      return {
+        mes,
+        externo: delMesCount.filter((o) => o.esInternoUSC === false || o.esInternoUSC == null).length,
+        interno: delMesCount.filter((o) => o.esInternoUSC === true).length,
+      };
+    });
+  }, [meses, ordenesTrabajo]);
+
+  const conversionData: ConversionData[] = useMemo(() => {
+    return meses.map((mes) => {
+      const index = meses.indexOf(mes);
+      const fechaRef = new Date();
+      const target = new Date(fechaRef.getFullYear(), fechaRef.getMonth() - (meses.length - 1 - index), 1);
+      const delMes = (d: Date) => d.getMonth() === target.getMonth() && d.getFullYear() === target.getFullYear();
+      const emitidas = cotizaciones.filter((c) => delMes(new Date(c.createdAt))).length;
+      const aprobadas = cotizaciones.filter(
+        (c) => delMes(new Date(c.createdAt)) && c.estado === "APROBADA"
+      ).length;
+      return {
+        mes,
+        tasa: emitidas > 0 ? Math.round((aprobadas / emitidas) * 100) : 0,
+      };
+    });
+  }, [meses, cotizaciones]);
+
+  const tecnicoData: TecnicoResumen[] = useMemo(() => {
+    const grupos = new Map<string, { ots: number; equipos: number; dias: number }>();
+    ordenesTrabajo.forEach((o) => {
+      const nombre = o.responsable || "Sin asignar";
+      const grupo = grupos.get(nombre) || { ots: 0, equipos: 0, dias: 0 };
+      grupo.ots += 1;
+      grupo.equipos += o.instrumentos?.length ?? 0;
+      if (o.createdAt && o.fechaCalibracion) {
+        grupo.dias += Math.max(0, (new Date(o.fechaCalibracion).getTime() - new Date(o.createdAt).getTime()) / 86400000);
+      }
+      grupos.set(nombre, grupo);
+    });
+    return Array.from(grupos.entries()).map(([tecnico, g]) => ({
+      tecnico,
+      ots: g.ots,
+      equipos: g.equipos,
+      promedioDias: g.ots > 0 ? g.dias / g.ots : 0,
+    }));
+  }, [ordenesTrabajo]);
+
+  const certHistoricos: CertificadoHistorico[] = useMemo(() => {
+    return certificados.slice(0, 50).map((cert) => {
+      const cal = calibraciones.find((c) => c.idCalibracion === cert.idCalibracion);
+      const instrumento = cal
+        ? (ordenesTrabajo.flatMap((o) => o.instrumentos ?? []).find((i) => i.idDetalle === cal.idInstrumento)?.instrumento ?? "—")
+        : "—";
+      const orden = cal
+        ? ordenesTrabajo.find((o) => (o.instrumentos ?? []).some((i) => i.idDetalle === cal.idInstrumento))
+        : undefined;
+      const cliente = orden
+        ? clientes.find((c) => c.idCliente === orden.idCliente)
+        : undefined;
+      return {
+        cert: cert.codigo,
+        cliente: cliente?.razonSocial ?? "—",
+        nit: cliente?.nitCedula ?? "—",
+        instrumento,
+        fecha: new Date(cal?.createdAt ?? new Date()).toLocaleDateString("es-CO"),
+        tecnico: orden?.responsable ?? "—",
+      };
+    });
+  }, [certificados, calibraciones, ordenesTrabajo, clientes]);
+
+  const kpis: Kpi[] = useMemo(() => {
+    const emitidas = cotizaciones.length;
+    const aprobadas = cotizaciones.filter((c) => c.estado === "APROBADA").length;
+    const conversion = emitidas > 0 ? Math.round((aprobadas / emitidas) * 100) : 0;
+    const ingresos = facturas.reduce((acc, f) => acc + Number(f.valor ?? 0), 0);
+    const internos = ordenesTrabajo.filter((o) => o.esInternoUSC === true).length;
+    return [
+      { label: "Cotizaciones emitidas", val: String(emitidas), sub: "registradas en el sistema", color: "#5680F9", bg: "#EEF2FF", trend: "" },
+      { label: "Tasa de conversión", val: `${conversion}%`, sub: "aprobadas sobre emitidas", color: "#22C55E", bg: "#F0FDF4", trend: "" },
+      { label: "Ingresos facturados", val: formatearMoneda(ingresos), sub: "total facturado registrado", color: "#9A8CF3", bg: "#F5F3FF", trend: "" },
+      { label: "Órdenes internas USC", val: String(internos), sub: "servicios internos imputados", color: "#F59C0B", bg: "#FFFBEB", trend: "" },
+    ];
+  }, [cotizaciones, facturas, ordenesTrabajo]);
+
+  const tiposServicio = useMemo(() => {
+    const set = new Set<string>();
+    tarifas.forEach((t) => set.add(t.tipoServicio));
+    return Array.from(set).filter(Boolean);
+  }, [tarifas]);
+
+  const tecnicos = useMemo(() => {
+    const set = new Set<string>();
+    ordenesTrabajo.forEach((o) => o.responsable && set.add(o.responsable));
+    return Array.from(set);
+  }, [ordenesTrabajo]);
+
+  const clientesFiltro = useMemo(() => clientes.map((c) => c.razonSocial), [clientes]);
+
+  const filasAuditoria: AuditTraceabilityRow[] = useMemo(() => {
+    return facturas
+      .filter((f) => f.numero.toLowerCase().includes(facturaSearch.toLowerCase()))
+      .slice(0, 10)
+      .map((f) => {
+        const orden = ordenesTrabajo.find((o) => o.idOrdenTrabajo === f.idOrdenTrabajo);
+        const cliente = f.cliente?.razonSocial ?? clientes.find((c) => c.idCliente === f.idCliente)?.razonSocial ?? "—";
+        const cert = orden ? (certificados.find((c) => c.idCalibracion === orden.idOrdenTrabajo)?.codigo ?? "—") : "—";
+        return {
+          factura: f.numero,
+          cliente,
+          fecha: new Date(f.fecha).toLocaleDateString("es-CO"),
+          valor: formatearMoneda(Number(f.valor ?? 0)),
+          ots: orden?.codigo ?? "—",
+          equipos: orden?.instrumentos?.length ?? 0,
+          cert,
+        };
+      });
+  }, [facturas, ordenesTrabajo, clientes, certificados, facturaSearch]);
+
+  const handleGenerateReport = useCallback(() => {
     if (facturaSearch) {
       setShowTrazabilidad(true);
     }
-  };
+  }, [facturaSearch]);
 
   return (
     <div className="module-page text-slate-900">
       <HeaderSection />
-      <FilterBar />
-      <KpiGrid />
-      <ChartsSection />
-      <TecnicoSummaryTable />
-      <HistoricalCertificatesTable />
+      <FilterBar clientes={clientesFiltro} tecnicos={tecnicos} tiposServicio={tiposServicio} />
+      <KpiGrid kpis={kpis} />
+      <ChartsSection barData={barData} conversionData={conversionData} />
+      <TecnicoSummaryTable tecnicoData={tecnicoData} />
+      <HistoricalCertificatesTable certHistoricos={certHistoricos} />
       <AuditTraceabilityReport
         facturaSearch={facturaSearch}
         showTrazabilidad={showTrazabilidad}
         onSearchChange={setFacturaSearch}
         onGenerateReport={handleGenerateReport}
+        filas={filasAuditoria}
       />
     </div>
   );

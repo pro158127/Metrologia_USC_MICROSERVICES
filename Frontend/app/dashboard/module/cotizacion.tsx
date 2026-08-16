@@ -1,35 +1,39 @@
 'use client';
 
-import React, { useEffect, useMemo, useState,useCallback } from "react";
-import { Plus, Search, Eye, X, Award } from "lucide-react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { Plus, Search, Eye, X, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import CatalogTableView from "./componentes/compoenete_cotizacion/tartifas";
 import { AiAgentWidget } from "./componentes/AI_MODULE/AiAgentWidget";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import {
   obtenerTodasLasCotizaciones,
   crearCotizacion,
   actualizarCotizacion,
   cambiarEstadoCotizacion,
-  CotizacionConDetalles,
 } from "@/app/action_module/cotizacion";
 import { Estados } from "@prisma/client";
-import { obtenerClientes } from "@/app/action_module/modulo_cliente";
-import { obtenerTodasLasTarifas } from "@/app/action_module/tarifas";
+import type { ClienteModel, CotizacionModel, HistorialEstadoCotizacionModel } from "@/tipos/entidades";
+import type {
+  QuoteItem,
+  TarifaOption,
+  HistorialItem,
+  ViewCotizacion,
+  CotizacionVista,
+  CotizacionDetalleVista,
+  cambiospayload,
+  HeaderBarProps,
+  ItemsTableProps,
+  VersionModalProps,
+  TimelineHistorialProps,
+  QuotationListTableProps,
+  QuotationDetailViewProps,
+  CreateQuotationWizardProps,
+} from "@/tipos/cotizacion";
+import { transicionesValidas } from "@/tipos/cotizacion";
 
 // ==========================================
 // Tipos y Estilos
 // ==========================================
-
-type QuoteItem = {
-  id: number;
-  tipoServicio: string;
-  magnitud: string;
-  instrumento: string;
-  norma: string;
-  cantidad: number;
-  valorUnitario: number;
-  lugarCalibracion: "Laboratorio" | "Sitio";
-};
 
 // Mapeo de colores para todos los estados del enum
 const estadoStyle: Record<string, { bg: string; color: string; border: string }> = {
@@ -39,14 +43,6 @@ const estadoStyle: Record<string, { bg: string; color: string; border: string }>
   RECHAZADA:      { bg: "#FEF2F2", color: "#B91C1C", border: "#FECACA" },
   EN_SEGUIMIENTO: { bg: "#F1F5F9", color: "#475569", border: "#E2E8F0" },
 };
-
-const catalogItems = [
-  { instrumento: "Termómetro digital", magnitud: "Temperatura", intervalo: "-20 a 100 °C", norma: "NTC-ISO 10012", precio2026: "$185.000", acreditado: true },
-  { instrumento: "Manómetro", magnitud: "Presión", intervalo: "0 a 100 bar", norma: "EURAMET cg-17", precio2026: "$220.000", acreditado: true },
-  { instrumento: "Balanza analítica", magnitud: "Masa", intervalo: "0 a 200 g", norma: "OIML R 76", precio2026: "$195.000", acreditado: false },
-  { instrumento: "Cinta métrica", magnitud: "Longitud", intervalo: "0 a 5 m", norma: "NTC 1104", precio2026: "$140.000", acreditado: true },
-  { instrumento: "Higrómetro", magnitud: "Humedad", intervalo: "10 a 90 %RH", norma: "EA-4/02", precio2026: "$175.000", acreditado: true },
-];
 
 const SELECT_CLASS = "w-full p-2 bg-white border border-slate-200 rounded-xl text-slate-700 font-medium focus:border-[#5680F9] outline-none disabled:bg-slate-50";
 
@@ -68,12 +64,7 @@ const HeaderBar = ({
   setView,
   setStep,
   onNewQuote,
-}: {
-  view: string;
-  setView: (v: "list" | "create" | "catalog") => void;
-  setStep: (s: number) => void;
-  onNewQuote?: () => void;
-}) => {
+}: HeaderBarProps) => {
   return (
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-3">
@@ -86,7 +77,7 @@ const HeaderBar = ({
           </button>
         )}
         <h1 className="text-xl font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
-          {view === "list" ? "Cotizaciones" : view === "create" ? "Cotización R-CM003" : "Catálogo de Tarifas"}
+          {view === "list" ? "Cotizaciones" : view === "create" ? "Nueva cotización" : "Catálogo de Tarifas"}
         </h1>
       </div>
       {view === "list" && (
@@ -117,16 +108,32 @@ const ItemsTable = ({
   tarifasOptions,
   getMagnitudesByTipo,
   getInstrumentosByMagnitudAndTipo,
-}: {
-  itemsList: QuoteItem[];
-  target: "create" | "modal";
-  manejarCambioFila: <K extends keyof QuoteItem>(index: number, propiedad: K, valor: QuoteItem[K], target: "create" | "modal") => void;
-  eliminarFila: (id: number, target: "create" | "modal") => void;
-  tarifasOptions: TarifaOption[];
-  getMagnitudesByTipo: (tipo: string) => string[];
-  getInstrumentosByMagnitudAndTipo: (magnitud: string, tipo: string) => TarifaOption[];
-}) => {
-  const tiposServicio = Array.from(new Set(tarifasOptions.map((t) => t.tipoServicio)));
+}: ItemsTableProps) => {
+  const tiposServicio = useMemo(
+    () => Array.from(new Set(tarifasOptions.map((t) => t.tipoServicio))),
+    [tarifasOptions]
+  );
+
+  const magnitudesPorTipo = useMemo(() => {
+    const map = new Map<string, string[]>();
+    tarifasOptions.forEach((t) => {
+      const lista = map.get(t.tipoServicio) ?? [];
+      if (!lista.includes(t.magnitud)) lista.push(t.magnitud);
+      map.set(t.tipoServicio, lista);
+    });
+    return map;
+  }, [tarifasOptions]);
+
+  const instrumentosPorTipoMagnitud = useMemo(() => {
+    const map = new Map<string, TarifaOption[]>();
+    tarifasOptions.forEach((t) => {
+      const key = `${t.magnitud}|${t.tipoServicio}`;
+      const lista = map.get(key) ?? [];
+      lista.push(t);
+      map.set(key, lista);
+    });
+    return map;
+  }, [tarifasOptions]);
 
   return (
     <div className="bg-white border border-slate-100 rounded-xl overflow-x-auto">
@@ -146,11 +153,11 @@ const ItemsTable = ({
         <tbody className="divide-y divide-slate-100">
           {itemsList.map((fila, index) => {
             const magnitudesFiltradas = fila.tipoServicio
-              ? getMagnitudesByTipo(fila.tipoServicio)
+              ? (magnitudesPorTipo.get(fila.tipoServicio) ?? [])
               : [];
 
             const instrumentosFiltrados = fila.magnitud && fila.tipoServicio
-              ? getInstrumentosByMagnitudAndTipo(fila.magnitud, fila.tipoServicio)
+              ? (instrumentosPorTipoMagnitud.get(`${fila.magnitud}|${fila.tipoServicio}`) ?? [])
               : [];
 
             const esLugarBloqueado = fila.magnitud === "Temperatura" || fila.magnitud === "Humedad";
@@ -201,7 +208,7 @@ const ItemsTable = ({
                   <select
                     value={fila.lugarCalibracion}
                     disabled={esLugarBloqueado || !fila.magnitud}
-                    onChange={(e) => manejarCambioFila(index, "lugarCalibracion", e.target.value as any, target)}
+                    onChange={(e) => manejarCambioFila(index, "lugarCalibracion", e.target.value as QuoteItem["lugarCalibracion"], target)}
                     className={`${SELECT_CLASS} font-semibold disabled:bg-slate-100`}
                   >
                     <option value="Laboratorio">Laboratorio</option>
@@ -241,7 +248,7 @@ const ItemsTable = ({
   );
 };
 
-const VersionModal = ({
+export const VersionModal: React.FC<VersionModalProps> = ({
   isOpen,
   onClose,
   modalItems,
@@ -259,120 +266,238 @@ const VersionModal = ({
   tarifasOptions,
   getMagnitudesByTipo,
   getInstrumentosByMagnitudAndTipo,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  modalItems: QuoteItem[];
-  modalDescuento: number;
-  setModalDescuento: (v: number) => void;
-  modalViaticos: number;
-  setModalViaticos: (v: number) => void;
-  agregarFila: (target: "create" | "modal") => void;
-  eliminarFila: (id: number, target: "create" | "modal") => void;
-  manejarCambioFila: <K extends keyof QuoteItem>(index: number, propiedad: K, valor: QuoteItem[K], target: "create" | "modal") => void;
-  calculateTotal: (items: QuoteItem[], desc: number, viat: number) => number;
-  formatCurrency: (val: number) => string;
-  saveNewVersion: () => void;
-  isSaving: boolean;
-  tarifasOptions: TarifaOption[];
-  getMagnitudesByTipo: (tipo: string) => string[];
-  getInstrumentosByMagnitudAndTipo: (magnitud: string, tipo: string) => TarifaOption[];
 }) => {
+  // Estado para alternar entre edición y confirmación de historial
+  const [step, setStep] = useState<'EDIT' | 'CONFIRM_VERSION'>('EDIT');
+
+  // Estado local para los campos requeridos por `HistorialCambios`
+  const [auditForm, setAuditForm] = useState<cambiospayload>({
+    descripcion: '',
+    aprobo: '',
+    requiereValidacionHoja: false,
+    observaciones: '',
+  });
+
+  const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
+
   if (!isOpen) return null;
+
+  const handleClose = () => {
+    setStep('EDIT');
+    setAuditForm({ descripcion: '', aprobo: '', requiereValidacionHoja: false, observaciones: '' });
+    setFormErrors({});
+    onClose();
+  };
+
+  const validateAuditForm = (): boolean => {
+    const errors: { [key: string]: string } = {};
+    if (!auditForm.descripcion.trim()) {
+      errors.descripcion = 'La descripción del cambio es obligatoria.';
+    }
+    if (!auditForm.aprobo.trim()) {
+      errors.aprobo = 'Debe especificar quién aprueba este cambio.';
+    }
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateAuditForm()) return;
+    await saveNewVersion(auditForm);
+    handleClose();
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl w-full max-w-6.5xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
           <div>
-            <h2 className="text-sm font-bold text-slate-800">Generar nueva versión de cotización</h2>
-            <p className="text-[11px] text-slate-400 font-medium">Modifica los ítems. Al guardar, se actualizarán los ítems en la base de datos.</p>
+            <h2 className="text-sm font-bold text-slate-800">
+              {step === 'EDIT' ? 'Generar nueva versión de cotización' : 'Registro de Auditoría y Control de Versionado'}
+            </h2>
+            <p className="text-[11px] text-slate-400 font-medium">
+              {step === 'EDIT'
+                ? 'Paso 1: Modifica los ítems y estructura comercial.'
+                : 'Paso 2: Completa la información del cambio para la trazabilidad en PostgreSQL.'}
+            </p>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors">
+          <button onClick={handleClose} disabled={isSaving} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors">
             <X size={16} />
           </button>
         </div>
 
+        {/* Content Body */}
         <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-4">
+          {step === 'EDIT' ? (
+            /* PASO 1: Edición de Tabla e Ítems */
+            <>
+              <button
+                type="button"
+                onClick={() => agregarFila("modal")}
+                className="w-36 h-9 self-end bg-white text-slate-800 border border-slate-200 rounded-xl hover:bg-slate-50 font-bold text-xs shadow-sm transition-all"
+              >
+                Agregar ítems
+              </button>
+
+              <ItemsTable
+                itemsList={modalItems}
+                target="modal"
+                manejarCambioFila={manejarCambioFila}
+                eliminarFila={eliminarFila}
+                tarifasOptions={tarifasOptions}
+                getMagnitudesByTipo={getMagnitudesByTipo}
+                getInstrumentosByMagnitudAndTipo={getInstrumentosByMagnitudAndTipo}
+              />
+
+              <div className="w-full max-w-sm bg-slate-50 border border-slate-100 rounded-xl p-4 self-end flex flex-col gap-2">
+                <div className="flex justify-between items-center text-slate-500 font-medium text-xs">
+                  <span>Descuento comercial:</span>
+                  <select
+                    value={modalDescuento}
+                    onChange={(e) => setModalDescuento(Number(e.target.value))}
+                    className="p-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none"
+                  >
+                    <option value={0}>0 %</option>
+                    <option value={10}>10 %</option>
+                    <option value={15}>15 %</option>
+                    <option value={20}>20 %</option>
+                  </select>
+                </div>
+                <div className="flex justify-between items-center text-slate-500 font-medium text-xs">
+                  <span>Viáticos:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={modalViaticos}
+                    onChange={(e) => setModalViaticos(parseFloat(e.target.value) || 0)}
+                    className="w-24 p-1.5 border border-slate-200 bg-white rounded-lg font-mono text-right font-bold text-slate-700 outline-none"
+                  />
+                </div>
+                <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-xs font-bold text-slate-800">
+                  <span>Total versión:</span>
+                  <span className="text-sm font-black text-[#5680F9] font-mono">
+                    {formatCurrency(calculateTotal(modalItems, modalDescuento, modalViaticos))}
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* PASO 2: Formulario de Auditoría (HistorialCambios) */
+            <div className="max-w-xl mx-auto w-full space-y-4 py-2">
+              <div className="rounded-xl bg-slate-50 border border-slate-100 p-4 text-xs text-slate-600 flex flex-col gap-1">
+                <span className="font-bold text-slate-800">Resumen del Cambio</span>
+                <span>Ítems modificados: <strong className="text-slate-800">{modalItems.length}</strong></span>
+                <span>Total de esta versión: <strong className="text-[#5680F9] font-mono">{formatCurrency(calculateTotal(modalItems, modalDescuento, modalViaticos))}</strong></span>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-700">
+                  Descripción del cambio <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={auditForm.descripcion}
+                  onChange={(e) => setAuditForm({ ...auditForm, descripcion: e.target.value })}
+                  placeholder="Ej: Actualización de tarifas de calibración y adición de viáticos"
+                  className="p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#5680F9]/20 focus:border-[#5680F9]"
+                />
+                {formErrors.descripcion && <span className="text-[10px] text-rose-500 font-medium">{formErrors.descripcion}</span>}
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-700">
+                  Aprobado por (Nombre / Cargo) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={auditForm.aprobo}
+                  onChange={(e) => setAuditForm({ ...auditForm, aprobo: e.target.value })}
+                  placeholder="Ej: Ing. Carlos M. (Líder Técnico)"
+                  className="p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#5680F9]/20 focus:border-[#5680F9]"
+                />
+                {formErrors.aprobo && <span className="text-[10px] text-rose-500 font-medium">{formErrors.aprobo}</span>}
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="requiereValidacionHoja"
+                  checked={auditForm.requiereValidacionHoja}
+                  onChange={(e) => setAuditForm({ ...auditForm, requiereValidacionHoja: e.target.checked })}
+                  className="rounded border-slate-300 text-[#5680F9] focus:ring-[#5680F9] h-4 w-4"
+                />
+                <label htmlFor="requiereValidacionHoja" className="text-xs font-semibold text-slate-700 cursor-pointer">
+                  ¿Requiere validación en hoja técnica/de campo?
+                </label>
+              </div>
+
+              <div className="flex flex-col gap-1 pt-1">
+                <label className="text-xs font-bold text-slate-700">Observaciones adicionales</label>
+                <textarea
+                  rows={2}
+                  value={auditForm.observaciones || ''}
+                  onChange={(e) => setAuditForm({ ...auditForm, observaciones: e.target.value })}
+                  placeholder="Comentarios u observaciones opcionales..."
+                  className="p-2.5 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#5680F9]/20 focus:border-[#5680F9]"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-between items-center px-6 py-3.5 border-t border-slate-100 bg-slate-50/50">
           <button
-            onClick={() => agregarFila("modal")}
-            className="w-36 h-9 self-end bg-white text-slate-800 border border-slate-200 rounded-xl hover:bg-slate-50 font-bold text-xs shadow-sm transition-all"
+            onClick={handleClose}
+            disabled={isSaving}
+            className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 bg-white font-bold text-xs hover:bg-slate-50 transition-colors"
           >
-            Agregar items
+            Cancelar
           </button>
 
-          <ItemsTable
-            itemsList={modalItems}
-            target="modal"
-            manejarCambioFila={manejarCambioFila}
-            eliminarFila={eliminarFila}
-            tarifasOptions={tarifasOptions}
-            getMagnitudesByTipo={getMagnitudesByTipo}
-            getInstrumentosByMagnitudAndTipo={getInstrumentosByMagnitudAndTipo}
-          />
-
-          <div className="w-full max-w-sm bg-slate-50 border border-slate-100 rounded-xl p-4 self-end flex flex-col gap-2">
-            <div className="flex justify-between items-center text-slate-500 font-medium text-xs">
-              <span>Descuento comercial:</span>
-              <select
-                value={modalDescuento}
-                onChange={(e) => setModalDescuento(Number(e.target.value))}
-                className="p-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none"
+          <div className="flex gap-2">
+            {step === 'CONFIRM_VERSION' && (
+              <button
+                onClick={() => setStep('EDIT')}
+                disabled={isSaving}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 bg-white font-bold text-xs hover:bg-slate-50 transition-colors flex items-center gap-1.5"
               >
-                <option value={0}>0 %</option>
-                <option value={10}>10 %</option>
-                <option value={15}>15 %</option>
-                <option value={20}>20 %</option>
-              </select>
-            </div>
-            <div className="flex justify-between items-center text-slate-500 font-medium text-xs">
-              <span>Viáticos:</span>
-              <input
-                type="number"
-                min="0"
-                value={modalViaticos}
-                onChange={(e) => setModalViaticos(parseFloat(e.target.value) || 0)}
-                className="w-24 p-1.5 border border-slate-200 bg-white rounded-lg font-mono text-right font-bold text-slate-700 outline-none"
-              />
-            </div>
-            <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-xs font-bold text-slate-800">
-              <span>Total versión:</span>
-              <span className="text-sm font-black text-[#5680F9] font-mono">
-                {formatCurrency(calculateTotal(modalItems, modalDescuento, modalViaticos))}
-              </span>
-            </div>
+                <ArrowLeft size={14} /> Volver a ítems
+              </button>
+            )}
+
+            {step === 'EDIT' ? (
+              <button
+                onClick={() => setStep('CONFIRM_VERSION')}
+                disabled={modalItems.length === 0}
+                className="px-4 py-2 rounded-xl bg-[#5680F9] text-white font-bold text-xs hover:bg-[#4069E2] shadow-md shadow-[#5680F9]/10 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                Continuar a versionado <ArrowRight size={14} />
+              </button>
+            ) : (
+              <button
+                onClick={handleSubmit}
+                disabled={isSaving}
+                className="px-4 py-2 rounded-xl bg-emerald-500 text-white font-bold text-xs hover:bg-emerald-600 shadow-md shadow-emerald-500/10 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isSaving ? (
+                  'Guardando cambios...'
+                ) : (
+                  <>
+                    <CheckCircle2 size={14} /> Guardar cambios y versionar
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 px-6 py-3.5 border-t border-slate-100 bg-slate-50/50">
-          <button onClick={onClose} disabled={isSaving} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 bg-white font-bold text-xs hover:bg-slate-50 transition-colors">
-            Cancelar
-          </button>
-          <button onClick={saveNewVersion} disabled={isSaving} className="px-4 py-2 rounded-xl bg-emerald-500 text-white font-bold text-xs hover:bg-emerald-600 shadow-md shadow-emerald-500/10 transition-colors disabled:opacity-50">
-            {isSaving ? "Guardando..." : "Guardar cambios y versionar"}
-          </button>
-        </div>
       </div>
     </div>
   );
 };
-
-export interface HistorialItem {
-  id: number;
-  estadoAnterior: string | null;
-  estadoNuevo: string;
-  idUsuario: number;
-  createdAt: Date | string;
-  usuario?: {
-    nombreCompleto: string;
-  };
-}
-
-interface TimelineHistorialProps {
-  items: HistorialItem[];
-  loading?: boolean;
-  estadoActual?: string; // opcional, por si el último estado no coincide con el historial
-}
 
 // Secuencia fija del flujo de estados (puedes personalizarla)
 const FLUJO_ESTADOS = [
@@ -498,13 +623,6 @@ export const TimelineHistorial: React.FC<TimelineHistorialProps> = ({
 // ==========================================
 // Tabla de cotizaciones con edición inline de estados
 // ==========================================
-const transicionesValidas: Record<string, Estados[]> = {
-  BORRADOR:       [Estados.ENVIADA],
-  ENVIADA:        [Estados.APROBADA, Estados.RECHAZADA],
-  APROBADA:       [Estados.EN_SEGUIMIENTO],
-  RECHAZADA:      [],  // Puedes agregar más según necesites
-  EN_SEGUIMIENTO: [],
-};
 
 const QuotationListTable = ({
   filtered,
@@ -512,13 +630,7 @@ const QuotationListTable = ({
   formatCurrency,
   onEstadoChange,
   updatingId,
-}: {
-  filtered: any[];
-  setSelectedQuotation: (c: any) => void;
-  formatCurrency: (v: number) => string;
-  onEstadoChange: (id: number, nuevoEstado: Estados) => void;
-  updatingId: number | null;
-}) => {
+}: QuotationListTableProps) => {
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden">
       <table className="w-full text-left text-xs">
@@ -598,17 +710,7 @@ const QuotationDetailView = ({
   historialitems,
   formatCurrency,
   loadingHistorial,
-
-}: {
-  selectedQuotation: any;
-  openVersionModal: () => void;
-  showToast: (msg: string) => void;
-  setSelectedQuotation: (q: any) => void;
-historialitems:HistorialItem[];
-  formatCurrency: (v: number) => string;
-   loadingHistorial:boolean;
-  
-}) => {
+}: QuotationDetailViewProps) => {
   const historial: HistorialItem[] = historialitems || [];
 
   return (
@@ -645,7 +747,7 @@ historialitems:HistorialItem[];
         <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Detalle de Ítems</div>
           <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-            {selectedQuotation.detalles?.map((det: any) => (
+            {selectedQuotation.detalles?.map((det) => (
               <div key={det.idDetalle} className="p-2 bg-white rounded-lg border border-slate-200 text-xs flex justify-between">
                 <span>{det.equipoDescripcion} ({det.magnitud})</span>
                 <span className="font-mono font-bold">{formatCurrency(Number(det.valorTotal))}</span>
@@ -657,7 +759,7 @@ historialitems:HistorialItem[];
 
       {/* Sección de historial de estados */}
       <div className="mt-6 border-t border-slate-100 pt-4">
-        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Historial de cambios de estado</div>
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Pipeline de cotizacion</div>
         <TimelineHistorial items={historial}loading={loadingHistorial} />
       </div>
     </div>
@@ -688,64 +790,17 @@ const CreateQuotationWizard = ({
   tarifasOptions,
   getMagnitudesByTipo,
   getInstrumentosByMagnitudAndTipo,
-}: {
-  step: number;
-  setStep: React.Dispatch<React.SetStateAction<number>>;
-  items: QuoteItem[];
-  agregarFila: (target: "create" | "modal") => void;
-  eliminarFila: (id: number, target: "create" | "modal") => void;
-  manejarCambioFila: <K extends keyof QuoteItem>(index: number, propiedad: K, valor: QuoteItem[K], target: "create" | "modal") => void;
-  descuento: number;
-  setDescuento: (v: number) => void;
-  viaticos: number;
-  setViaticos: (v: number) => void;
-  calculateTotal: (items: QuoteItem[], desc: number, viat: number) => number;
-  formatCurrency: (val: number) => string;
-  showToast: (msg: string) => void;
-  setView: (v: "list" | "create" | "catalog") => void;
-  guardarCotizacion: (estado: Estados) => Promise<void>;
-  isSaving: boolean;
-  idClienteSeleccionado: number | null;
-  setIdClienteSeleccionado: (id: number) => void;
-  tarifasOptions: TarifaOption[];
-  getMagnitudesByTipo: (tipo: string) => string[];
-  getInstrumentosByMagnitudAndTipo: (magnitud: string, tipo: string) => TarifaOption[];
-}) => {
-  const [clientes, setClientes] = useState<any[]>([]);
+}: CreateQuotationWizardProps) => {
+  const clientes = useDbTable("clientes");
   const [search, setSearch] = useState<string>("");
-  const [filteredClientes, setFilteredClientes] = useState<any[]>([]);
 
-  // Cargar clientes
-  useEffect(() => {
-    async function initClientes() {
-      try {
-        console.log("Cargando clientes...");
-        const res = await obtenerClientes();
-        if (res.success) {
-          setClientes(res.data || []);
-        } else {
-          throw new Error("Error al consultar clientes");
-        }
-      } catch (e) {
-        console.error(e);
-        setClientes([]);
-      }
-    }
-    initClientes();
-  }, []);
-
-  // Filtrar clientes por búsqueda (coincidencia parcial)
-  useEffect(() => {
+  const filteredClientes: ClienteModel[] = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    if (normalizedSearch === "") {
-      setFilteredClientes(clientes || []);
-    } else {
-      const filtrados = (clientes || []).filter((c) =>
-        (c.razonSocial?.toLowerCase() || "").includes(normalizedSearch) ||
-        (c.nitCedula || "").includes(normalizedSearch)
-      );
-      setFilteredClientes(filtrados);
-    }
+    if (!normalizedSearch) return clientes || [];
+    return (clientes || []).filter((c) =>
+      (c.razonSocial?.toLowerCase() || "").includes(normalizedSearch) ||
+      (c.nitCedula || "").includes(normalizedSearch)
+    );
   }, [search, clientes]);
 
   return (
@@ -778,7 +833,7 @@ const CreateQuotationWizard = ({
               {filteredClientes.length === 0 ? (
                 <div className="py-2 px-3 text-slate-400 text-xs">No se encontraron clientes</div>
               ) : (
-                filteredClientes.map((c: any) => (
+                filteredClientes.map((c: ClienteModel) => (
                   <div
                     key={c.idCliente}
                     onClick={() => setIdClienteSeleccionado(c.idCliente)}
@@ -877,27 +932,15 @@ const CreateQuotationWizard = ({
 // COMPONENTE PRINCIPAL
 // ==========================================
 
-type TarifaOption = {
-  tipoServicio: string;
-  magnitud: string;
-  instrumento: string;
-  norma: string;
-  precio: number;
-};
-
-
-
-// ==========================================
-// Tipos y Estilos (sin cambios)
-// ==========================================
-// ... (todos los tipos y constantes que ya tienes, incluyendo estadoStyle, QuoteItem, etc.)
 import { obtenerUsuariosPorPermiso } from "@/app/action_module/administration";
 export default function Cotizaciones() {
-  const cotizaciones = useDbTable("cotizaciones");
+  const cotizacionesStore = useDbTable("cotizaciones") as unknown as CotizacionVista[];
   const usuarios = useDbTable("usuarios");
-  const { setDbState } = useDbActions();
+  const tarifasStore = useDbTable("tarifas");
+  const loadingCotizaciones = useDbLoading("cotizaciones");
+  const { setDbState, loadTable } = useDbActions();
 
-  const [view, setView] = useState<"list" | "create" | "catalog">("list");
+  const [view, setView] = useState<ViewCotizacion>("list");
   const [search, setSearch] = useState("");
   const [filterEstado, setFilterEstado] = useState<string>("Todos");
   const [step, setStep] = useState(1);
@@ -907,19 +950,16 @@ export default function Cotizaciones() {
   const [items, setItems] = useState<QuoteItem[]>([]);
   const [descuento, setDescuento] = useState<number>(0);
   const [viaticos, setViaticos] = useState<number>(0);
-  const [selectedQuotation, setSelectedQuotation] = useState<any | null>(null);
+  const [selectedQuotation, setSelectedQuotation] = useState<CotizacionVista | null>(null);
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
   const [modalItems, setModalItems] = useState<QuoteItem[]>([]);
   const [modalDescuento, setModalDescuento] = useState<number>(0);
   const [modalViaticos, setModalViaticos] = useState<number>(0);
   const [toast, setToast] = useState("");
-  const [tarifasOptions, setTarifasOptions] = useState<TarifaOption[]>([]);
 
-  // Estados de carga
-  const [loadingCotizaciones, setLoadingCotizaciones] = useState<boolean>(false);
-  const [loadingTarifas, setLoadingTarifas] = useState<boolean>(false);
-
-  const parseAmount = (value: string) => Number(value.replace(/[^0-9]/g, "")) || 0;
+  // ==========================================
+  // FUNCIONES DE CARGA DESDE EL SERVIDOR
+  // ==========================================
   const formatCurrency = (value: number) =>
     value.toLocaleString("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
@@ -927,15 +967,14 @@ export default function Cotizaciones() {
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
   const cargarCotizaciones = useCallback(async () => {
-    setLoadingCotizaciones(true);
     const response = await obtenerTodasLasCotizaciones();
     if (response.ok && Array.isArray(response.data)) {
-      const parse_data = response.data.map((c) => ({
+      const parse_data: CotizacionVista[] = response.data.map((c) => ({
         idCotizacion: c.idCotizacion,
         codigo: c.codigo,
         idCliente: c.idCliente,
         montoTotal: Number(c.montoTotal ?? 0),
-        estado: c.estado as any,
+        estado: c.estado,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
         viaticos: Number(c.viaticos ?? 0),
@@ -954,82 +993,43 @@ export default function Cotizaciones() {
         })),
         cliente: {
           idCliente: c.idCliente,
-          razonSocial: c.cliente?.razonSocial,
-          correo: c.cliente?.correo,
+          razonSocial: c.cliente?.razonSocial ?? null,
+          correo: c.cliente?.correo ?? null,
         },
         historialEstados: c.historialEstados,
       }));
 
-      // Cargar usuarios con permiso (solo si la función está disponible)
-      try {
-        const usuario = await obtenerUsuariosPorPermiso();
-        const use = usuario.data ?? [];
-        setDbState((prev) => ({
-          ...prev,
-          cotizaciones: parse_data as any,
-          usuarios: use as any,
-        }));
-      } catch {
-        // Si falla, guardamos al menos las cotizaciones
-        setDbState((prev) => ({
-          ...prev,
-          cotizaciones: parse_data as any,
-        }));
-      }
+      setDbState((prev) => ({
+        ...prev,
+        cotizaciones: parse_data as unknown as CotizacionModel[],
+      }));
     }
-    setLoadingCotizaciones(false);
   }, [setDbState]);
 
-  const cargarTarifasOptions = useCallback(async () => {
-    setLoadingTarifas(true);
-    try {
-      const res = await obtenerTodasLasTarifas();
-      if (res.ok && res.data) {
-        const options = res.data.map((t: any) => {
-          const historial = t.historial || [];
-          const activo = historial.find((h: any) => !h.fechaFin) || historial[0];
-          const precio = activo ? Number(activo.precioU) : 0;
-          return {
-            tipoServicio: t.tipoServicio || "ACREDITADO",
-            magnitud: t.magnitud || "",
-            instrumento: t.Instrumento || t.instrumento || "Genérico",
-            norma: t.Norma || "N/A",
-            precio: precio,
-          };
-        });
-        setTarifasOptions(options);
-      } else {
-        // Fallback a mock si falla
-        const fallback = catalogItems.map((item) => ({
-          tipoServicio: item.acreditado ? "ACREDITADO" : "NO ACREDITADO",
-          magnitud: item.magnitud,
-          instrumento: item.instrumento,
-          norma: item.norma,
-          precio: parseAmount(item.precio2026),
-        }));
-        setTarifasOptions(fallback);
-      }
-    } catch (e) {
-      console.error("Error cargando tarifas:", e);
-      const fallback = catalogItems.map((item) => ({
-        tipoServicio: item.acreditado ? "ACREDITADO" : "NO ACREDITADO",
-        magnitud: item.magnitud,
-        instrumento: item.instrumento,
-        norma: item.norma,
-        precio: parseAmount(item.precio2026),
-      }));
-      setTarifasOptions(fallback);
-    }
-    setLoadingTarifas(false);
-  }, []);
+  // Tarifas derivadas del store (sin estado local ni fallback mock)
+  const tarifasOptions: TarifaOption[] = useMemo(() => {
+    return (tarifasStore ?? []).map((t) => {
+      const historial = t.historial || [];
+      const activo = historial.find((h) => !h.fechaFin) || historial[0];
+      const precio = activo ? Number(activo.precioU) : 0;
+      return {
+        tipoServicio: t.tipoServicio || "ACREDITADO",
+        magnitud: t.magnitud || "",
+        instrumento: t.Instrumento || "Genérico",
+        norma: t.Norma || "N/A",
+        precio,
+      };
+    });
+  }, [tarifasStore]);
 
   // ==========================================
   // EFECTO INICIAL
   // ==========================================
   useEffect(() => {
     cargarCotizaciones();
-    cargarTarifasOptions();
-  }, []);
+    loadTable("tarifas");
+    loadTable("clientes");
+  }, [cargarCotizaciones, loadTable]);
 
   // ==========================================
   // FUNCIONES DE FILTRO PARA TARIFAS
@@ -1065,7 +1065,7 @@ export default function Cotizaciones() {
 
   const openVersionModal = useCallback(() => {
     if (!selectedQuotation) return;
-    const mapeados = (selectedQuotation.detalles || []).map((d: any) => ({
+    const mapeados = (selectedQuotation.detalles || []).map((d: CotizacionDetalleVista) => ({
       id: d.idDetalle,
       tipoServicio: d.tipoServicio,
       magnitud: d.magnitud,
@@ -1073,7 +1073,7 @@ export default function Cotizaciones() {
       norma: d.normaTecnica || "N/A",
       cantidad: d.cantidad,
       valorUnitario: Number(d.valorUnitario),
-      lugarCalibracion: (d.sitio || "Laboratorio") as any,
+      lugarCalibracion: (d.sitio || "Laboratorio") as QuoteItem["lugarCalibracion"],
     }));
     setModalItems(mapeados);
     setModalDescuento(selectedQuotation.descuento || 0);
@@ -1136,7 +1136,7 @@ export default function Cotizaciones() {
     }
   }, [showToast, cargarCotizaciones]);
 
-  const saveNewVersion = useCallback(async () => {
+  const saveNewVersion = useCallback(async (_auditForm: cambiospayload) => {
     if (!selectedQuotation) return;
     setIsSaving(true);
     try {
@@ -1227,10 +1227,13 @@ export default function Cotizaciones() {
         fila.valorUnitario = 0;
       }
     } else {
-      (fila as any)[propiedad] = valor;
+      filasActualizadas[index] = { ...filasActualizadas[index], [propiedad]: valor };
     }
 
-    filasActualizadas[index] = fila;
+    if (propiedad !== "lugarCalibracion") {
+      filasActualizadas[index] = fila;
+    }
+
     if (target === "create") setItems(filasActualizadas);
     else setModalItems(filasActualizadas);
   }, [items, modalItems, tarifasOptions]);
@@ -1240,21 +1243,21 @@ export default function Cotizaciones() {
   // ==========================================
 
   // Lista filtrada según búsqueda y estado
-  const filtered = useMemo(() => {
-    return (cotizaciones || []).filter((c) => {
+  const filtered: CotizacionVista[] = useMemo(() => {
+    return (cotizacionesStore || []).filter((c) => {
       const matchSearch = !search ||
         c.codigo.toLowerCase().includes(search.toLowerCase()) ||
         (c.cliente?.razonSocial && c.cliente.razonSocial.toLowerCase().includes(search.toLowerCase()));
       const matchFilter = filterEstado === "Todos" || c.estado === filterEstado;
       return matchSearch && matchFilter;
     });
-  }, [cotizaciones, search, filterEstado]);
+  }, [cotizacionesStore, search, filterEstado]);
 
   // Historial formateado para la cotización seleccionada (para Timeline)
   const historialFormateado: HistorialItem[] = useMemo(() => {
     if (!selectedQuotation?.historialEstados) return [];
 
-    return selectedQuotation.historialEstados.map((h: any) => {
+    return selectedQuotation.historialEstados.map((h: HistorialEstadoCotizacionModel) => {
       const usuario = usuarios?.find((e) => e.idUsuario === h.idUsuario);
       return {
         id: h.id,
@@ -1382,7 +1385,7 @@ export default function Cotizaciones() {
 
       {view === "catalog" && <CatalogTableView />}
 
-      <AiAgentWidget activeContext={"ef"} />
+      <AiAgentWidget activeContext={selectedQuotation} />
     </div>
   );
 }

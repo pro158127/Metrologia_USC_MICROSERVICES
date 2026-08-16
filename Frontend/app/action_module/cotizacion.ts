@@ -2,61 +2,17 @@
 
 import { prisma } from "@/app/lib/data_base/prisma";
 import { auth } from '@/app/Login/types/auth';
-import { Cotizacion, Estados, Prisma } from '@prisma/client';
-import { CotizacionModel } from "../componets/tables_recharge";
-
-// ==========================================
-// TYPES
-// ==========================================
-export type CotizacionConDetalles = Prisma.CotizacionGetPayload<{
-  include: {
-    cliente: true;
-    detalles: true;
-  };
-}>;
-
-export type ActionResponse<T> = {
-  ok: boolean;
-  data?: T;
-  error?: string;
-  meta?: {
-    total: number;
-    page: number;
-    totalPages: number;
-    limit?: number;
-  };
-};
-
-export interface DetalleInput {
-  equipoDescripcion: string;
-  tipoServicio: string;
-  magnitud: string;
-  normaTecnica?: string;
-  cantidad: number;
-  valorUnitario: number;
-}
-
-export interface CrearCotizacionInput {
-  codigo: string;
-  idCliente: number;
-  viaticos?: number;
-  descuento?: number;
-  estado?: Estados; // 👈 nuevo campo opcional
-  detalles: DetalleInput[];
-}
-
-export interface ActualizarCotizacionInput extends Partial<CrearCotizacionInput> {
-  idCotizacion: number;
-  estado?: Estados;
-}
-
-export interface ObtenerCotizacionesParams {
-  page?: number;
-  limit?: number;
-  estado?: Estados;
-  idCliente?: number;
-  busqueda?: string;
-}
+import { Estados, Prisma } from '@prisma/client';
+import { CotizacionModel } from "@/tipos/entidades";
+import type {
+  CotizacionConDetalles,
+  CrearCotizacionInput,
+  ActualizarCotizacionInput,
+  ObtenerCotizacionesParams,
+  DetalleInput,
+} from "@/tipos/cotizacion";
+import { transicionesValidas } from "@/tipos/cotizacion";
+import type { ActionResponse } from "@/tipos/comunes";
 
 // ==========================================
 // VALIDACIÓN DE PERMISOS (sin cambios)
@@ -240,7 +196,7 @@ export async function actualizarCotizacion(
 
       // Si cambia el estado, validar transición
       if (data.estado && data.estado !== existente.estado) {
-        const permitidos = TRANSICIONES_VALIDAS[existente.estado] || [];
+        const permitidos = transicionesValidas[existente.estado] || [];
         if (!permitidos.includes(data.estado)) {
           throw new Error(`Transición no permitida de ${existente.estado} a ${data.estado}`);
         }
@@ -298,13 +254,6 @@ export async function actualizarCotizacion(
 // ==========================================
 // CAMBIAR ESTADO (ya existente)
 // ==========================================
-const TRANSICIONES_VALIDAS: Record<Estados, Estados[]> = {
-  BORRADOR: [Estados.ENVIADA],
-  ENVIADA: [Estados.APROBADA, Estados.RECHAZADA],
-  APROBADA: [Estados.EN_SEGUIMIENTO],
-  RECHAZADA: [], // por ahora sin retorno
-  EN_SEGUIMIENTO: [], // estado final
-};
 
 export async function cambiarEstadoCotizacion(
   idCotizacion: number,
@@ -326,7 +275,7 @@ export async function cambiarEstadoCotizacion(
       if (!actual) throw new Error('Cotización no encontrada');
 
       // Validar transición permitida
-      const permitidos = TRANSICIONES_VALIDAS[actual.estado] || [];
+      const permitidos = transicionesValidas[actual.estado] || [];
       if (!permitidos.includes(nuevoEstado)) {
         throw new Error(`Transición no permitida de ${actual.estado} a ${nuevoEstado}`);
       }

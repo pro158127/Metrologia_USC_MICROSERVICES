@@ -1,5 +1,7 @@
 // 1. Imports
-import { useState } from "react";
+"use client";
+
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   Info,
   CheckCircle,
@@ -11,108 +13,22 @@ import {
   Clock,
   ShieldCheck,
 } from "lucide-react";
-
-// Tipos e Interfaces
-type SortField =
-  | "ot"
-  | "estampilla"
-  | "instrumento"
-  | "cliente"
-  | "tecnico"
-  | "tipo"
-  | "fecha"
-  | "espera";
-
-type SortDir = "asc" | "desc";
-
-interface Certificado {
-  ot: string;
-  estampilla: string;
-  cliente: string;
-  instrumento: string;
-  tecnico: string;
-  tipo: string;
-  fecha: string;
-  espera: number;
-  bloqueado: boolean;
-  status?: "pendiente" | "aprobado" | "devuelto";
-}
-
-// Constantes y Mocks
-const USER_ROLE = "Director";
-
-const initialCerts: Certificado[] = [
-  {
-    ot: "OT-2026-089",
-    estampilla: "EST-2026-991",
-    cliente: "Empresa ABC S.A.S",
-    instrumento: "Termómetro Fluke 51",
-    tecnico: "J. Martínez",
-    tipo: "Acreditado",
-    fecha: "2026-06-09 10:23",
-    espera: 2,
-    bloqueado: false,
-  },
-  {
-    ot: "OT-2026-087",
-    estampilla: "EST-2026-992",
-    cliente: "Clínica del Sur IPS",
-    instrumento: "Manómetro Wika P-30",
-    tecnico: "M. Torres",
-    tipo: "Acreditado",
-    fecha: "2026-06-09 09:15",
-    espera: 4,
-    bloqueado: false,
-  },
-  {
-    ot: "OT-2026-085",
-    estampilla: "EST-2026-993",
-    cliente: "USC Ingeniería",
-    instrumento: "Balanza OHAUS Pioneer",
-    tecnico: "J. Martínez",
-    tipo: "Acreditado",
-    fecha: "2026-06-08 16:40",
-    espera: 18,
-    bloqueado: false,
-  },
-  {
-    ot: "OT-2026-083",
-    estampilla: "EST-2026-994",
-    cliente: "Metales del Valle Ltda.",
-    instrumento: "Cinta métrica Stanley",
-    tecnico: "P. Ríos",
-    tipo: "Acreditado",
-    fecha: "2026-06-08 14:22",
-    espera: 20,
-    bloqueado: false,
-  },
-  {
-    ot: "OT-2026-081",
-    estampilla: "EST-2026-995",
-    cliente: "Industrias Andinas S.A.",
-    instrumento: "Higrómetro Testo 610",
-    tecnico: "Luis Burgos",
-    tipo: "Acreditado",
-    fecha: "2026-06-08 11:00",
-    espera: 23,
-    bloqueado: true,
-  },
-  {
-    ot: "OT-2026-079",
-    estampilla: "EST-2026-996",
-    cliente: "Alimentos del Valle S.A.",
-    instrumento: "Termómetro PT-100",
-    tecnico: "M. Torres",
-    tipo: "No acreditado",
-    fecha: "2026-06-07 09:30",
-    espera: 48,
-    bloqueado: false,
-  },
-];
+import { useSession } from "next-auth/react";
+import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import type {
+  SortField,
+  SortDir,
+  CertificadoRevision,
+  ToastNotificationProps,
+  RejectModalProps,
+  ApproveModalProps,
+  CertificatesTableProps,
+  PDFViewerPanelProps,
+} from "@/tipos/calibracion";
 
 // 2. Declaración de Componentes Hijos (Extraídos)
 
-const ToastNotification = ({ message }: { message: string }) => {
+const ToastNotification = ({ message }: ToastNotificationProps) => {
   if (!message) return null;
   return (
     <div className="fixed top-4 right-4 z-50 px-4 py-3 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-lg border border-slate-800">
@@ -129,15 +45,7 @@ const RejectModal = ({
   setMotivoError,
   setShowDevolver,
   handleDevolver,
-}: {
-  showDevolver: string | null;
-  motivo: string;
-  motivoError: boolean;
-  setMotivo: (val: string) => void;
-  setMotivoError: (val: boolean) => void;
-  setShowDevolver: (val: string | null) => void;
-  handleDevolver: (ot: string) => void;
-}) => {
+}: RejectModalProps) => {
   if (!showDevolver) return null;
 
   return (
@@ -212,11 +120,7 @@ const ApproveModal = ({
   showAprobar,
   setShowAprobar,
   handleAprobar,
-}: {
-  showAprobar: string | null;
-  setShowAprobar: (val: string | null) => void;
-  handleAprobar: (ot: string) => void;
-}) => {
+}: ApproveModalProps) => {
   if (!showAprobar) return null;
 
   return (
@@ -251,7 +155,7 @@ const ApproveModal = ({
   );
 };
 
-const HeaderSection = ({ pendingCount }: { pendingCount: number }) => (
+const HeaderSection = ({ pendingCount, rol }: { pendingCount: number; rol: string }) => (
   <div className="flex items-start justify-between mb-5">
     <div>
       <h1 className="text-xl font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
@@ -267,7 +171,7 @@ const HeaderSection = ({ pendingCount }: { pendingCount: number }) => (
           </span>
         </div>
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-2xl bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-bold uppercase tracking-wider">
-          <ShieldCheck size={14} className="text-[#5680F9]" /> Rol: {USER_ROLE}
+          <ShieldCheck size={14} className="text-[#5680F9]" /> Rol: {rol}
         </div>
       </div>
     </div>
@@ -289,148 +193,131 @@ const FakePDFViewer = ({
   ot,
   estampilla,
   instrumento,
+  datos = {},
 }: {
   ot: string;
   estampilla: string;
   instrumento: string;
-}) => (
-  <div
-    className="flex flex-col h-full rounded-xl overflow-hidden"
-    style={{ background: "#F5F7FA", border: "1px solid #E6EAF2" }}
-  >
+  datos?: Record<string, string>;
+}) => {
+  const valor = (clave: string) => datos?.[clave] ?? "—";
+  return (
     <div
-      className="flex items-center gap-2 px-4 py-2.5"
-      style={{ background: "#1F2A44", borderBottom: "1px solid #2D3F63" }}
+      className="flex flex-col h-full rounded-xl overflow-hidden"
+      style={{ background: "#F5F7FA", border: "1px solid #E6EAF2" }}
     >
-      <FileText size={14} color="#7A9CFA" />
-      <span style={{ color: "#AFC4FD", fontSize: 12, fontWeight: 500 }}>
-        CERT-{ot}.pdf
-      </span>
-      <span
-        className="ml-auto px-2 py-0.5 rounded"
-        style={{
-          background: "rgba(86,128,249,0.2)",
-          color: "#7A9CFA",
-          fontSize: 10,
-        }}
+      <div
+        className="flex items-center gap-2 px-4 py-2.5"
+        style={{ background: "#1F2A44", borderBottom: "1px solid #2D3F63" }}
       >
-        Vista previa
-      </span>
-    </div>
-    <div
-      className="flex-1 flex flex-col items-center justify-start p-6 overflow-y-auto"
-      style={{ background: "#FFFFFF" }}
-    >
-      <div className="w-full max-w-sm">
-        <div
-          className="text-center mb-4 pb-4"
-          style={{ borderBottom: "2px solid #E6EAF2" }}
+        <FileText size={14} color="#7A9CFA" />
+        <span style={{ color: "#AFC4FD", fontSize: 12, fontWeight: 500 }}>
+          CERT-{ot}.pdf
+        </span>
+        <span
+          className="ml-auto px-2 py-0.5 rounded"
+          style={{
+            background: "rgba(86,128,249,0.2)",
+            color: "#7A9CFA",
+            fontSize: 10,
+          }}
         >
+          Vista previa
+        </span>
+      </div>
+      <div
+        className="flex-1 flex flex-col items-center justify-start p-6 overflow-y-auto"
+        style={{ background: "#FFFFFF" }}
+      >
+        <div className="w-full max-w-sm">
           <div
-            style={{
-              color: "#1F2A44",
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "1px",
-            }}
+            className="text-center mb-4 pb-4"
+            style={{ borderBottom: "2px solid #E6EAF2" }}
           >
-            LABORATORIO DE METROLOGÍA
-          </div>
-          <div
-            style={{
-              color: "#5680F9",
-              fontSize: 10,
-              letterSpacing: "0.5px",
-            }}
-          >
-            UNIVERSIDAD SANTIAGO DE CALI
-          </div>
-          <div className="flex items-center justify-center gap-2 mt-2">
             <div
-              className="px-2 py-0.5 rounded"
-              style={{ background: "#F0FDF4", border: "1px solid #BBF7D0" }}
+              style={{
+                color: "#1F2A44",
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "1px",
+              }}
             >
-              <span style={{ color: "#15803D", fontSize: 9, fontWeight: 700 }}>
-                ✓ ACREDITADO ONAC
-              </span>
+              LABORATORIO DE METROLOGÍA
+            </div>
+            <div
+              style={{
+                color: "#5680F9",
+                fontSize: 10,
+                letterSpacing: "0.5px",
+              }}
+            >
+              UNIVERSIDAD SANTIAGO DE CALI
+            </div>
+            <div className="flex items-center justify-center gap-2 mt-2">
+              <div
+                className="px-2 py-0.5 rounded"
+                style={{ background: "#F0FDF4", border: "1px solid #BBF7D0" }}
+              >
+                <span style={{ color: "#15803D", fontSize: 9, fontWeight: 700 }}>
+                  ✓ ACREDITADO ONAC
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="text-center mb-4">
-          <div style={{ color: "#374151", fontSize: 13, fontWeight: 700 }}>
-            CERTIFICADO DE CALIBRACIÓN
+          <div className="text-center mb-4">
+            <div style={{ color: "#374151", fontSize: 13, fontWeight: 700 }}>
+              CERTIFICADO DE CALIBRACIÓN
+            </div>
+            <div style={{ color: "#94A3B8", fontSize: 10 }}>
+              {ot} · Emisión: {valor("Emisión")}
+            </div>
           </div>
-          <div style={{ color: "#94A3B8", fontSize: 10 }}>
-            {ot} · Emisión: 2026-06-09
-          </div>
-        </div>
-        {[
-          ["N° Estampilla", estampilla],
-          ["Instrumento", instrumento],
-          ["Serie", "FL2026001"],
-          ["Magnitud", "Temperatura"],
-          ["Rango", "-20 °C a 200 °C"],
-          ["Incertidumbre", "± 0.1 °C (k=2)"],
-          ["Patrón utilizado", "Termómetro de referencia SPRT"],
-          ["Temperatura laboratorio", "23 ± 1 °C"],
-          ["Humedad relativa", "50 ± 10 %RH"],
-        ].map(([k, v]) => (
+          {[
+            ["N° Estampilla", estampilla],
+            ["Instrumento", instrumento],
+            ["Serie", valor("Serie")],
+            ["Magnitud", valor("Magnitud")],
+            ["Rango", valor("Rango")],
+            ["Incertidumbre", valor("Incertidumbre")],
+            ["Patrón utilizado", valor("Patrón utilizado")],
+            ["Temperatura laboratorio", valor("Temperatura laboratorio")],
+            ["Humedad relativa", valor("Humedad relativa")],
+          ].map(([k, v]) => (
+            <div
+              key={k}
+              className="flex justify-between py-1.5"
+              style={{ borderBottom: "1px solid #F1F5F9" }}
+            >
+              <span style={{ color: "#64748b", fontSize: 10 }}>{k}</span>
+              <span style={{ color: "#1F2A44", fontSize: 10, fontWeight: 500 }}>
+                {v}
+              </span>
+            </div>
+          ))}
           <div
-            key={k}
-            className="flex justify-between py-1.5"
-            style={{ borderBottom: "1px solid #F1F5F9" }}
+            className="mt-4 text-center"
+            style={{ borderTop: "1px solid #E6EAF2", paddingTop: 12 }}
           >
-            <span style={{ color: "#64748b", fontSize: 10 }}>{k}</span>
-            <span style={{ color: "#1F2A44", fontSize: 10, fontWeight: 500 }}>
-              {v}
-            </span>
-          </div>
-        ))}
-        <div
-          className="mt-4 p-3 rounded"
-          style={{ background: "#F5F7FA", border: "1px solid #E6EAF2" }}
-        >
-          <div
-            style={{
-              color: "#374151",
-              fontSize: 10,
-              fontWeight: 600,
-              marginBottom: 4,
-            }}
-          >
-            Resultados de calibración
-          </div>
-          <div style={{ color: "#94A3B8", fontSize: 9, lineHeight: 1.6 }}>
-            Punto 0°C: Error -0.02°C | Incert. ±0.08°C
-            <br />
-            Punto 50°C: Error +0.05°C | Incert. ±0.09°C
-            <br />
-            Punto 100°C: Error -0.03°C | Incert. ±0.10°C
-          </div>
-        </div>
-        <div
-          className="mt-4 text-center"
-          style={{ borderTop: "1px solid #E6EAF2", paddingTop: 12 }}
-        >
-          <div
-            style={{
-              width: 80,
-              height: 2,
-              background: "#1F2A44",
-              margin: "0 auto 4px",
-            }}
-          />
-          <div style={{ color: "#374151", fontSize: 9, fontWeight: 600 }}>
-            Técnico Calibrador
-          </div>
-          <div style={{ color: "#94A3B8", fontSize: 9 }}>
-            Laboratorio de Metrología USC
+            <div
+              style={{
+                width: 80,
+                height: 2,
+                background: "#1F2A44",
+                margin: "0 auto 4px",
+              }}
+            />
+            <div style={{ color: "#374151", fontSize: 9, fontWeight: 600 }}>
+              Técnico Calibrador
+            </div>
+            <div style={{ color: "#94A3B8", fontSize: 9 }}>
+              Laboratorio de Metrología USC
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const CertificatesTable = ({
   sortedCerts,
@@ -442,17 +329,7 @@ const CertificatesTable = ({
   setSelected,
   setShowAprobar,
   setShowDevolver,
-}: {
-  sortedCerts: Certificado[];
-  selected: string | null;
-  sortField: SortField;
-  sortDir: SortDir;
-  tienePermisosRevision: boolean;
-  handleSort: (field: SortField) => void;
-  setSelected: (ot: string | null) => void;
-  setShowAprobar: (ot: string) => void;
-  setShowDevolver: (ot: string) => void;
-}) => {
+}: CertificatesTableProps) => {
   const SortIcon = ({ field }: { field: SortField }) =>
     sortField === field ? (
       sortDir === "asc" ? (
@@ -609,13 +486,7 @@ const PDFViewerPanel = ({
   setSelected,
   setShowAprobar,
   setShowDevolver,
-}: {
-  selectedCert: Certificado;
-  tienePermisosRevision: boolean;
-  setSelected: (ot: string | null) => void;
-  setShowAprobar: (ot: string) => void;
-  setShowDevolver: (ot: string) => void;
-}) => (
+}: PDFViewerPanelProps) => (
   <div
     className="flex flex-col overflow-hidden"
     style={{ flex: 1, padding: "32px 32px 32px 0" }}
@@ -642,6 +513,7 @@ const PDFViewerPanel = ({
         ot={selectedCert.ot}
         estampilla={selectedCert.estampilla}
         instrumento={selectedCert.instrumento}
+        datos={selectedCert.datosTecnicos}
       />
     </div>
 
@@ -667,9 +539,25 @@ const PDFViewerPanel = ({
 // 3. Declaración del Componente Padre (MainRenderer)
 
 export function RevisionCertificados() {
-  const [certs, setCerts] = useState<Certificado[]>(
-    initialCerts.map((c) => ({ ...c, status: "pendiente" }))
-  );
+  const { data: session } = useSession();
+  const rol = (session?.user?.role as string) || "Sin rol";
+
+  const certificados = useDbTable("certificados");
+  const calibraciones = useDbTable("calibraciones");
+  const recepcionDetalles = useDbTable("recepcion_equipo_detalles");
+  const ordenes = useDbTable("ordenes_trabajo");
+  const clientes = useDbTable("clientes");
+  const usuarios = useDbTable("usuarios");
+  const tarifas = useDbTable("tarifas");
+  const { loadTable } = useDbActions();
+
+  useEffect(() => {
+    loadTable("certificados");
+    loadTable("ordenes_trabajo");
+    loadTable("clientes");
+    loadTable("tarifas");
+  }, [loadTable]);
+
   const [selected, setSelected] = useState<string | null>(null);
   const [showDevolver, setShowDevolver] = useState<string | null>(null);
   const [showAprobar, setShowAprobar] = useState<string | null>(null);
@@ -679,59 +567,114 @@ export function RevisionCertificados() {
   const [sortField, setSortField] = useState<SortField>("espera");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const tienePermisosRevision =
-    USER_ROLE === "Director" || USER_ROLE === "Coordinador";
+  const tienePermisosRevision = rol === "Director" || rol === "Coordinador";
 
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(""), 3500);
-  };
+  }, []);
+
+  // ==========================================
+  // DATOS DERIVADOS DEL STORE (sin mocks)
+  // ==========================================
+const [now] = useState<number>(() => Date.now());
+  const certs: CertificadoRevision[] = useMemo(() => {
+    
+    return (certificados ?? []).map((cert) => {
+      const cal = calibraciones.find((c) => c.idCalibracion === cert.idCalibracion);
+      const detalle = cal
+        ? recepcionDetalles.find((r) => r.idInstrumento === cal.idInstrumento)
+        : undefined;
+      const orden = ordenes.find((o) =>
+        (o.instrumentos ?? []).some((i) => i.idDetalle === cal?.idInstrumento)
+      );
+      const cliente = orden
+        ? clientes.find((c) => c.idCliente === orden.idCliente)
+        : undefined;
+      const tecnico = cal
+        ? usuarios.find((u) => u.idUsuario === cal.idTecnico)
+        : undefined;
+      const tarifa = detalle
+        ? tarifas.find((t) => t.Instrumento === detalle.instrumento)
+        : undefined;
+      const fecha = cal?.createdAt ? new Date(cal.createdAt) : new Date();
+      const espera = Math.max(0, Math.round((now - fecha.getTime()) / 3600000));
+      const datosTecnicos: Record<string, string> = cal?.datosTecnicos
+        ? Object.fromEntries(
+            Object.entries(cal.datosTecnicos as Record<string, unknown>).map(([k, v]) => [k, String(v)])
+          )
+        : {};
+
+      return {
+        ot: orden?.codigo ?? "—",
+        estampilla: detalle?.estampilla ?? "—",
+        cliente: cliente?.razonSocial ?? "—",
+        instrumento: detalle?.instrumento ?? "—",
+        tecnico: tecnico?.nombreCompleto ?? orden?.responsable ?? "—",
+        tipo: tarifa
+          ? tarifa.tipoServicio.toLowerCase().includes("acreditado")
+            ? "Acreditado"
+            : "No acreditado"
+          : "—",
+        fecha: `${fecha.toLocaleDateString("es-CO")} ${fecha.toLocaleTimeString("es-CO", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`,
+        espera,
+        bloqueado: false,
+        status: "pendiente",
+        datosTecnicos,
+      };
+    });
+  }, [certificados, calibraciones, recepcionDetalles, ordenes, clientes, usuarios, tarifas]);
 
   const pending = certs.filter((c) => c.status === "pendiente");
   const selectedCert = certs.find((c) => c.ot === selected);
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
+  const handleSort = useCallback((field: SortField) => {
+    setSortField((prevField) => {
+      if (prevField === field) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+        return prevField;
+      }
       setSortDir("asc");
-    }
-  };
+      return field;
+    });
+  }, []);
 
-  const sorted = [...pending].sort((a, b) => {
-    let av: any = a[sortField];
-    let bv: any = b[sortField];
-    if (typeof av === "string") av = av.toLowerCase();
-    if (typeof bv === "string") bv = bv.toLowerCase();
-    return sortDir === "asc" ? (av > bv ? 1 : -1) : av < bv ? 1 : -1;
-  });
+  const sorted: CertificadoRevision[] = useMemo(() => {
+    return [...pending].sort((a, b) => {
+      const av = String(a[sortField] ?? "").toLowerCase();
+      const bv = String(b[sortField] ?? "").toLowerCase();
+      return sortDir === "asc" ? (av > bv ? 1 : -1) : av < bv ? 1 : -1;
+    });
+  }, [pending, sortField, sortDir]);
 
-  const handleAprobar = (ot: string) => {
-    if (!tienePermisosRevision) return;
-    setCerts((prev) =>
-      prev.map((c) => (c.ot === ot ? { ...c, status: "aprobado" } : c))
-    );
-    setShowAprobar(null);
-    setSelected(null);
-    showToast("✅ Certificado aprobado con éxito.");
-  };
+  const handleAprobar = useCallback(
+    (ot: string) => {
+      if (!tienePermisosRevision) return;
+      setShowAprobar(null);
+      setSelected(null);
+      showToast("✅ Certificado aprobado con éxito.");
+    },
+    [tienePermisosRevision, showToast]
+  );
 
-  const handleDevolver = (ot: string) => {
-    if (!tienePermisosRevision) return;
-    if (!motivo.trim()) {
-      setMotivoError(true);
-      return;
-    }
-    setCerts((prev) =>
-      prev.map((c) => (c.ot === ot ? { ...c, status: "devuelto" } : c))
-    );
-    setShowDevolver(null);
-    setMotivo("");
-    setMotivoError(false);
-    setSelected(null);
-    showToast("📤 Certificado rechazado y devuelto al técnico.");
-  };
+  const handleDevolver = useCallback(
+    (ot: string) => {
+      if (!tienePermisosRevision) return;
+      if (!motivo.trim()) {
+        setMotivoError(true);
+        return;
+      }
+      setShowDevolver(null);
+      setMotivo("");
+      setMotivoError(false);
+      setSelected(null);
+      showToast("📤 Certificado rechazado y devuelto al técnico.");
+    },
+    [tienePermisosRevision, motivo, showToast]
+  );
 
   return (
     <div className="module-page flex overflow-hidden">
@@ -761,7 +704,7 @@ export function RevisionCertificados() {
           padding: "32px 24px 32px 32px",
         }}
       >
-        <HeaderSection pendingCount={pending.length} />
+        <HeaderSection pendingCount={pending.length} rol={rol} />
         <InfoBanner />
         <CertificatesTable
           sortedCerts={sorted}

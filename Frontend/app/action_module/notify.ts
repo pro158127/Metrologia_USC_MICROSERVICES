@@ -40,7 +40,7 @@ export async function crearNotificacion({
   try {
     // 1. Verificamos primero si el usuario existe para evitar errores de clave foránea
     const usuarioExiste = await prisma.usuario.findUnique({
-      where: { id_usuario: idUsuario },
+      where: { idUsuario },
     });
 
     if (!usuarioExiste) {

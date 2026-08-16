@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -21,99 +21,43 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import type { Estados } from "@prisma/client";
+import type {
+  FileNode,
+  FileTreeNodeProps,
+  DocumentConfig,
+  CotizacionCardProps,
+  TrazabilidadCliente,
+  TrazabilidadCotizacionCard,
+  ClienteDetailPageProps,
+} from "@/tipos/clientes";
 
-// ========== TIPOS ==========
-interface FileNode {
-  name: string;
-  type: "file" | "folder";
-  children?: FileNode[];
-}
-
-interface Cotizacion {
-  id: string;
-  codigo: string;
-  titulo: string;
-  fechaFin: string;
-  estado: "BORRADOR" | "ENVIADO" | "APROBADO" | "RECHAZADO" | "VENCIDO";
-  archivos: FileNode[];
-}
-
-// ========== DATA MOCK ==========
-const cotizacionesMock: Cotizacion[] = [
-  {
-    id: "1",
-    codigo: "COT-2026-001",
-    titulo: "Calibración de Manómetros de Alta Presión",
-    fechaFin: "15/08/2026",
-    estado: "APROBADO",
-    archivos: [
-      { name: "Cotizacion_V1.pdf", type: "file" },
-      { name: "Cotizacion_V1.xlsx", type: "file" },
-      { name: "Cotizacion_V2.pdf", type: "file" },
-      {
-        name: "Ordenes de trabajo",
-        type: "folder",
-        children: [
-          { name: "OT_001.pdf", type: "file" },
-          { name: "OT_002.pdf", type: "file" },
-        ],
-      },
-      {
-        name: "Recepciones",
-        type: "folder",
-        children: [
-          {
-            name: "Certificados",
-            type: "folder",
-            children: [
-              { name: "Certificado_001.pdf", type: "file" },
-              { name: "Certificado_002.pdf", type: "file" },
-              { name: "Certificado_003.pdf", type: "file" },
-            ],
-          },
-          { name: "Acta_Recepcion.pdf", type: "file" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "2",
-    codigo: "COT-2026-002",
-    titulo: "Mantenimiento Preventivo Lab Metrología",
-    fechaFin: "01/09/2026",
-    estado: "ENVIADO",
-    archivos: [
-      { name: "Cotizacion_Principal.pdf", type: "file" },
-      {
-        name: "Ordenes de trabajo",
-        type: "folder",
-        children: [{ name: "OT_101.pdf", type: "file" }],
-      },
-      {
-        name: "Recepciones",
-        type: "folder",
-        children: [
-          {
-            name: "Certificados",
-            type: "folder",
-            children: [{ name: "Certificado_101.pdf", type: "file" }],
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: "3",
-    codigo: "COT-2026-003",
-    titulo: "Verificación de Balanzas Electrónicas",
-    fechaFin: "20/07/2026",
-    estado: "BORRADOR",
-    archivos: [{ name: "Cotizacion_Preliminar.pdf", type: "file" }],
-  },
+// ========== ESTADOS DE FILTRO ==========
+const estadoOptions = [
+  { value: "TODOS", label: "Todos los estados" },
+  { value: "BORRADOR", label: "Borrador" },
+  { value: "ENVIADA", label: "Enviada" },
+  { value: "APROBADA", label: "Aprobada" },
+  { value: "RECHAZADA", label: "Rechazada" },
+  { value: "EN_SEGUIMIENTO", label: "En seguimiento" },
 ];
 
+// ========== CONFIGURACIÓN DEL VISOR ==========
+export const initialDocumentConfig: DocumentConfig = {
+  kind: "pdf",
+  fileId: '',
+  apiBaseUrl: '/api/v1',
+};
+
+export const createDocumentConfig = (
+  overrides: Partial<DocumentConfig> = {}
+): DocumentConfig => ({
+  ...initialDocumentConfig,
+  ...overrides,
+});
+
 // ========== COMPONENTE RECURSIVO DE ARCHIVOS ==========
-const FileTreeNode = ({ node }: { node: FileNode }) => {
+const FileTreeNode = ({ node }: FileTreeNodeProps) => {
   const [isOpen, setIsOpen] = useState(false);
 
   if (node.type === "file") {
@@ -154,25 +98,23 @@ const FileTreeNode = ({ node }: { node: FileNode }) => {
 };
 
 // ========== CARD DE COTIZACIÓN ==========
-const CotizacionCard = ({ cotizacion }: { cotizacion: any }) => {
+const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
   const [showFiles, setShowFiles] = useState(false);
 
-  const documentos_arbol={
-    doc_cot:cotizacion.documentos,
-    doc_ot:cotizacion.ordenes.documentos,
-    doc_rec:cotizacion.recepciones.documentos,  
-  }
-
-  const statusMap: Record<
-    any["estado"],
-    { label: string; style: string }
-  > = {
+  const statusMap: Record<Estados, { label: string; style: string }> = {
     BORRADOR: { label: "Borrador", style: "bg-slate-100 text-slate-700 border-slate-200" },
-    ENVIADO: { label: "Enviado", style: "bg-blue-50 text-blue-700 border-blue-200" },
-    APROBADO: { label: "Aprobado", style: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-    RECHAZADO: { label: "Rechazado", style: "bg-rose-50 text-rose-700 border-rose-200" },
-    VENCIDO: { label: "Vencido", style: "bg-amber-50 text-amber-700 border-amber-200" },
+    ENVIADA: { label: "Enviada", style: "bg-blue-50 text-blue-700 border-blue-200" },
+    APROBADA: { label: "Aprobado", style: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    RECHAZADA: { label: "Rechazado", style: "bg-rose-50 text-rose-700 border-rose-200" },
+    EN_SEGUIMIENTO: { label: "En seguimiento", style: "bg-amber-50 text-amber-700 border-amber-200" },
   };
+
+  const archivos = useMemo<FileNode[]>(() => {
+    return (cotizacion.documentos ?? []).map((d) => ({
+      name: d.nombre,
+      type: "file" as const,
+    }));
+  }, [cotizacion.documentos]);
 
   const status = statusMap[cotizacion.estado];
 
@@ -209,14 +151,14 @@ const CotizacionCard = ({ cotizacion }: { cotizacion: any }) => {
         >
           <span className="flex items-center gap-1.5">
             <File size={14} className="text-slate-400" />
-            Archivos Adjuntos ({cotizacion.documentos.length})
+            Archivos Adjuntos ({archivos.length})
           </span>
           {showFiles ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
 
         {showFiles && (
           <div className="mt-3 p-2 bg-slate-50/80 rounded-xl border border-slate-100 max-h-56 overflow-y-auto">
-            {cotizacion.documentos.map((file: any, idx: number) => (
+            {archivos.map((file, idx) => (
               <FileTreeNode key={idx} node={file} />
             ))}
           </div>
@@ -227,49 +169,25 @@ const CotizacionCard = ({ cotizacion }: { cotizacion: any }) => {
 };
 
 // ========== COMPONENTE PRINCIPAL ==========
-
-type FileKind = "pdf" | "excel" | "word";
-export interface DocumentConfig {
-  kind: FileKind;
-  fileId: string;
-  apiBaseUrl: string;
-}
-
-// 2. Estado inicial por defecto
-export const initialDocumentConfig: DocumentConfig = {
-  kind: "pdf",
-  fileId: '',
-  apiBaseUrl: '/api/v1',
-};
-
-export const createDocumentConfig = (
-  overrides: Partial<DocumentConfig> = {}
-): DocumentConfig => ({
-  ...initialDocumentConfig,
-  ...overrides,
-});
-
 import { obtenerTrazabilidadCliente } from "@/app/action_module/modulo_cliente";
 import FileViewer from "@/app/utils/FileViewer";
-export default function ClienteDetailPage({ onVolver, id_cliente }: { onVolver: () => void; id_cliente: number | null }) {
+
+export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetailPageProps) {
   const [is_open_documento, setIsOpenDocumento] = useState(false);
-
-
-      
   const [searchCodigo, setSearchCodigo] = useState("");
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
-  const [trazabilidad, setTrazabilidad] = useState<any>(null);
-const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
+  const [trazabilidad, setTrazabilidad] = useState<TrazabilidadCliente | null>(null);
+  const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
+
   useEffect(() => {
     if (id_cliente === null || id_cliente === undefined) return;
 
     async function fetchTrazabilidad() {
       try {
-        const data = await obtenerTrazabilidadCliente(id_cliente||0);
-        const resultado = data?.data ?? data;
+        const data = await obtenerTrazabilidadCliente(id_cliente || 0);
+        const resultado = data?.data ?? null;
         setTrazabilidad(resultado);
         console.log("Trazabilidad del cliente:", resultado);
-
       } catch (error) {
         console.error("Error al obtener la trazabilidad del cliente:", error);
       }
@@ -278,12 +196,10 @@ const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
     fetchTrazabilidad();
   }, [id_cliente]);
 
-  console.log("Trazabilidad del cliente:", trazabilidad);
-
-  const filteredCotizaciones = useMemo(() => {
+  const filteredCotizaciones = useMemo<TrazabilidadCotizacionCard[]>(() => {
     if (!trazabilidad?.cotizaciones) return [];
-    
-    return trazabilidad.cotizaciones.filter((cot: any) => {
+
+    return trazabilidad.cotizaciones.filter((cot) => {
       const matchCodigo = cot?.codigo
         ?.toLowerCase()
         .includes(searchCodigo.toLowerCase());
@@ -293,26 +209,17 @@ const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
     });
   }, [searchCodigo, filterEstado, trazabilidad]);
 
-  const estadoOptions = [
-    { value: "TODOS", label: "Todos los estados" },
-    { value: "BORRADOR", label: "Borrador" },
-    { value: "ENVIADO", label: "Enviado" },
-    { value: "APROBADO", label: "Aprobado" },
-    { value: "RECHAZADO", label: "Rechazado" },
-    { value: "VENCIDO", label: "Vencido" },
-  ];
+  const handleViewRut = useCallback((trazabilidad: TrazabilidadCliente | null) => {
+    console.log("Abrir visor de RUT para cliente:", trazabilidad?.razonSocial, trazabilidad?.rutDocumento?.rutaUrl);
 
-  const handleViewRut = (trazabilidad: any) => {
-    console.log("Abrir visor de RUT para cliente:", trazabilidad?.razonSocial,trazabilidad?.rutaUrlRUT);
-
-    setConfig(createDocumentConfig({ 
+    setConfig(createDocumentConfig({
       apiBaseUrl: '/api/v1/pdf/ver/',
-      fileId: trazabilidad?.rutDocumento?.rutaUrl|| '',
+      fileId: trazabilidad?.rutDocumento?.rutaUrl || '',
       kind: "pdf",
     }));
     console.log("Configuración del visor de RUT:", config);
     setIsOpenDocumento(true);
-  };
+  }, [config]);
 
   return (
     <div className="w-full max-w-7xl mx-auto p-6 space-y-6 bg-slate-50/50 min-h-screen">
@@ -447,7 +354,7 @@ const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredCotizaciones?.map((cot: any) => (
+            {filteredCotizaciones?.map((cot) => (
               <CotizacionCard key={cot.idCotizacion} cotizacion={cot} />
             ))}
           </div>
