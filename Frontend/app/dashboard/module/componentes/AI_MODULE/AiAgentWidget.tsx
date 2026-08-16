@@ -1,18 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Bot, X, Send, Sparkles, Move, Loader2, User } from "lucide-react";
-
-// Tipo para la estructura de mensajes del agente
-export interface Message {
-  id: string;
-  sender: "ai" | "user";
-  text: string;
-  timestamp: string;
-}
-
-interface AiAgentWidgetProps {
-  /** Contexto opcional de la cotización activa para pasarle datos al agente */
-  activeContext?: any;
-}
+import type { Message, AiAgentWidgetProps } from "@/tipos/ai";
 
 /**
  * AiAgentWidget
@@ -106,8 +94,8 @@ export const AiAgentWidget = ({ activeContext }: AiAgentWidgetProps) => {
 
     // Simulación de respuesta del agente (Sustituir por tu llamada fetch a Fastify/OpenAI/LangChain)
     setTimeout(() => {
-      const responseContext = activeContext?.id
-        ? `[Cotización ${activeContext.id}] `
+      const responseContext = activeContext?.codigo
+        ? `[Cotización ${activeContext.codigo}] `
         : "";
 
       const aiMsg: Message = {
@@ -142,7 +130,7 @@ export const AiAgentWidget = ({ activeContext }: AiAgentWidgetProps) => {
                 </h3>
                 <span className="text-[10px] text-blue-100 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
-                  {activeContext?.id ? `Cotización: ${activeContext.id}` : "Agente Activo"}
+                  {activeContext?.codigo ? `Cotización: ${activeContext.codigo}` : "Agente Activo"}
                 </span>
               </div>
             </div>

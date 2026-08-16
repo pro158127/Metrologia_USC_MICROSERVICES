@@ -1,157 +1,92 @@
 // 1. IMPORTS
-import React, { useState,useEffect, useMemo,useRef } from "react";
-import { 
-  AlertTriangle, 
-  Search, 
-  Eye, 
-  Edit3, 
-  Layers, 
-  ChevronLeft, 
-  ChevronRight ,
-  Wrench
-  ,User,Calendar
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import {
+  AlertTriangle,
+  Search,
+  Eye,
+  Edit3,
+  Layers,
+  ChevronLeft,
+  ChevronRight,
+  Wrench,
+  User,
+  Calendar,
+  Minus,
+  Plus,
 } from "lucide-react";
+import {
+  ViewMode,
+  OTBase,
+  OTType,
+  EditableOrderFields,
+  Instrument,
+  Warning,
+  EstadoOrden,
+  MachineAssignmentsMap,
+  TarifaOptionBase,
+  ToastNotificationProps,
+  HeaderSectionProps,
+  OrderAlertsBannerProps,
+  ComboboxInstrumentoProps,
+  StaffAssignmentSectionProps,
+  InstrumentosTableProps,
+  OrderFormRCM05Props,
+  SectionProps,
+  FieldProps,
+  KanbanBoardViewProps,
+  ListViewTableProps,
+  defaultInstrumentos,
+  kanbanColumns,
+} from "@/tipos/tipo_ordenes_de_trabajo";
 
 // ==========================================
 // TIPOS Y DATOS CONSTANTES
 // ==========================================
-type ViewMode = "kanban" | "list";
-
-
-const ots = [
-  { id: "OT-2026-089", cliente: "Empresa ABC", tecnico: "J. Martínez", fecha: "12/06/2026", tipo: "Acreditado", estado: "Certificado en revisión", retraso: false, equipos: 3 },
-  { id: "OT-2026-087", cliente: "Clínica del Sur", tecnico: "M. Torres", fecha: "10/06/2026", tipo: "No acreditado", estado: "En calibración", retraso: false, equipos: 5 },
-  { id: "OT-2026-085", cliente: "USC Ingeniería", tecnico: "J. Martínez", fecha: "05/06/2026", tipo: "Acreditado", estado: "Asignada", retraso: false, equipos: 2 },
-  { id: "OT-2026-083", cliente: "Metales del Valle", tecnico: "P. Ríos", fecha: "01/06/2026", tipo: "Acreditado", estado: "En calibración", retraso: true, equipos: 7 },
-  { id: "OT-2026-080", cliente: "Empresa ABC", tecnico: "M. Torres", fecha: "25/05/2026", tipo: "No acreditado", estado: "Certificado en revisión", retraso: true, equipos: 4 },
-  { id: "OT-2026-078", cliente: "Industrias Andinas", tecnico: "P. Ríos", fecha: "20/05/2026", tipo: "Acreditado", estado: "Certificado aprobado", retraso: false, equipos: 6 },
-  { id: "OT-2026-075", cliente: "USC Ingeniería", tecnico: "J. Martínez", fecha: "15/05/2026", tipo: "No acreditado", estado: "Creada", retraso: true, equipos: 2 },
-];
-type OTBase = {
-  id: string;
-  cliente: string;
-  tecnico: string|"sin asingar responsable";
-  fecha: string;
-  estado: string;
-  retraso: boolean;
-  equipos: number;
-  codigo:string;
-  warns:Warning[]
-};
-
-
-
-type EditableOrderFields = {
-  razonSocialCert: string;
-  nitCert: string;
-  correoCertificados: string;
-  fechaLimiteFacturacion: string;
-  direccionCert: string;
-  ciudadCert: string;
-  correoFactura: string;
-  
-  lugarCalibracion: "Interno USC" | "En sitio" | "Laboratorio permanente";
-  personaContactar: string;
-  telefonoCalibracion: string;
-  fechaCalibracion: string;
-  horaCalibracion: string;
-
-  razonSocialSolicitante: string;
-  nitSolicitante: string;
-  direccionSolicitante: string;
-  ciudadSolicitante: string;
-  contactoSolicitante: string;
-  telefonoSolicitante: string;
-
-  noOrdenTrabajo: string;
-  noCotizacion: string;
-  responsableUsc: string;
-  fechaDiligenciamiento: string;
-  requiereAnexo: "Si" | "No";
-  estadoOrden: string;
-  estado_revision?:string;
-  ultima_version?:string;
-  observacionesGenerales: string;
-};
-
-type OTType = typeof ots[number] & Partial<EditableOrderFields> & {
-  maquinas?: string[];
-  tecnicos?: string[];
-  asignaciones?: Record<string, string[]>;
-  instrumentos?: Instrument[];
-};
-
-const defaultInstrumentos: Instrument[] = [
-  {
-    id: "INS-01",
-    item: "1",
-    tipoServicio: "Calibración",
-    instrumento: "Balanza analítica",
-    fabricante: "Mettler Toledo",
-    modelo: "XPR204",
-    serie: "MT554321",
-    codigoInternoInventario: "INV-0092",
-    ubicacion: "Laboratorio Quimica",
-    puntosCalibrar: "0 g, 50 g, 100 g, 200 g",
-    unidad: "g",
-    intervaloMedicion: "0 a 220g",
-    resolucionDivisionEscala: "0.1 mg",
-    declaracionConformidad: "Aplica",
-    empLimiteControl: "0.01 g",
-    documentoEspecificacion: "OIML R76",
-    reglaDecision: "Regla simple",
-  },
-];
+// (tipos e interfaces en @/tipos/tipo_ordenes_de_trabajo.ts)
 
 const buildOrderDraft = (ot: OTType): EditableOrderFields => ({
-  razonSocialCert: ot.razonSocialCert ?? ot.cliente,
-  nitCert: ot.nitCert ?? "900.123.456-1",
-  correoCertificados: ot.correoCertificados ?? "cliente@correo.com",
-  fechaLimiteFacturacion: ot.fechaLimiteFacturacion ?? "2026-07-30",
-  direccionCert: ot.direccionCert ?? "Calle 5 # 62-00",
-  ciudadCert: ot.ciudadCert ?? "Cali",
-  correoFactura: ot.correoFactura ?? "facturacion@correo.com",
-  
-  lugarCalibracion: (ot.lugarCalibracion as any) ?? "Interno USC",
-  personaContactar: ot.personaContactar ?? "Laura Gómez",
-  telefonoCalibracion: ot.telefonoCalibracion ?? "300 555 0188",
-  fechaCalibracion: ot.fechaCalibracion ?? "2026-07-15",
-  horaCalibracion: ot.horaCalibracion ?? "09:00",
+  razonSocialCert: ot.razonSocialCert ?? ot.cliente ?? "",
+  nitCert: ot.nitCert ?? "",
+  correoCertificados: ot.correoCertificados ?? "",
+  fechaLimiteFacturacion: ot.fechaLimiteFacturacion ?? "",
+  direccionCert: ot.direccionCert ?? "",
+  ciudadCert: ot.ciudadCert ?? "",
+  correoFactura: ot.correoFactura ?? "",
 
-  razonSocialSolicitante: ot.razonSocialSolicitante ?? "Universidad Santiago de Cali",
-  nitSolicitante: ot.nitSolicitante ?? "890.303.797-1",
-  direccionSolicitante: ot.direccionSolicitante ?? "Pampalinda, Cali",
-  ciudadSolicitante: ot.ciudadSolicitante ?? "Cali",
-  contactoSolicitante: ot.contactoSolicitante ?? "Coordinador Laboratorio",
-  telefonoSolicitante: ot.telefonoSolicitante ?? "5183000",
+  lugarCalibracion: ot.lugarCalibracion ?? "Interno USC",
+  personaContactar: ot.personaContactar ?? "",
+  telefonoCalibracion: ot.telefonoCalibracion ?? "",
+  fechaCalibracion: ot.fechaCalibracion ?? "",
+  horaCalibracion: ot.horaCalibracion ?? "",
+
+  razonSocialSolicitante: ot.razonSocialSolicitante ?? ot.cliente ?? "",
+  nitSolicitante: ot.nitSolicitante ?? "",
+  direccionSolicitante: ot.direccionSolicitante ?? "",
+  ciudadSolicitante: ot.ciudadSolicitante ?? "",
+  contactoSolicitante: ot.contactoSolicitante ?? "",
+  telefonoSolicitante: ot.telefonoSolicitante ?? "",
 
   noOrdenTrabajo: ot.noOrdenTrabajo ?? ot.id,
-  noCotizacion: ot.noCotizacion ?? "26-0045A",
-  responsableUsc: ot.responsableUsc ?? ot.tecnico,
-  fechaDiligenciamiento: ot.fechaDiligenciamiento ?? "2026-07-02",
+  noCotizacion: ot.noCotizacion ?? "",
+  responsableUsc: ot.responsableUsc ?? ot.tecnico ?? "",
+  fechaDiligenciamiento: ot.fechaDiligenciamiento ?? "",
   requiereAnexo: ot.requiereAnexo ?? "No",
   estadoOrden: ot.estadoOrden ?? ot.estado,
-  observacionesGenerales: ot.observacionesGenerales ?? "Priorizar entrega por cierre de auditoria.",
-  ultima_version:ot.ultima_version?.toString()
+  observacionesGenerales: ot.observacionesGenerales ?? "",
+  ultima_version: ot.ultima_version?.toString(),
 });
 
 // ==========================================
 // 2. COMPONENTES HIJOS (EXTRAÍDOS Y ORGANIZADOS)
 // ==========================================
 
-const ToastNotification = ({ message }: { message: string }) => {
+const ToastNotification = ({ message }: ToastNotificationProps) => {
   if (!message) return null;
   return (
     <div className="fixed top-4 right-4 z-50 px-4 py-3 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-lg border border-slate-800">
       {message}
     </div>
   );
-};
-
-type Warning = {
-  tipo: "retraso" | "sin_responsable" | "sin_fecha" | "exceso_instrumentos" | "pendiente_revision";
-  mensaje: string;
-  
 };
 
 const HeaderSection = ({
@@ -162,17 +97,8 @@ const HeaderSection = ({
   setViewMode,
   onBack,
   totalOTs,
-  warnings = [],
-}: {
-  selectedOT: OTType | null;
-  search: string;
-  setSearch: (val: string) => void;
-  viewMode: ViewMode;
-  setViewMode: (mode: ViewMode) => void;
-  onBack: () => void;
-  totalOTs: number;
-  warnings?: Warning[];
-}) => {
+  warnings,
+}: HeaderSectionProps) => {
   return (
     <div className="flex items-center justify-between mb-6 border-b border-slate-200 pb-4">
       <div className="flex items-center gap-3">
@@ -228,13 +154,10 @@ const HeaderSection = ({
     </div>
   );
 };
-const OrderAlertsBanner = ({ 
+const OrderAlertsBanner = ({
   selectedOT,
-  warnings = [] 
-}: { 
-  selectedOT: OTType;
-  warnings?: Warning[];
-}) => {
+  warnings = [],
+}: OrderAlertsBannerProps) => {
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
       <div>
@@ -267,7 +190,7 @@ const OrderAlertsBanner = ({
   );
 };
 
-const StaffAssignmentSection = ({
+export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   editingTechnician,
   setEditingTechnician,
   machineOptions,
@@ -278,19 +201,8 @@ const StaffAssignmentSection = ({
   handleMachineSelection,
   machineAssignments,
   toggleMachineAssignment,
+  updateMachineQuantity,
   assignTechnician,
-}: {
-  editingTechnician: boolean;
-  setEditingTechnician: (val: boolean) => void;
-  machineOptions: string[];
-  technicians: string[];
-  assignedMachines: string[];
-  activeMachine: string | null;
-  setActiveMachine: (val: string | null) => void;
-  handleMachineSelection: (machine: string) => void;
-  machineAssignments: Record<string, string[]>;
-  toggleMachineAssignment: (machine: string, tech: string) => void;
-  assignTechnician: () => void;
 }) => {
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
@@ -299,7 +211,9 @@ const StaffAssignmentSection = ({
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
             <Layers size={13} /> Gestión de Personal y Equipamiento
           </h3>
-          <p className="text-[11px] text-slate-400">Asignación física de metrólogos y maquinaria para la ejecución del servicio.</p>
+          <p className="text-[11px] text-slate-400">
+            Asignación física de metrólogos y volumen de maquinaria para la ejecución.
+          </p>
         </div>
         <button
           onClick={() => setEditingTechnician(!editingTechnician)}
@@ -312,6 +226,7 @@ const StaffAssignmentSection = ({
       {editingTechnician && (
         <div className="space-y-5 animate-fadeIn">
           <div className="grid gap-4 md:grid-cols-2">
+            {/* Panel Izquierdo: Selección y Cantidades */}
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-3">
                 Maquinaria / Equipamiento en esta OT
@@ -320,12 +235,12 @@ const StaffAssignmentSection = ({
                 {machineOptions.map((machine) => {
                   const isSelected = assignedMachines.includes(machine);
                   const isActive = activeMachine === machine;
+                  const currentQty = machineAssignments[machine]?.quantity || 1;
+
                   return (
                     <div
                       key={machine}
-                      onClick={() => {
-                        if (isSelected) setActiveMachine(machine);
-                      }}
+                      onClick={() => isSelected && setActiveMachine(machine)}
                       className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-semibold transition cursor-pointer ${
                         isActive
                           ? "bg-blue-600 border-blue-600 text-white shadow-sm"
@@ -344,19 +259,59 @@ const StaffAssignmentSection = ({
                         />
                         <span className="font-bold">{machine}</span>
                       </div>
-                      {isSelected && !isActive && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 font-bold">Ver Metrólogos</span>
+
+                      {/* Control de Cantidad por Instrumento */}
+                      {isSelected && (
+                        <div
+                          className="flex items-center gap-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className={`flex items-center border rounded-lg overflow-hidden ${
+                            isActive ? "border-blue-400 bg-blue-700" : "border-slate-300 bg-white"
+                          }`}>
+                            <button
+                              type="button"
+                              onClick={() => updateMachineQuantity(machine, Math.max(1, currentQty - 1))}
+                              className="p-1 hover:bg-black/10 transition"
+                            >
+                              <Minus size={10} />
+                            </button>
+                            <span className="px-2 text-[11px] font-bold min-w-[20px] text-center">
+                              {currentQty}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => updateMachineQuantity(machine, currentQty + 1)}
+                              className="p-1 hover:bg-black/10 transition"
+                            >
+                              <Plus size={10} />
+                            </button>
+                          </div>
+
+                          {!isActive && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 font-bold">
+                              Ver Metrólogos
+                            </span>
+                          )}
+                          {isActive && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500 text-white font-bold">
+                              Editando
+                            </span>
+                          )}
+                        </div>
                       )}
-                      {isActive && <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500 text-white font-bold">Editando</span>}
                     </div>
                   );
                 })}
               </div>
             </div>
 
+            {/* Panel Derecho: Asignación de Metrólogos */}
             <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col justify-between">
               <div>
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-3">Panel de Configuración de Personal</div>
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-3">
+                  Panel de Configuración de Personal
+                </div>
                 {!activeMachine ? (
                   <div className="rounded-xl border border-dashed border-slate-200 py-16 text-center text-xs text-slate-400 font-medium">
                     Seleccione o active un equipo en el panel izquierdo para gestionar sus técnicos asignados.
@@ -365,17 +320,24 @@ const StaffAssignmentSection = ({
                   <div className="rounded-xl border border-blue-200 p-4 bg-gradient-to-b from-blue-50/40 to-white shadow-sm animate-fadeIn">
                     <div className="flex justify-between items-start mb-3 border-b border-blue-100 pb-2">
                       <div>
-                        <span className="text-[10px] text-blue-500 font-extrabold uppercase tracking-widest block">Equipo Seleccionado</span>
+                        <span className="text-[10px] text-blue-500 font-extrabold uppercase tracking-widest block">
+                          Equipo Seleccionado
+                        </span>
                         <span className="font-black text-sm text-slate-800">{activeMachine}</span>
+                        <span className="text-xs text-slate-500 ml-2">
+                          (Unidades: {machineAssignments[activeMachine]?.quantity || 1})
+                        </span>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold uppercase tracking-wider">
                         Activo
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400 mb-4">Vincule los metrólogos autorizados para calibrar este instrumento:</p>
+                    <p className="text-[11px] text-slate-400 mb-4">
+                      Vincule los metrólogos autorizados para calibrar estas unidades:
+                    </p>
                     <div className="grid gap-2 grid-cols-2">
                       {technicians.map((tech) => {
-                        const assigned = machineAssignments[activeMachine]?.includes(tech);
+                        const assigned = machineAssignments[activeMachine]?.technicians?.includes(tech);
                         return (
                           <button
                             key={`${activeMachine}-${tech}`}
@@ -415,18 +377,6 @@ const StaffAssignmentSection = ({
   );
 };
 
-interface ComboboxInstrumentoProps {
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-}
-interface ComboboxInstrumentoProps {
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  placeholder?: string;
-}
-
 const ComboboxInstrumento: React.FC<ComboboxInstrumentoProps> = ({
   value,
   options,
@@ -439,9 +389,6 @@ const ComboboxInstrumento: React.FC<ComboboxInstrumentoProps> = ({
   const dropdownRef = useRef<HTMLUListElement>(null);
 
   // Sincronizar valor externo con la búsqueda
-  useEffect(() => {
-    setSearch(value);
-  }, [value]);
 
   // Cerrar al hacer clic fuera
   useEffect(() => {
@@ -529,35 +476,6 @@ const ComboboxInstrumento: React.FC<ComboboxInstrumentoProps> = ({
 };
 
 
-type Instrument = {
-  id: string;
-  item: string;
-  tipoServicio: string;
-  instrumento: string;
-  fabricante: string;
-  modelo: string;
-  serie: string;
-  codigoInternoInventario: string;
-  ubicacion: string;
-  puntosCalibrar: string; // "0 g, 50 g, 100 g, 200 g, 200 g"
-  unidad: string;
-  intervaloMedicion: string;
-  resolucionDivisionEscala: string;
-  declaracionConformidad: string;
-  empLimiteControl: string;
-  documentoEspecificacion: string;
-  reglaDecision: string;
-};
-
-interface InstrumentosTableProps {
-  instrumentDrafts: Instrument[];
-  updateInstrumentDraft: (id: string, field: keyof Instrument, value: string) => void;
-  onAddInstrument: () => void;
-  onRemoveInstrument: (id: string) => void;
-  excedioLimite: boolean;
-  tarifas: Array<{ tipoServicio: string; Instrumento: string }>; // Aseguramos que tenga estos dos campos
-}
-
 export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
   instrumentDrafts,
   updateInstrumentDraft,
@@ -579,33 +497,24 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
     return Array.from(new Set(nombres)).sort();
   }, [tarifas]);
 
-  // Manejo de puntos de calibración (sin cambios lógicos, solo formato)
+  // Manejo de puntos de calibración (arreglo del schema)
   const handlePuntoChange = (id: string, puntoIndex: number, value: string) => {
     const instrument = instrumentDrafts.find((i) => i.id === id);
     if (!instrument) return;
-    const puntosArray = instrument.puntosCalibrar
-      ? instrument.puntosCalibrar.split(",").map((p) => p.trim())
-      : ["", "", "", "", ""];
+    const puntosArray = instrument.puntosCalibrar ? [...instrument.puntosCalibrar] : [];
     while (puntosArray.length < 5) puntosArray.push("");
     puntosArray[puntoIndex] = value;
-    const nuevoPuntosCalibrar = puntosArray.join(", ");
-    updateInstrumentDraft(id, "puntosCalibrar", nuevoPuntosCalibrar);
+    updateInstrumentDraft(id, "puntosCalibrar", puntosArray.slice(0, 5));
   };
 
   const getPuntosArray = (inst: Instrument): string[] => {
-    if (!inst.puntosCalibrar) return ["", "", "", "", ""];
-    const arr = inst.puntosCalibrar.split(",").map((p) => p.trim());
+    const arr = inst.puntosCalibrar ? [...inst.puntosCalibrar] : [];
     while (arr.length < 5) arr.push("");
     return arr.slice(0, 5);
   };
 
   return (
     <>
-      <div className="p-2 bg-slate-50 border-b border-slate-200 text-[10px] text-slate-400 font-mono flex flex-wrap gap-4">
-        <span>* Nota A: Datos se emiten con info del primer apartado.</span>
-        <span>* Nota B: Observaciones al final del flujo.</span>
-        <span>* Nota C: Si carece de serie, la USC asignará uno.</span>
-      </div>
 
       {excedioLimite && (
         <div className="mx-2 my-2 bg-amber-100 border-l-4 border-amber-500 text-amber-700 p-3 rounded-r-lg text-xs font-bold flex items-center gap-2">
@@ -629,7 +538,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
       </div>
 
       <div className="overflow-x-auto max-w-full shadow-inner">
-        <table className="w-full text-left border-collapse text-sm"> {/* Aumentamos tamaño base */}
+        <table className="w-full text-left border-collapse text-sm">
           <thead>
             <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 font-bold tracking-wider text-xs">
               <th className="p-2.5 border-r border-slate-200 text-center min-w-[50px]">Item</th>
@@ -638,18 +547,18 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
               <th className="p-2.5 border-r border-slate-200 min-w-[130px]">Fabricante</th>
               <th className="p-2.5 border-r border-slate-200 min-w-[120px]">Modelo</th>
               <th className="p-2.5 border-r border-slate-200 min-w-[120px]">Serie</th>
-              <th className="p-2.5 border-r border-slate-200 min-w-[140px]">Cód. Inventario</th>
+              <th className="p-2.5 border-r border-slate-200 min-w-[140px]">Codigo Interno/inventario</th>
               <th className="p-2.5 border-r border-slate-200 min-w-[130px]">Ubicación</th>
               <th className="p-2.5 border-r border-slate-200 text-center" colSpan={5}>
                 Puntos a Calibrar
               </th>
               <th className="p-2.5 border-r border-slate-200 min-w-[80px]">Unidad</th>
-              <th className="p-2.5 border-r border-slate-200 min-w-[140px]">Intervalo medición</th>
-              <th className="p-2.5 border-r border-slate-200 min-w-[150px]">Resolución</th>
-              <th className="p-2.5 border-r border-slate-200 min-w-[140px]">Decl. Conformidad</th>
-              <th className="p-2.5 border-r border-slate-200 min-w-[130px]">EMP</th>
-              <th className="p-2.5 border-r border-slate-200 min-w-[150px]">Doc Especificación</th>
-              <th className="p-2.5 min-w-[150px]">Regla Decisión</th>
+              <th className="p-2.5 border-r border-slate-200 min-w-[140px]">Intervalo de medición</th>
+              <th className="p-2.5 border-r border-slate-200 min-w-[150px]">Resolución o Division de Escala</th>
+              <th className="p-2.5 border-r border-slate-200 min-w-[140px]">Declaracion de  Conformidad</th>
+              <th className="p-2.5 border-r border-slate-200 min-w-[130px]">EMP(limite de control)</th>
+              <th className="p-2.5 border-r border-slate-200 min-w-[150px]">Documento de  Especificación</th>
+              <th className="p-2.5 min-w-[150px]">Regla de Decisión</th>
               <th className="p-2.5 min-w-[60px]">Acción</th>
             </tr>
           </thead>
@@ -662,11 +571,11 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                   <td className="p-2 border-r border-slate-200 text-center">
                     <select
                       value={inst.item}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "item", e.target.value)}
+                      onChange={(e) => updateInstrumentDraft(inst.id, "item", Number(e.target.value))}
                       className="w-full text-center bg-white border-b border-slate-300 outline-none font-bold text-slate-700 cursor-pointer py-1 text-sm"
                     >
                       {itemOptions.map((num) => (
-                        <option key={num} value={num.toString()}>
+                        <option key={num} value={num}>
                           {num}
                         </option>
                       ))}
@@ -693,10 +602,9 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                     />
                   </td>
 
-                  {/* Resto de campos igual pero con padding aumentado */}
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.fabricante}
+                      value={inst.fabricante ?? ""}
                       onChange={(e) => updateInstrumentDraft(inst.id, "fabricante", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Fabricante"
@@ -704,7 +612,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.modelo}
+                      value={inst.modelo ?? ""}
                       onChange={(e) => updateInstrumentDraft(inst.id, "modelo", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Modelo"
@@ -712,7 +620,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                   </td>
                   <td className="p-2 border-r border-slate-200 font-mono">
                     <input
-                      value={inst.serie}
+                      value={inst.serie ?? ""}
                       onChange={(e) => updateInstrumentDraft(inst.id, "serie", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Serie"
@@ -720,15 +628,15 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.codigoInternoInventario}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "codigoInternoInventario", e.target.value)}
+                      value={inst.codigoInventario ?? ""}
+                      onChange={(e) => updateInstrumentDraft(inst.id, "codigoInventario", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Cód. inventario"
                     />
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.ubicacion}
+                      value={inst.ubicacion ?? ""}
                       onChange={(e) => updateInstrumentDraft(inst.id, "ubicacion", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Ubicación"
@@ -752,7 +660,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
 
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.unidad}
+                      value={inst.unidad ?? ""}
                       onChange={(e) => updateInstrumentDraft(inst.id, "unidad", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Unidad"
@@ -760,47 +668,51 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.intervaloMedicion}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "intervaloMedicion", e.target.value)}
+                      value={inst.intervaloRango ?? ""}
+                      onChange={(e) => updateInstrumentDraft(inst.id, "intervaloRango", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Intervalo"
                     />
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.resolucionDivisionEscala}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "resolucionDivisionEscala", e.target.value)}
+                      value={inst.resolucion ?? ""}
+                      onChange={(e) => updateInstrumentDraft(inst.id, "resolucion", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Resolución"
                     />
                   </td>
                   <td className="p-2 border-r border-slate-200">
-                    <input
-                      value={inst.declaracionConformidad}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "declaracionConformidad", e.target.value)}
-                      className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
-                      placeholder="Decl. conformidad"
-                    />
+                    <select
+                      value={inst.declaracionConformidad ? "Aplica" : "No aplica"}
+                      onChange={(e) =>
+                        updateInstrumentDraft(inst.id, "declaracionConformidad", e.target.value === "Aplica")
+                      }
+                      className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm cursor-pointer"
+                    >
+                      <option value="Aplica">Aplica</option>
+                      <option value="No aplica">No aplica</option>
+                    </select>
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.empLimiteControl}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "empLimiteControl", e.target.value)}
+                      value={inst.limiteControlEMC ?? ""}
+                      onChange={(e) => updateInstrumentDraft(inst.id, "limiteControlEMC", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="EMP"
                     />
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.documentoEspecificacion}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "documentoEspecificacion", e.target.value)}
+                      value={inst.docEspecificacion ?? ""}
+                      onChange={(e) => updateInstrumentDraft(inst.id, "docEspecificacion", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Doc. especificación"
                     />
                   </td>
                   <td className="p-2 border-r border-slate-200">
                     <input
-                      value={inst.reglaDecision}
+                      value={inst.reglaDecision ?? ""}
                       onChange={(e) => updateInstrumentDraft(inst.id, "reglaDecision", e.target.value)}
                       className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
                       placeholder="Regla decisión"
@@ -824,19 +736,6 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
     </>
   );
 };
-interface OrderFormRCM05Props {
-  editingOrder: boolean;
-  setEditingOrder: (val: boolean) => void;
-  orderDraft: EditableOrderFields | null;
-  updateOrderDraft: <K extends keyof EditableOrderFields>(field: K, value: EditableOrderFields[K]) => void;
-  instrumentDrafts: Instrument[];
-  updateInstrumentDraft: (id: string, field: keyof Instrument, value: string) => void;
-  technicians: string[];
-  saveOrderEdits: () => void;
-  onAddInstrument: () => void;
-  onRemoveInstrument: (id: string) => void;
-  tarifas:TarifaModel[];
-}
 export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   editingOrder,
   setEditingOrder,
@@ -866,32 +765,13 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
     }));
   };
 
-  // --- Estado para sugerencias (autocompletado) ---
-  const [suggestions, setSuggestions] = useState<{
-    razonesSociales: string[];
-    instrumentos: string[];
-    fabricantes: string[];
-    modelos: string[];
-  }>({
-    razonesSociales: [],
-    instrumentos: [],
-    fabricantes: [],
-    modelos: [],
-  });
-
-  useEffect(() => {
-    const fetchSuggestions = async () => {
-      // Simulación de datos
-      const data = {
-        razonesSociales: ['Empresa A', 'Empresa B', 'Corporación X', 'Laboratorio Y'],
-        instrumentos: ['Multímetro', 'Osciloscopio', 'Termómetro', 'Balanza', 'Manómetro'],
-        fabricantes: ['Fluke', 'Keysight', 'Tektronix', 'Thermo Fisher', 'Mettler Toledo'],
-        modelos: ['87V', '34401A', 'TDS2024', 'Orion Star', 'XSR204'],
-      };
-      setSuggestions(data);
-    };
-    fetchSuggestions();
-  }, []);
+  // --- Sugerencias (autocompletado) derivadas de datos reales (tarifas + instrumentos) ---
+  const suggestions = useMemo(() => {
+    const instrumentos = Array.from(new Set((tarifas || []).map((t) => t.Instrumento).filter(Boolean)));
+    const fabricantes = Array.from(new Set(instrumentDrafts.map((d) => d.fabricante).filter((v): v is string => !!v)));
+    const modelos = Array.from(new Set(instrumentDrafts.map((d) => d.modelo).filter((v): v is string => !!v)));
+    return { razonesSociales: [], instrumentos, fabricantes, modelos };
+  }, [tarifas, instrumentDrafts]);
 
   // ===== REGLA DE ANEXO: si hay más de 10 instrumentos, forzar "Si" y mostrar aviso =====
   const requiereAnexo = orderDraft?.requiereAnexo || 'No';
@@ -932,7 +812,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
         <div className="space-y-6 animate-fadeIn">
           {/* ========== SECCIÓN 2: DATOS PARA CERTIFICADO ========== */}
           <Section
-            title="2. DATOS PARA CERTIFICADO"
+            title="1. DATOS PARA CERTIFICADO"
             subtitle="Información a diligenciar por el cliente"
             isExpanded={expandedSections.datosCertificado}
             onToggle={() => toggleSection('datosCertificado')}
@@ -948,13 +828,13 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                 />
                 <Field label="NIT" value={orderDraft.nitCert} onChange={(v) => updateOrderDraft('nitCert', v)} />
                 <Field
-                  label="Correo Certificados"
+                  label="Correo para el envio de certificados de calibracion "
                   type="email"
                   value={orderDraft.correoCertificados}
                   onChange={(v) => updateOrderDraft('correoCertificados', v)}
                 />
                 <Field
-                  label="Límite Facturación"
+                  label="Fechalimite para facturacion "
                   type="date"
                   value={orderDraft.fechaLimiteFacturacion}
                   onChange={(v) => updateOrderDraft('fechaLimiteFacturacion', v)}
@@ -968,7 +848,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                 />
                 <Field label="Ciudad" value={orderDraft.ciudadCert} onChange={(v) => updateOrderDraft('ciudadCert', v)} />
                 <Field
-                  label="Correo Envío Factura"
+                  label="Correo para envío de Factura"
                   type="email"
                   value={orderDraft.correoFactura}
                   onChange={(v) => updateOrderDraft('correoFactura', v)}
@@ -1017,7 +897,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                         type="radio"
                         name="lugarCalibracionRadio"
                         checked={orderDraft.lugarCalibracion === lugar}
-                        onChange={() => updateOrderDraft('lugarCalibracion', lugar as any)}
+                        onChange={() => updateOrderDraft('lugarCalibracion', lugar as EditableOrderFields["lugarCalibracion"])}
                         className="w-4 h-4 text-blue-600 focus:ring-blue-500"
                       />
                       {lugar}
@@ -1025,6 +905,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   ))}
                 </div>
               </div>
+              {orderDraft.lugarCalibracion=="En sitio" &&
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <Field
                   label="Persona a Contactar"
@@ -1061,7 +942,9 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   onChange={(v) => updateOrderDraft('horaCalibracion', v)}
                 />
               </div>
-            </div>
+}
+             </div>
+              
           </Section>
 
           {/* ========== SECCIÓN 5 (dos bloques en paralelo) ========== */}
@@ -1161,7 +1044,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                 <label className="flex items-center gap-3 border border-amber-200 bg-amber-50/50 rounded-xl px-3 py-2.5 sm:col-span-2 text-xs font-bold text-slate-700">
                   <select
                     value={orderDraft.requiereAnexo}
-                    onChange={(e) => updateOrderDraft('requiereAnexo', e.target.value as any)}
+                    onChange={(e) => updateOrderDraft('requiereAnexo', e.target.value as EditableOrderFields["requiereAnexo"])}
                     className={`border p-1.5 rounded-lg text-xs font-black outline-none ${
                       excedioLimite ? 'border-red-400 bg-red-100 text-red-800' : 'border-amber-300 bg-amber-200 text-amber-950'
                     }`}
@@ -1237,15 +1120,6 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
 
 // ===== COMPONENTES AUXILIARES =====
 
-interface SectionProps {
-  title: string;
-  subtitle?: string;
-  isExpanded: boolean;
-  onToggle: () => void;
-  bgHeader?: string;
-  children: React.ReactNode;
-}
-
 const Section: React.FC<SectionProps> = ({
   title,
   subtitle,
@@ -1275,15 +1149,6 @@ const Section: React.FC<SectionProps> = ({
   </div>
 );
 
-interface FieldProps {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  list?: string;
-  className?: string;
-}
-
 const Field: React.FC<FieldProps> = ({ label, value, onChange, type = 'text', list, className = '' }) => (
   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
     {label}
@@ -1296,37 +1161,6 @@ const Field: React.FC<FieldProps> = ({ label, value, onChange, type = 'text', li
     />
   </label>
 );
-
-export type OrdenTrabajoVista = {
-  idOrdenTrabajo: number;
-  codigo: string;
-  clienteNombre: string;
-  responsable: string | null;
-  fechaCalibracion: Date | null;
-  fechaLimiteFacturacion: Date | null;
-  estado: string;
-  equiposCount: number;
-  retraso: boolean;
-};
-
-export const kanbanColumns = [
-  { key: "Creada", label: "Creada", color: "#94A3B8" },
-  { key: "En_recepción", label: "En recepción", color: "#F59C0B" },
-  { key: "Asignada", label: "Asignada", color: "#5680F9" },
-  { key: "En_calibración", label: "En calibración", color: "#9A8CF3" },
-  { key: "Certificado_en_revisión", label: "Certificado en revisión", color: "#F59C0B" },
-  { key: "Certificado_aprobado", label: "Certificado aprobado", color: "#22C55E" },
-  { key: "Certificado_enviado", label: "Certificado enviado", color: "#4C36D0" },
-];
-
-interface KanbanBoardViewProps {
-  otsList: Partial<OTBase>[];
-  collapsedColumns: Record<string, boolean>;
-  toggleColumnCollapse: (key: string) => void;
-  onOpenOT: (ot: Partial<OTBase>) => void;
-  warnigs?:Warning[]
-
-}
 
 // ====== COMPONENTE ======
 export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
@@ -1454,15 +1288,6 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
 
 
 
-
-/**
- * Props para ListViewTable
- */
-interface ListViewTableProps {
-  otsList: Partial<OTBase>[];
-  search: string;
-  onOpenOT: (ot: Partial<OTBase>) => void;
-}
 
 /**
  * Vista de tabla para las órdenes de trabajo.
@@ -1603,15 +1428,15 @@ export const OrdenesTrabajo = () => {
   const [assignedTechnicians, setAssignedTechnicians] = useState<string[]>([]);
   // Máquinas seleccionadas
   const [assignedMachines, setAssignedMachines] = useState<string[]>([]);
-  // Mapeo de máquina -> técnicos
-  const [machineAssignments, setMachineAssignments] = useState<Record<string, string[]>>({});
+  // Mapeo de máquina -> técnicos (cantidad + metrólogos)
+  const [machineAssignments, setMachineAssignments] = useState<MachineAssignmentsMap>({});
   // Mensaje toast temporal
   const [toast, setToast] = useState("");
 
   // Control de columnas colapsadas en el Kanban
-  const [collapsedColumns, setCollapsedColumns] = useState<Record<string, boolean>>({
+  const [collapsedColumns, setCollapsedColumns] = useState<Partial<Record<EstadoOrden, boolean>>>({
     Creada: false,
-    "Certificado enviado": false,
+    Certificado_enviado: false,
   });
   // Máquina activa en el panel de asignación
   const [activeMachine, setActiveMachine] = useState<string | null>(null);
@@ -1619,7 +1444,7 @@ export const OrdenesTrabajo = () => {
   /**
    * Alterna la visibilidad de una columna del Kanban (colapsada/expandida).
    */
-  const toggleColumnCollapse = (columnKey: string) => {
+  const toggleColumnCollapse = (columnKey: EstadoOrden) => {
     setCollapsedColumns((prev) => ({ ...prev, [columnKey]: !prev[columnKey] }));
   };
 
@@ -1634,18 +1459,16 @@ export const OrdenesTrabajo = () => {
           rol.nombreRol === "Coordinadora" ||
           rol.nombreRol === "Director Técnico"
       ) &&
-      (u.elminado === true || u.estado === false) // Nota: condición extraña, revisar lógica de negocio
+      (u.elminado === true || u.estado === false)
     );
     return tecnicos.map((u) => u.nombreCompleto);
   }, [usuarios, roles]);
 
-  const machineOptions = [
-    "Balanza analítica",
-    "Higrómetro",
-    "Calibrador",
-    "Transductor de presión",
-    "Termómetro industrial",
-  ];
+  // Opciones de maquinaria derivadas del catálogo real de tarifas
+  const machineOptions = useMemo(
+    () => Array.from(new Set((tarifas || []).map((t) => t.Instrumento).filter(Boolean))),
+    [tarifas]
+  );
 
   /**
    * Abre una OT desde la vista de lista/tablero: busca los datos completos en dbState,
@@ -1667,24 +1490,23 @@ export const OrdenesTrabajo = () => {
     const instrumentosMapeados: Instrument[] = (otCompleta.instrumentos || []).map(
       (detalle) => ({
         id: detalle.idDetalle?.toString() || crypto.randomUUID(),
-        item: detalle.item?.toString() || "1",
+        item: detalle.item || 1,
         tipoServicio: detalle.tipoServicio || "",
         instrumento: detalle.instrumento || "",
-        fabricante: detalle.fabricante || "",
-        modelo: detalle.modelo || "",
-        serie: detalle.serie || "",
-        codigoInternoInventario: detalle.codigoInventario || "",
-        ubicacion: detalle.ubicacion || "",
-        puntosCalibrar: Array.isArray(detalle.puntosCalibrar)
-          ? detalle.puntosCalibrar.join(", ")
-          : detalle.puntosCalibrar || "",
-        unidad: detalle.unidad || "",
-        intervaloMedicion: detalle.intervaloRango || "",
-        resolucionDivisionEscala: detalle.resolucion || "",
-        declaracionConformidad: detalle.declaracionConformidad ? "Aplica" : "No aplica",
-        empLimiteControl: detalle.limiteControlEMC || "",
-        documentoEspecificacion: detalle.docEspecificacion || "",
-        reglaDecision: detalle.reglaDecision || "",
+        fabricante: detalle.fabricante ?? null,
+        modelo: detalle.modelo ?? null,
+        serie: detalle.serie ?? null,
+        codigoInventario: detalle.codigoInventario ?? null,
+        ubicacion: detalle.ubicacion ?? null,
+        puntosCalibrar: Array.isArray(detalle.puntosCalibrar) ? detalle.puntosCalibrar : [],
+        unidad: detalle.unidad ?? null,
+        intervaloRango: detalle.intervaloRango ?? null,
+        resolucion: detalle.resolucion ?? null,
+        asignado: detalle.asignado ?? 0,
+        declaracionConformidad: detalle.declaracionConformidad ?? false,
+        limiteControlEMC: detalle.limiteControlEMC ?? null,
+        docEspecificacion: detalle.docEspecificacion ?? null,
+        reglaDecision: detalle.reglaDecision ?? null,
       })
     );
 
@@ -1705,7 +1527,7 @@ export const OrdenesTrabajo = () => {
       cliente: clienteData?.razonSocial || "Sin cliente",
       tecnico: otCompleta.responsable || "Sin asignar",
       fecha: otCompleta.fechaCalibracion?.toString() || "",
-      estado: otCompleta.estado,
+      estado: (otCompleta.estado ?? "Creada") as EstadoOrden,
       retraso: otPreview.retraso || false,
       equipos: instrumentosMapeados.length,
       tipo: "Acreditado",
@@ -1723,21 +1545,21 @@ export const OrdenesTrabajo = () => {
       personaContactar: otCompleta.personaContacto || clienteData?.nombreContacto || "",
       telefonoCalibracion: otCompleta.telefonoContacto || clienteData?.telefono || "",
       fechaCalibracion: otCompleta.fechaCalibracion?.toString() || "",
-      horaCalibracion: otCompleta.hora.toString(),
-      razonSocialSolicitante: otCompleta.cliente?.razonSocial||"",
-      nitSolicitante: otCompleta.cliente?.nitCedula,
-      direccionSolicitante: otCompleta.cliente?.dirrecion,
-      ciudadSolicitante: otCompleta.cliente?.ciudad||"sin ciudad",
-      contactoSolicitante: otCompleta.cliente?.nombreContacto||"sin contacto",
-      telefonoSolicitante: "5183000",
+      horaCalibracion: otCompleta.hora?.toString() || "",
+      razonSocialSolicitante: otCompleta.cliente?.razonSocial || "",
+      nitSolicitante: otCompleta.cliente?.nitCedula ?? "",
+      direccionSolicitante: otCompleta.cliente?.dirrecion ?? "",
+      ciudadSolicitante: otCompleta.cliente?.ciudad || "sin ciudad",
+      contactoSolicitante: otCompleta.cliente?.nombreContacto || "sin contacto",
+      telefonoSolicitante: otCompleta.telefonoContacto_solcitante || "",
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
       responsableUsc: otCompleta.responsable || "",
       fechaDiligenciamiento: otCompleta.createdAt?.toString() || "",
       requiereAnexo: otCompleta.requireAnexo ? "Si" : "No",
-      estadoOrden: otCompleta.estado,
+      estadoOrden: otCompleta.estado ?? "",
       observacionesGenerales: otCompleta.observaciones || "",
-      estado_revision: otCompleta.estadoRevision,
+      estado_revision: otCompleta.estadoRevision ?? undefined,
       ultima_version: version.toString(),
       maquinas: [],
       tecnicos: otCompleta.responsable ? [otCompleta.responsable] : [],
@@ -1792,15 +1614,25 @@ export const OrdenesTrabajo = () => {
 
   const toggleMachineAssignment = (machine: string, technician: string) => {
     setMachineAssignments((prev) => {
-      const current = prev[machine] || [];
+      const current = prev[machine]?.technicians || [];
       const next = current.includes(technician)
         ? current.filter((t) => t !== technician)
         : [...current, technician];
-      return { ...prev, [machine]: next };
+      return {
+        ...prev,
+        [machine]: { quantity: prev[machine]?.quantity || 1, technicians: next },
+      };
     });
     if (!assignedTechnicians.includes(technician)) {
       setAssignedTechnicians((prev) => [...prev, technician]);
     }
+  };
+
+  const updateMachineQuantity = (machine: string, quantity: number) => {
+    setMachineAssignments((prev) => ({
+      ...prev,
+      [machine]: { quantity, technicians: prev[machine]?.technicians || [] },
+    }));
   };
 
   const updateOrderDraft = <K extends keyof EditableOrderFields>(
@@ -1810,7 +1642,11 @@ export const OrdenesTrabajo = () => {
     setOrderDraft((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
 
-  const updateInstrumentDraft = (id: string, field: keyof Instrument, value: string) => {
+  const updateInstrumentDraft = <K extends keyof Instrument>(
+    id: string,
+    field: K,
+    value: Instrument[K]
+  ) => {
     setInstrumentDrafts((prev) =>
       prev.map((instrument) =>
         instrument.id === id ? { ...instrument, [field]: value } : instrument
@@ -1823,7 +1659,7 @@ export const OrdenesTrabajo = () => {
     const updatedOT: OTType = {
       ...selectedOT,
       ...orderDraft,
-      estado: orderDraft.estadoOrden,
+      estado: orderDraft.estadoOrden as EstadoOrden,
       tecnico: orderDraft.responsableUsc,
       instrumentos: instrumentDrafts,
     };
@@ -1978,7 +1814,7 @@ export const OrdenesTrabajo = () => {
         fecha: orden.fechaCalibracion?.toString(),
         tecnico: orden.responsable?.toString(),
         equipos: orden.instrumentos?.length ?? 0,
-        estado: orden.estado,
+        estado: (orden.estado ?? "Creada") as EstadoOrden,
         codigo: orden.codigo,
         retraso: estaVencida,
         warns: ordenWarnings,
@@ -1998,28 +1834,29 @@ export const OrdenesTrabajo = () => {
         ot.cliente?.toLowerCase().includes(lowerSearch)
     );
   }, [search, otss]);
-// Agregar instrumento
+// Agregar instrumento (campos del schema OrdenTrabajoDetalle)
 const handleAddInstrument = () => {
   setInstrumentDrafts((prev) => [
     ...prev,
     {
-      id: "",
-      item: (prev.length + 1).toString(),
+      id: crypto.randomUUID(),
+      item: prev.length + 1,
       tipoServicio: "",
       instrumento: "",
-      fabricante: "",
-      modelo: "",
-      serie: "",
-      codigoInternoInventario: "",
-      ubicacion: "",
-      puntosCalibrar: "",
-      unidad: "",
-      intervaloMedicion: "",
-      resolucionDivisionEscala: "",
-      declaracionConformidad: "",
-      empLimiteControl: "",
-      documentoEspecificacion: "",
-      reglaDecision: "",
+      fabricante: null,
+      modelo: null,
+      serie: null,
+      codigoInventario: null,
+      ubicacion: null,
+      puntosCalibrar: [],
+      unidad: null,
+      intervaloRango: null,
+      resolucion: null,
+      asignado: 0,
+      declaracionConformidad: false,
+      limiteControlEMC: null,
+      docEspecificacion: null,
+      reglaDecision: null,
     },
   ]);
 };
@@ -2028,6 +1865,14 @@ const handleAddInstrument = () => {
 const handleRemoveInstrument = (id: string) => {
   setInstrumentDrafts((prev) => prev.filter((inst) => inst.id !== id));
 };
+
+  // Opciones de tarifa para combos (DTO mínimo del catálogo)
+  const tarifaOptions: TarifaOptionBase[] = useMemo(() => {
+    return (tarifas || []).map((t) => ({
+      tipoServicio: t.tipoServicio,
+      Instrumento: t.Instrumento,
+    }));
+  }, [tarifas]);
 
   return (
     <div className="p-8 bg-slate-50 min-h-screen font-sans text-slate-800 antialiased">
@@ -2059,6 +1904,7 @@ const handleRemoveInstrument = (id: string) => {
             handleMachineSelection={handleMachineSelection}
             machineAssignments={machineAssignments}
             toggleMachineAssignment={toggleMachineAssignment}
+            updateMachineQuantity={updateMachineQuantity}
             assignTechnician={assignTechnician}
           />
 
@@ -2073,7 +1919,7 @@ const handleRemoveInstrument = (id: string) => {
             saveOrderEdits={saveOrderEdits}
             onAddInstrument={handleAddInstrument}
             onRemoveInstrument={handleRemoveInstrument}
-            tarifas={tarifas}
+            tarifas={tarifaOptions}
           />
         </div>
       )}

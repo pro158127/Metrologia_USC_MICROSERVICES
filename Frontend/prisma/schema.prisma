@@ -135,6 +135,7 @@ model Cliente {
   rutDocumento   Documento?     @relation("ClienteRut", fields: [idRutDocumento], references: [idDocumento])
   cotizaciones   Cotizacion[]
   ordenes        OrdenTrabajo[]
+  facturas       Factura[]
 
   @@map("clientes")
 }
@@ -162,11 +163,29 @@ model Cotizacion {
   documentos   Documento[]
   ordenes      OrdenTrabajo[]
   recepciones  RecepcionEquipo[]
-
+  Historiacambios HistorialCambios[]
   historialEstados HistorialEstadoCotizacion[]
 
   @@index([createdAt])
   @@map("cotizaciones")
+}
+
+model HistorialCambios {
+  id                      String   @id @default(uuid())
+  numeroVersion           String   @map("numero_version")
+  fechaCambio             DateTime @map("fecha_cambio")
+  descripcion             String   @db.Text
+  requiereValidacionHoja  Boolean  @default(false) @map("requiere_validacion_hoja")
+  observaciones           String?  @db.Text
+  aprobo                  String   @map("aprobo")
+  
+  idCotizacion            Int      @map("id_cotizacion")
+  cotizacion              Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
+  
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  @@map("historial_cambios")
 }
 
 model HistorialEstadoCotizacion {
@@ -209,6 +228,7 @@ enum estadopay {
 }
 
 model OrdenTrabajo {
+  //seccion1
   idOrdenTrabajo         Int                   @id @default(autoincrement()) @map("ID_ORDEN_TRABAJO")
   codigo                 String                @unique @map("CODIGO_OT")
   idCotizacion           Int?                  @map("ID_COTIZACION_FK")
@@ -216,37 +236,81 @@ model OrdenTrabajo {
   correoCertificado      String?               @map("CORREO_CERTIFICADO")
   correoFactura          String?               @map("CORREO_FACTURA")
   fechaLimiteFacturacion DateTime?             @map("FECHA_LIMITE_FACTURACION")
-  esInternoUSC           Boolean               @default(false) @map("ES_INTERNO_USC")
-  esEnSitio              Boolean               @default(false) @map("ES_EN_SITIO")
-  esLabPermanente        Boolean               @default(true) @map("ES_LAB_PERMANENTE")
+  NIT                   String ?                @default("sin nit")
+  dirrecion             String?                 @default("sin dirreccion")
+  ciudad                String ?                @default("sin ciudad")
+
+  //intrumentos
+ instrumentos           OrdenTrabajoDetalle[]
+
+//informacion de calibracion 
+
+  esInternoUSC           Boolean ?              @default(false) @map("ES_INTERNO_USC")
+  esEnSitio              Boolean  ?             @default(false) @map("ES_EN_SITIO")
+  esLabPermanente        Boolean  ?             @default(true) @map("ES_LAB_PERMANENTE")
   personaContacto        String?               @map("PERSONA_CONTACTO")
   telefonoContacto       String?               @map("TELEFONO_CONTACTO")
   fechaCalibracion       DateTime?             @map("FECHA_CALIBRACION")
-  // Nueva propiedad opcional si quieres la hora separada:
-  // horaCalibracion     String?               @map("HORA_CALIBRACION")
+    hora                   DateTime? @default(now())
+
+ ///informacion de solicitante
+Razon_social            String?              @default("sin razon_social")
+dirrecion_solcitante            String?                 @default("sin dirreccion")
+personaContacto_solicitante       String?               @map("PERSONA_CONTACT_SOLCITANTE")
+ciudad_solcitante              String ?                @default("sin ciudad")
+NIT_solicitante                  String ?                @default("sin nit")
+telefonoContacto_solcitante       String?               @map("TELEFONO_CONTACTO_SOLICITANTE")
+
+
+//consecutivos y fecha de diligenciamentos
+
+
+  no_orden_trabajo     String?                @default("n/a")
+  no_cotizacion         String?         @default("n/a")
   responsable            String?               @map("RESPONSABLE")
+  fecha_dilgenciamento      DateTime?             @map("FECHA_CALIBRACION_DILIGENCIAMENTO")
+  requireAnexo           Boolean ?              @default(false) @map("REQUIERE_ANEXO")
+/// OBSERVACIONES
   observaciones          String?               @map("OBSERVACIONES")
-  // Nueva propiedad para el checkbox del anexo:
-  requireAnexo           Boolean               @default(false) @map("REQUIERE_ANEXO")
-  hora                   DateTime   @default(now())
+
+
+
               
-  estado                 EstadoOT                @default(Creada) 
-  estadoRevision         String                @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
+  estado                 EstadoOT?                @default(Creada) 
+  estadoRevision         String?                @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
   motivoRechazo          String?               @map("MOTIVO_RECHAZO")
-  createdAt              DateTime              @default(now()) @map("CREATED_AT")
-  estado_pago            estadopay             @default(PAGADO)
-  alertamessag           String                @default("sin novedades")
+  createdAt              DateTime?             @default(now()) @map("CREATED_AT")
+  estado_pago            estadopay?             @default(PAGADO)
+  alertamessag           String?               @default("sin novedades")
   
   documentos     Documento[] @relation("OrdenDocumentos")
   pago           Documento[] @relation("OrdenPago") // O Documento? si es 1 a 1 / opcional
-  instrumentos           OrdenTrabajoDetalle[]
+ 
   cliente                Cliente?              @relation(fields: [idCliente], references: [idCliente])
   cotizacion             Cotizacion?           @relation(fields: [idCotizacion], references: [idCotizacion])
   recepciones            RecepcionEquipo[]
+  facturas               Factura[]
 
   @@index([codigo])
   @@index([fechaCalibracion])
   @@map("ordenes_trabajo")
+}
+
+model Factura {
+  idFactura      Int           @id @default(autoincrement()) @map("ID_FACTURA")
+  numero         String        @unique @map("NUMERO_FACTURA")
+  idOrdenTrabajo Int?          @map("ID_ORDEN_TRABAJO_FK")
+  idCliente      Int?          @map("ID_CLIENTE_FK")
+  fecha          DateTime      @default(now()) @map("FECHA")
+  valor          Decimal       @map("VALOR") @db.Decimal(12, 2)
+  estado         String        @default("EMITIDA") @map("ESTADO")
+  observacion    String?       @map("OBSERVACION")
+  ordenTrabajo   OrdenTrabajo? @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo])
+  cliente        Cliente?      @relation(fields: [idCliente], references: [idCliente])
+
+  @@index([idOrdenTrabajo])
+  @@index([idCliente])
+  @@map("facturas")
 }
 
 model OrdenTrabajoDetalle {

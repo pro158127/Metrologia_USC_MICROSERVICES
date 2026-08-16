@@ -2,75 +2,44 @@
 
 "use client";
 
-import { useEffect, useState,useRef ,useCallback, useMemo} from "react";
-import { Download,Plus, Edit, Shield, X, Check, Search, ChevronRight, Upload,FileSpreadsheet, 
-  History, 
-  RefreshCw, 
-  ArrowLeft, 
-  CheckCircle2, 
-  Layers, 
-  Save, 
-  Sparkles,FileCode,SlidersHorizontal,Settings2,
-  Zap,
-  Cpu,
-  Clock,
-  Maximize2,
-  Table as TableIcon,
-  AlertTriangle } from "lucide-react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { Plus, Shield, X, Check, Search, FileSpreadsheet } from "lucide-react";
 
-import { obtenerUsuariosPorPermiso,actualizarUsuarioGenerico,crearUsuarioGenerico ,restablecerContrasenaGenerico,obtenerBitacoraPorPermiso,eliminarUsuario,restaurarUsuario} from "@/app/action_module/administration";
-type AdminTab = "usuarios" | "bitacora" | "config";
-type ConfigSection = "tarifas" | "plantillas" | "sello" | "parametros";
+import { actualizarUsuarioGenerico, crearUsuarioGenerico, restablecerContrasenaGenerico, obtenerBitacoraPorPermiso, eliminarUsuario, restaurarUsuario } from "@/app/action_module/administration";
 
-const rolColors: Record<string, { bg: string; color: string }> = {
-  "Secretaria": { bg: "#DBEAFE", color: "#1D4ED8" },
-  "Técnico": { bg: "#DCFCE7", color: "#15803D" },
-  "Coordinadora": { bg: "#EDE9FE", color: "#7C3AED" },
-  "Director Técnico": { bg: "#1F2A44", color: "#AFC4FD" },
-  "Gestor Comercial": { bg: "#FEF3C7", color: "#D97706" },
-};
+import type {
+  AdminTab,
+  ConfigSection,
+  init_bitacora,
+  ToastProps,
+  FormUsuario,
+  ModalUsuarioProps,
+  TabUsuariosProps,
+  TipoRol,
+  TipoModulo,
+  FiltrosBitacora,
+  tab_bitacora,
+  TabConfiguracionProps,
+  uso_rol,
+  RolColorMap,
+} from "@/tipos/administracion";
+import type { ParametroSistemaModel } from "@/tipos/entidades";
 
-
-interface initUsers{
-"id":number,
-"nombre":string,
-"correo":string,
-"rol":string,
-"estado":boolean,
-"ultimo":string
-}
-
-interface init_bitacora{
-"fecha":string
-"usuario":string
-"rol":string
-"accion":string
-"modulo":string
-"ip":string
-}
-const bitacora = [
-  { fecha: "2026-06-09 11:30", usuario: "Luis Burgos", rol: "Director Técnico", accion: "Certificado OT-089 firmado y sellado", modulo: "Firma y Sello", ip: "10.0.1.24" },
-  { fecha: "2026-06-09 10:45", usuario: "Luis Burgos", rol: "Director Técnico", accion: "Cotización 26-0045A marcada como Aprobada", modulo: "Cotizaciones", ip: "10.0.1.24" },
-  { fecha: "2026-06-09 09:30", usuario: "Luis Burgos", rol: "Director Técnico", accion: "Usuario técnico2@usc.edu.co desactivado", modulo: "Administración", ip: "10.0.1.24" },
-  { fecha: "2026-06-08 16:00", usuario: "J. Ramírez", rol: "Técnico", accion: "PDF adjunto a OT-2026-087", modulo: "Calibración", ip: "10.0.1.15" },
-  { fecha: "2026-06-08 14:22", usuario: "Luis Burgos", rol: "Director Técnico", accion: "Exportación base de datos período 2026-01 a 2026-06", modulo: "Reportes", ip: "10.0.1.24" },
-  { fecha: "2026-06-07 23:00", usuario: "Sistema", rol: "Sistema", accion: "Backup automático completado exitosamente", modulo: "Sistema", ip: "localhost" },
+const PALETA_ROLES: { bg: string; color: string }[] = [
+  { bg: "#DBEAFE", color: "#1D4ED8" },
+  { bg: "#DCFCE7", color: "#15803D" },
+  { bg: "#EDE9FE", color: "#7C3AED" },
+  { bg: "#FEF3C7", color: "#D97706" },
+  { bg: "#FCE7F3", color: "#BE185D" },
+  { bg: "#E0F2FE", color: "#0369A1" },
 ];
 
-const catalogItems = [
-  { instrumento: "Termómetro digital", magnitud: "Temperatura", precio2025: "$175.000", precio2026: "$185.000", acreditado: true, estado: "Activo" },
-  { instrumento: "Manómetro", magnitud: "Presión", precio2025: "$210.000", precio2026: "$220.000", acreditado: true, estado: "Activo" },
-  { instrumento: "Balanza analítica", magnitud: "Masa", precio2025: "$185.000", precio2026: "$195.000", acreditado: false, estado: "Activo" },
-  { instrumento: "Cinta métrica", magnitud: "Longitud", precio2025: "$130.000", precio2026: "$140.000", acreditado: true, estado: "Inactivo" },
-];
+const OPCIONES_FRECUENCIA = ["UNA_VEZ", "DIARIA", "SEMANAL", "PROGRAMADA_CRON"] as const;
 
 // ==========================================
 // 3. SUB-COMPONENTES DE RENDERIZADO INTERNO
 // ==========================================
 
-interface ToastProps {
-  message: string;
-}
 function RenderToast({ message }: ToastProps) {
   return (
     <div className="fixed top-4 right-4 z-50 px-4 py-3 rounded-xl" style={{ background: "#1F2A44", color: "#FFFFFF", fontSize: 13, boxShadow: "0 8px 24px rgba(0,0,0,0.2)" }}>
@@ -79,22 +48,7 @@ function RenderToast({ message }: ToastProps) {
   );
 }
 
-interface FormUsuario {
-  nombre: string;
-  correo: string;
-  rol?: string;      // Opcional (?) para que al crear no estorbe
-  estado?: boolean;    // Opcional para que la base de datos asuma el valor por defecto si no lo mandas
-  id?: number;         // Opcional, solo existirá cuando estemos EDITANDO
-}
-
-interface ModalUsuarioProps {
-  editingUser:boolean;
-  form: FormUsuario;
-  setForm: React.Dispatch<React.SetStateAction<FormUsuario>>;
-  onClose: () => void;
-  onSave: () => void;
-}
-function RenderModalUsuario({ editingUser, form, setForm, onClose, onSave }: ModalUsuarioProps) {
+function RenderModalUsuario({ editingUser, form, setForm, onClose, onSave, rolColors }: ModalUsuarioProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.45)" }}>
       <div className="rounded-xl p-6 w-full max-w-md" style={{ background: "#FFFFFF", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
@@ -221,17 +175,6 @@ function RenderModalUsuario({ editingUser, form, setForm, onClose, onSave }: Mod
   );
 }
 
-interface TabUsuariosProps {
-  search: string;
-  setSearch: (val: string) => void;
-  filteredUsers: (UsuarioModel & uso_rol)[];
-  openCreate: () => void;
-  openEdit: (user: UsuarioModel & uso_rol) => void;
-  toggleEstado: (id: number,estado:boolean) => void;
-  showToast: (msg: string) => void;
-  usuariostate:UsuarioModel[];
-}
-
 
 function RenderTabUsuarios({
   search,
@@ -241,15 +184,15 @@ function RenderTabUsuarios({
   openEdit,
   toggleEstado,
   showToast,
-  usuariostate,
+  rolColors,
 }: TabUsuariosProps) {
   const [loadingResetId,setLoadingResetId] =
 useState<number | null>(null);
 const [showDeleted, setShowDeleted] = useState(false);
-const activeUsers = filteredUsers.filter((u) => !u.elminado);
-  const deletedUsers = filteredUsers.filter((u) => u.elminado);
 const [loadingrestaurar,setRestaurar]=useState<number | null>(null);
 const [elemianarloading,setEleminar]=useState<number | null>(null);
+const activeUsers = useMemo(() => filteredUsers.filter((u) => !u.elminado), [filteredUsers]);
+const deletedUsers = useMemo(() => filteredUsers.filter((u) => u.elminado), [filteredUsers]);
 
 
 
@@ -965,46 +908,42 @@ deletedUsers.map((u) => (
   );
 }
 
-// 1. Tipamos los posibles valores para cada selector para que TypeScript te proteja
-type TipoRol = "Secretaria" | "Director Técnico" | "Técnico" | "Coordinadora" | "Gestor Comercial" | "";
-type TipoModulo = "administracion" | "cleintes" | "revision" | "cotizaciones" | "ordenes_ot" | "";
-
-// Estructura de los filtros del estado
-interface FiltrosBitacora {
-  usuario: string; // Input de texto libre para buscar nombre
-  modulo: TipoModulo;
-  rol: TipoRol;
-  fecha: string; // Formato YYYY-MM-DD para el input de tipo date
-}
-interface tab_bitacora{
-  info_bitacora:init_bitacora[];
-  recarga: () => Promise<void>;
-  token:any;
-}
 function RenderTabBitacora({info_bitacora,recarga,token}:tab_bitacora) {
 
-  const rolesDisponibles = Array.from(
-  new Set(
-    info_bitacora
-      ?.map((item) => item.rol) // Cambia 'item.rol' si la propiedad en tu base de datos tiene otro nombre
-      .filter((rol): rol is string => Boolean(rol)) // Filtramos valores null, undefined o vacíos
-  )
+  const rolesDisponibles = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          info_bitacora
+            ?.map((item) => item.rol) // Cambia 'item.rol' si la propiedad en tu base de datos tiene otro nombre
+            .filter((rol): rol is string => Boolean(rol)) // Filtramos valores null, undefined o vacíos
+        )
+      ),
+    [info_bitacora]
+  );
+
+const usuariosDisponibles = useMemo(
+  () =>
+    Array.from(
+      new Set(
+        info_bitacora
+          ?.map((item) => item.usuario) // Ajusta 'item.usuario' si en tu objeto se llama 'usuario_nombre' o similar
+          .filter((usuario): usuario is string => Boolean(usuario))
+      )
+    ),
+  [info_bitacora]
 );
 
-const usuariosDisponibles = Array.from(
-  new Set(
-    info_bitacora
-      ?.map((item) => item.usuario) // Ajusta 'item.usuario' si en tu objeto se llama 'usuario_nombre' o similar
-      .filter((usuario): usuario is string => Boolean(usuario))
-  )
-);
-
-const modulosDisponibles = Array.from(
-  new Set(
-    info_bitacora
-      ?.map((item) => item.modulo) // Cambia 'item.modulo' si la propiedad en la bitácora tiene otro nombre (ej. item.module o item.seccion)
-      .filter((modulo): modulo is string => Boolean(modulo)) // Filtramos nulos, undefined o vacíos
-  )
+const modulosDisponibles = useMemo(
+  () =>
+    Array.from(
+      new Set(
+        info_bitacora
+          ?.map((item) => item.modulo) // Cambia 'item.modulo' si la propiedad en la bitácora tiene otro nombre (ej. item.module o item.seccion)
+          .filter((modulo): modulo is string => Boolean(modulo)) // Filtramos nulos, undefined o vacíos
+      )
+    ),
+  [info_bitacora]
 );
   // 2. Inicializamos el estado con los tipos estrictos
   const [filtros, setFiltros] = useState<FiltrosBitacora>({
@@ -1017,36 +956,40 @@ const modulosDisponibles = Array.from(
   const [estaRecargando,setestaRecargando]=useState<boolean>(false);
 const [exportando, setExportando] = useState(false);
  // 3. Formateo seguro de fecha (Evita el error de zona horaria UTC -> GMT)
-  const fechaFiltroFormateada = (() => {
+  const fechaFiltroFormateada = useMemo(() => {
     if (!filtros.fecha) return "";
     const [year, month, day] = filtros.fecha.split("-");
     if (!year || !month || !day) return "";
     return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year.slice(-2)}`; 
     // Genera el formato "DD/MM/YY", idéntico a toLocaleDateString('es-ES')
-  })();
+  }, [filtros.fecha]);
 
   // 4. CÁLCULO DERIVADO (Sin useEffect ni setInforamtion extra)
-  const filterinFormation = (info_bitacora || []).filter((item) => {
-    // A. Filtro por Usuario
-    const matchUsuario =
-      filtros.usuario === "" ||
-      item.usuario?.toLowerCase().includes(filtros.usuario.trim().toLowerCase());
+  const filterinFormation = useMemo(
+    () =>
+      (info_bitacora || []).filter((item) => {
+        // A. Filtro por Usuario
+        const matchUsuario =
+          filtros.usuario === "" ||
+          item.usuario?.toLowerCase().includes(filtros.usuario.trim().toLowerCase());
 
-    // B. Filtro por Módulo
-    const matchModulo =
-      filtros.modulo === "" || item.modulo === filtros.modulo;
+        // B. Filtro por Módulo
+        const matchModulo =
+          filtros.modulo === "" || item.modulo === filtros.modulo;
 
-    // C. Filtro por Rol
-    const matchRol =
-      filtros.rol === "" || item.rol === filtros.rol;
+        // C. Filtro por Rol
+        const matchRol =
+          filtros.rol === "" || item.rol === filtros.rol;
 
-    // D. Filtro por Fecha
-    const fechaItem = item.fecha ? item.fecha.split(" ")[0] : "";
-    const matchFecha =
-      fechaFiltroFormateada === "" || fechaItem.includes(fechaFiltroFormateada);
+        // D. Filtro por Fecha
+        const fechaItem = item.fecha ? item.fecha.split(" ")[0] : "";
+        const matchFecha =
+          fechaFiltroFormateada === "" || fechaItem.includes(fechaFiltroFormateada);
 
-    return matchUsuario && matchModulo && matchRol && matchFecha;
-  });
+        return matchUsuario && matchModulo && matchRol && matchFecha;
+      }),
+    [info_bitacora, filtros, fechaFiltroFormateada]
+  );
 
   // Manejador para actualizar inputs/selects de filtro
   const handleFiltroChange = (campo: keyof FiltrosBitacora, valor: string) => {
@@ -1419,10 +1362,6 @@ const [exportando, setExportando] = useState(false);
   );
 }
 ////////////////configuraciom
-interface TabConfiguracionProps {
-  configSection: ConfigSection;
-  setConfigSection: (section: ConfigSection) => void;
-}
 
 
 
@@ -1500,432 +1439,8 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
   );
 }
 //////////////////////77configuracion 
-function RenderConfigTarifas() {
-  return (
-    <div className="rounded-xl overflow-hidden" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
-      <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid #F1F5F9" }}>
-        <span style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600 }}>Catálogo de tarifas</span>
-        <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg" style={{ background: "#5680F9", color: "#FFFFFF", fontSize: 13, fontWeight: 500, border: "none", cursor: "pointer" }}>
-          <Plus size={14} /> Agregar ítem
-        </button>
-      </div>
-      <table className="w-full">
-        <thead>
-          <tr style={{ background: "#E6EAF2" }}>
-            {["Instrumento", "Magnitud", "Precio 2025", "Precio 2026", "Acreditado", "Estado", "Acciones"].map((h) => (
-              <th key={h} className="text-left px-4 py-2.5" style={{ color: "#475569", fontSize: 11, fontWeight: 600 }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {catalogItems.map((item, i) => (
-            <tr key={i} style={{ background: i % 2 === 0 ? "#FFFFFF" : "#F5F7FA" }}>
-              <td className="px-4 py-3" style={{ color: "#1F2A44", fontSize: 13, fontWeight: 500 }}>{item.instrumento}</td>
-              <td className="px-4 py-3" style={{ color: "#64748b", fontSize: 13 }}>{item.magnitud}</td>
-              <td className="px-4 py-3" style={{ color: "#94A3B8", fontSize: 13 }}>{item.precio2025}</td>
-              <td className="px-4 py-3" style={{ color: "#1F2A44", fontSize: 13, fontWeight: 500 }}>{item.precio2026}</td>
-              <td className="px-4 py-3">
-                <span className="px-2 py-0.5 rounded-full" style={{ background: item.acreditado ? "#EEF2FF" : "#F5F3FF", color: item.acreditado ? "#5680F9" : "#9A8CF3", fontSize: 11, fontWeight: 600 }}>
-                  {item.acreditado ? "Acreditado" : "No acreditado"}
-                </span>
-              </td>
-              <td className="px-4 py-3">
-                <span className="px-2 py-0.5 rounded-full" style={{ background: item.estado === "Activo" ? "#F0FDF4" : "#F5F7FA", color: item.estado === "Activo" ? "#15803D" : "#94A3B8", fontSize: 11, fontWeight: 600 }}>
-                  {item.estado}
-                </span>
-              </td>
-              <td className="px-4 py-3">
-                <button className="px-3 py-1.5 rounded-lg" style={{ background: "#EEF2FF", color: "#5680F9", border: "none", fontSize: 12, cursor: "pointer" }}>
-                  <Edit size={12} />
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 //////////////////// configuracio plantillas
 
-export interface CampoBD {
-  id: string;
-  nombre: string;
-  key: string;
-  color: string;
-  requerido: boolean;
-}
-
-export interface VersionPlantilla {
-  idVersionPlantilla: number;
-  idPlantilla: number;
-  version: number;
-  clausulasHtml: string;
-  mapeoExcelJson: Record<string, CampoBD>; // Tipado explícito para el JSON de Prisma
-  idUsuarioCreador: number;
-  createdAt: string;
-  usuarioCreador?: {
-    idUsuario: number;
-    nombre: string;
-  };
-}
-
-export interface Plantilla {
-  idPlantilla: number;
-  nombre: string;
-  modulo: string;
-  activa: boolean;
-  versiones: VersionPlantilla[];
-}
-/// EDITOR DE MAPEO UNIVERS
-interface CellData {
-  value: string | number | null;
-  formatted?: string;
-  isHeader?: boolean;
-}
-
-interface SheetData {
-  name: string;
-  rows: CellData[][];
-}
-
-interface SnapshotPayload {
-  source: "CACHE_HIT" | "WORKER_MISS_PARSED";
-  latency: string;
-  snapshot: {
-    documentId: string;
-    sheets: SheetData[];
-    totalRows: number;
-    totalCols: number;
-  };
-}
-
-interface ExcelViewerProps {
-  documentId: string;
-  relativeFilePath: string;
-  className?: string;
-}
-
-function ExcelViewer({
-  documentId,
-  relativeFilePath,
-  className = "",
-}: ExcelViewerProps) {
-  const [data, setData] = useState<SnapshotPayload | null>(null);
-  const [activeSheetIndex, setActiveSheetIndex] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState<string>("");
-  const [selectedCell, setSelectedCell] = useState<{ row: number; col: number; val: any } | null>(null);
-
-  // Petición al API Route (Paso 3)
-  const fetchSnapshot = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/excel/snapshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documentId, relativeFilePath }),
-      });
-
-      if (!res.ok) throw new Error(`Error en el servidor (${res.status})`);
-      const result: SnapshotPayload = await res.json();
-      setData(result);
-    } catch (err: any) {
-      setError(err.message || "No se pudo cargar la vista previa del libro.");
-    } finally {
-      setLoading(false);
-    }
-  }, [documentId, relativeFilePath]);
-
-  useEffect(() => {
-    fetchSnapshot();
-  }, [fetchSnapshot]);
-
-  // Generador de etiquetas para columnas (A, B, C... Z, AA, AB...)
-  const getColumnLabel = (index: number): string => {
-    let label = "";
-    let i = index;
-    while (i >= 0) {
-      label = String.fromCharCode((i % 26) + 65) + label;
-      i = Math.floor(i / 26) - 1;
-    }
-    return label;
-  };
-
-  const currentSheet = data?.snapshot?.sheets?.[activeSheetIndex];
-
-  return (
-    <div className={`w-full font-sans text-slate-100 ${className}`}>
-      {/* CONTENEDOR PRINCIPAL GLASSMORPHISM */}
-      <div className="bg-slate-950/90 border border-slate-800/80 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden backdrop-blur-2xl transition-all duration-300">
-        
-        {/* BARRA SUPERIOR / HEADER TELEMÉTRICO */}
-        <div className="p-4 sm:p-6 border-b border-slate-800/80 bg-slate-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
-              <FileSpreadsheet className="w-5 h-5 sm:w-6 sm:h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight truncate max-w-[200px] sm:max-w-xs">
-                  {documentId}
-                </h3>
-                {data && (
-                  <span
-                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wide uppercase transition-all ${
-                      data.source === "CACHE_HIT"
-                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                        : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/30"
-                    }`}
-                  >
-                    {data.source === "CACHE_HIT" ? <Zap className="w-3 h-3" /> : <Cpu className="w-3 h-3" />}
-                    {data.source === "CACHE_HIT" ? "Cache HIT" : "Worker Processed"}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-400 font-mono mt-0.5 truncate max-w-xs sm:max-w-md">
-                {relativeFilePath}
-              </p>
-            </div>
-          </div>
-
-          {/* ACCIONES Y RECARGA */}
-          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-            {data && (
-              <div className="hidden md:flex items-center gap-2 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-mono text-slate-400">
-                <Clock className="w-3.5 h-3.5 text-slate-500" />
-                <span>{data.latency}</span>
-              </div>
-            )}
-            <button
-              onClick={fetchSnapshot}
-              disabled={loading}
-              className="p-2 sm:px-3 sm:py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white transition-all text-xs font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50"
-              title="Volver a sincronizar"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-emerald-400" : ""}`} />
-              <span className="hidden sm:inline">Refrescar</span>
-            </button>
-          </div>
-        </div>
-
-        {/* CONTENIDO PRINCIPAL / ESTADOS DE CARGA Y MATRIZ */}
-        {loading ? (
-          /* SKELETON LOADER ANIMADO */
-          <div className="p-6 sm:p-10 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="h-6 w-32 bg-slate-900 rounded-lg animate-pulse" />
-              <div className="h-6 w-24 bg-slate-900 rounded-lg animate-pulse" />
-            </div>
-            <div className="w-full h-80 bg-slate-900/50 rounded-2xl border border-slate-800/50 p-4 space-y-3 overflow-hidden">
-              {[...Array(7)].map((_, i) => (
-                <div key={i} className="flex gap-3">
-                  {[...Array(6)].map((_, j) => (
-                    <div
-                      key={j}
-                      className="h-8 bg-slate-800/40 rounded-lg animate-pulse"
-                      style={{ width: `${100 / 6}%`, animationDelay: `${(i + j) * 0.05}s` }}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : error ? (
-          /* ESTADO DE ERROR TÉCNICO */
-          <div className="p-8 sm:p-12 text-center max-w-md mx-auto">
-            <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto mb-4">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
-            <h4 className="text-base font-bold text-white mb-1">Error al procesar la hoja</h4>
-            <p className="text-xs text-slate-400 mb-4">{error}</p>
-            <button
-              onClick={fetchSnapshot}
-              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-white transition-all cursor-pointer"
-            >
-              Reintentar Operación
-            </button>
-          </div>
-        ) : currentSheet ? (
-          <>
-            {/* BARRA SUPERIOR DE LA HOJA: NAVEGACIÓN POR PESTAÑAS (SHEETS) */}
-            <div className="px-4 pt-3 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between gap-4 overflow-x-auto no-scrollbar">
-              <div className="flex items-center gap-1.5 scrollbar-none overflow-x-auto pb-2">
-                {data?.snapshot.sheets.map((sheet, index) => {
-                  const isActive = index === activeSheetIndex;
-                  return (
-                    <button
-                      key={sheet.name}
-                      onClick={() => setActiveSheetIndex(index)}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-200 cursor-pointer flex items-center gap-2 ${
-                        isActive
-                          ? "bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20 font-bold"
-                          : "bg-slate-900/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800/60"
-                      }`}
-                    >
-                      <TableIcon className="w-3.5 h-3.5" />
-                      {sheet.name}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* INSPECTOR DE CELDA SELECCIONADA */}
-              {selectedCell && (
-                <div className="hidden lg:flex items-center gap-2 pb-2 text-xs font-mono text-slate-400 shrink-0">
-                  <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                    [{getColumnLabel(selectedCell.col)}
-                    {selectedCell.row + 1}]
-                  </span>
-                  <span className="text-slate-300 truncate max-w-[200px]">
-                    {String(selectedCell.val ?? "Vacio")}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* TABLA EXCEL: MATRIX GRID ADAPTATIVA */}
-            <div className="relative overflow-x-auto overflow-y-auto max-h-[500px] scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-              <table className="w-full border-collapse text-left text-xs font-mono select-none">
-                {/* ENCABEZADOS DE COLUMNA (A, B, C...) */}
-                <thead className="sticky top-0 z-20 bg-slate-900 text-slate-400 font-bold border-b border-slate-800 shadow-md">
-                  <tr>
-                    <th className="w-12 min-w-[48px] p-2.5 text-center bg-slate-950 border-r border-slate-800 text-[10px] text-slate-600 sticky left-0 z-30">
-                      #
-                    </th>
-                    {currentSheet.rows[0]?.map((_, colIdx) => (
-                      <th
-                        key={colIdx}
-                        className="p-2.5 min-w-[120px] sm:min-w-[150px] border-r border-slate-800/80 text-center text-slate-400 font-semibold bg-slate-900/90"
-                      >
-                        {getColumnLabel(colIdx)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-
-                {/* CUERPO DE DATOS DE LA HOJA */}
-                <tbody className="divide-y divide-slate-800/50 bg-slate-950">
-                  {currentSheet.rows.map((row, rowIdx) => (
-                    <tr
-                      key={rowIdx}
-                      className="hover:bg-indigo-950/20 transition-colors group"
-                    >
-                      {/* ÍNDICE DE FILA STICKY (1, 2, 3...) */}
-                      <td className="p-2 text-center bg-slate-900/90 text-slate-500 font-bold border-r border-slate-800/80 text-[10px] sticky left-0 z-10 group-hover:text-emerald-400 group-hover:bg-slate-900 transition-colors">
-                        {rowIdx + 1}
-                      </td>
-
-                      {/* CELDAS */}
-                      {row.map((cell, colIdx) => {
-                        const isSelected =
-                          selectedCell?.row === rowIdx && selectedCell?.col === colIdx;
-                        const cellValue = cell?.formatted ?? cell?.value;
-
-                        return (
-                          <td
-                            key={colIdx}
-                            onClick={() =>
-                              setSelectedCell({
-                                row: rowIdx,
-                                col: colIdx,
-                                val: cellValue,
-                              })
-                            }
-                            className={`p-2.5 border-r border-slate-800/40 text-slate-300 truncate max-w-[200px] cursor-pointer transition-all duration-150 ${
-                              isSelected
-                                ? "bg-emerald-500/20 text-emerald-200 ring-2 ring-emerald-500/80 ring-inset font-bold"
-                                : rowIdx === 0
-                                ? "font-bold text-white bg-slate-900/40"
-                                : "hover:bg-slate-900/60"
-                            }`}
-                          >
-                            {cellValue !== null && cellValue !== undefined ? (
-                              String(cellValue)
-                            ) : (
-                              <span className="text-slate-700 font-sans italic">
-                                —
-                              </span>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* FOOTER INFORMATIVO Y RESUMEN */}
-            <div className="p-3 sm:p-4 bg-slate-900/80 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1 text-emerald-400 font-semibold">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Listo
-                </span>
-                <span className="text-slate-600">|</span>
-                <span>
-                  {currentSheet.rows.length} filas × {currentSheet.rows[0]?.length || 0} columnas
-                </span>
-              </div>
-              <span className="text-slate-500 text-[10px]">
-                Presiona cualquier celda para inspeccionar su valor
-              </span>
-            </div>
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-//// COMFIGURACION PLANTILLA
-// Datos de prueba (Reemplazar con tus constantes)
-const PLANTILLAS_PRISMA_DATA: Plantilla[] = [
-  {
-    idPlantilla: 1,
-    nombre: "RCM003 — Cotización Corporativa.xlsx",
-    modulo: "COTIZACIONES",
-    activa: true,
-    versiones: [
-      {
-        idVersionPlantilla: 101,
-        idPlantilla: 1,
-        version: 3,
-        clausulasHtml: "<p>Términos estándar</p>",
-        mapeoExcelJson: {},
-        idUsuarioCreador: 1,
-        createdAt: "2026-03-15",
-        usuarioCreador: { idUsuario: 1, nombre: "m.admin" },
-      },
-    ],
-  },
-  {
-    idPlantilla: 2,
-    nombre: "RCM012 — Orden de Compra Servicio.xlsx",
-    modulo: "COMPRAS",
-    activa: true,
-    versiones: [
-      {
-        idVersionPlantilla: 102,
-        idPlantilla: 2,
-        version: 1,
-        clausulasHtml: "",
-        mapeoExcelJson: {},
-        idUsuarioCreador: 2,
-        createdAt: "2026-02-10",
-        usuarioCreador: { idUsuario: 2, nombre: "j.doe" },
-      },
-    ],
-  },
-];
-
-const CAMPOS_BD_MOCK: CampoBD[] = [
-  { id: "c1", nombre: "Nombre del Cliente", key: "cliente_nombre", color: "#3B82F6", requerido: true },
-  { id: "c2", nombre: "Monto Total", key: "monto_total", color: "#10B981", requerido: true },
-  { id: "c3", nombre: "Fecha Emisión", key: "fecha_emision", color: "#F59E0B", requerido: true },
-];
 import TemplatesMappingPage from "./componentes/template";
 export function RenderConfigPlantillas() {
   return <TemplatesMappingPage/>
@@ -1939,24 +1454,36 @@ function RenderConfigSello() {
 }
 
 function RenderConfigParametros() {
+  const parametros = useDbTable("parametros_sistema");
+  const parametrosPorClave = useMemo(() => {
+    const mapa = new Map<string, ParametroSistemaModel>();
+    parametros?.forEach((parametro) => mapa.set(parametro.clave, parametro));
+    return mapa;
+  }, [parametros]);
+
+  const valorScript = (clave: string, porDefecto: string) =>
+    parametrosPorClave.get(clave)?.codigoScript ?? porDefecto;
+
+  const secciones = [
+    {
+      title: "Alertas y notificaciones",
+      items: [
+        { label: "Días para alerta de retraso de OT", type: "number", val: valorScript("DIAS_ALERTA_RETRASO_OT", "0") },
+        { label: "Días para alerta de vencimiento de plantilla", type: "number", val: valorScript("DIAS_ALERTA_VENCIMIENTO_PLANTILLA", "0") },
+        { label: "Remitente de correos institucionales", type: "email", val: valorScript("REMITENTE_CORREOS_INSTITUCIONALES", "") },
+      ],
+    },
+    {
+      title: "Respaldo de datos",
+      items: [
+        { label: "Frecuencia de respaldo automático", type: "select", val: parametrosPorClave.get("FRECUENCIA_RESPALDO")?.frecuencia ?? "UNA_VEZ" },
+      ],
+    },
+  ];
+
   return (
     <div className="flex flex-col gap-5">
-      {[
-        {
-          title: "Alertas y notificaciones",
-          items: [
-            { label: "Días para alerta de retraso de OT", type: "number", val: "3" },
-            { label: "Días para alerta de vencimiento de plantilla", type: "number", val: "30" },
-            { label: "Remitente de correos institucionales", type: "email", val: "laboratorio@usc.edu.co" },
-          ]
-        },
-        {
-          title: "Respaldo de datos",
-          items: [
-            { label: "Frecuencia de respaldo automático", type: "select", val: "Diario" },
-          ]
-        },
-      ].map((section) => (
+      {secciones.map((section) => (
         <div key={section.title} className="rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
           <div style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{section.title}</div>
           <div className="flex flex-col gap-4">
@@ -1964,8 +1491,8 @@ function RenderConfigParametros() {
               <div key={item.label}>
                 <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>{item.label}</label>
                 {item.type === "select" ? (
-                  <select className="px-3 py-2.5 rounded-lg" style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF" }}>
-                    {["Diario", "Semanal", "Mensual"].map((o) => <option key={o}>{o}</option>)}
+                  <select defaultValue={item.val} className="px-3 py-2.5 rounded-lg" style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF" }}>
+                    {OPCIONES_FRECUENCIA.map((o) => <option key={o}>{o}</option>)}
                   </select>
                 ) : (
                   <input type={item.type} defaultValue={item.val} className="px-3 py-2.5 rounded-lg" style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }} />
@@ -1993,14 +1520,11 @@ import { module_permission } from "@/app/server_component/controlle_permission";
 import { useSession } from "next-auth/react";
 import { generarTokenBackend } from "@/app/lib/auth-token";
 // 🔄 Reemplazar useDbRealtime por los nuevos hooks
-import { UsuarioModel, useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { UsuarioModel, useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 
 // ==========================================
 // COMPONENTE PRINCIPAL
 // ==========================================
-interface uso_rol{
-  rolnombre:string
-}
 export function Administracion() {
   // Estado local
   const [auditoria, setAuditoria] = useState<init_bitacora[]>([]);
@@ -2010,7 +1534,7 @@ export function Administracion() {
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<FormUsuario>({ nombre: "", correo: "" });
-  const [configSection, setConfigSection] = useState<ConfigSection>("tarifas");
+  const [configSection, setConfigSection] = useState<ConfigSection>("plantillas");
   const [tokenPromise, setTokenPromise] = useState("");
 
   const { data: session } = useSession();
@@ -2018,7 +1542,7 @@ export function Administracion() {
   // Store Subscriptions
   const usuarios = useDbTable("usuarios");
   const roles = useDbTable("roles");
-  const { loadAllData } = useDbActions();
+  const { loadAllData, loadTable } = useDbActions();
 
   const permisos = session?.user?.permissions;
   const permission = useMemo(() => module_permission(permisos), [permisos]);
@@ -2031,7 +1555,9 @@ export function Administracion() {
   // 1. Carga inicial de datos del Store
   useEffect(() => {
     loadAllData();
-  }, [loadAllData]);
+    loadTable("parametros_sistema");
+    loadTable("sellos");
+  }, [loadAllData, loadTable]);
 
   // 2. Permisos memorizados para evitar re-calculo y loops en useEffect
   const tab_permission = useMemo(() => {
@@ -2092,17 +1618,20 @@ export function Administracion() {
     }
   }, [tab_permission.bitacora]);
 
-  useEffect(() => {
-    if (tab_permission.bitacora) {
-      cargarBitacoraRealtime();
-    }
-  }, [tab_permission.bitacora, cargarBitacoraRealtime]);
 
   // 5. Indexación de Roles O(1) + Asignación de Nombres O(N)
   const rolesMap = useMemo(() => {
     const map = new Map<number, string>();
     roles?.forEach((r) => map.set(Number(r.idRol), r.nombreRol));
     return map;
+  }, [roles]);
+
+  const rolColors = useMemo<RolColorMap>(() => {
+    const mapa: RolColorMap = {};
+    roles?.forEach((rol, index) => {
+      mapa[rol.nombreRol] = PALETA_ROLES[index % PALETA_ROLES.length];
+    });
+    return mapa;
   }, [roles]);
 
   const usuario_final = useMemo(() => {
@@ -2149,7 +1678,7 @@ export function Administracion() {
 
     // Búsqueda dinámica del idRol desde el Map/Array en lugar de Hardcoding
     const rolEncontrado = roles?.find((r) => r.nombreRol === form.rol);
-    const id_rol = rolEncontrado ? Number(rolEncontrado.idRol) : 3;
+    const id_rol = rolEncontrado ? Number(rolEncontrado.idRol) : (roles?.[0]?.idRol ?? 0);
 
     if (editingUser) {
       if (form.id === undefined) {
@@ -2201,6 +1730,7 @@ console.log("LONGITUD FILTRADOS:", filteredUsers.length);
           setForm={setForm}
           onClose={() => setShowModal(false)}
           onSave={handleSave}
+          rolColors={rolColors}
         />
       )}
 
@@ -2241,7 +1771,6 @@ console.log("LONGITUD FILTRADOS:", filteredUsers.length);
       {/* Vistas */}
       {tab === "usuarios" && (
         <RenderTabUsuarios
-          usuariostate={usuarios}
           search={search}
           setSearch={setSearch}
           filteredUsers={filteredUsers}
@@ -2249,6 +1778,7 @@ console.log("LONGITUD FILTRADOS:", filteredUsers.length);
           openEdit={openEdit}
           toggleEstado={toggleEstado}
           showToast={showToast}
+          rolColors={rolColors}
         />
       )}
 

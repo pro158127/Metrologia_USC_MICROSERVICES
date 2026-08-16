@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type RealtimeTablesState from '@/app/componets/tables_recharge';
+import type RealtimeTablesState from '@/tipos/store';
 
 // Importa tus Server Actions
 import { obtenerUsuariosPorPermiso,obtenerRolesAction } from '@/app/action_module/administration';
@@ -8,6 +8,10 @@ import { obtenerTodasLasTarifas } from '@/app/action_module/tarifas';
 import { obtenerClientes } from '@/app/action_module/modulo_cliente';
 import { getInitialData as getRecepcionesData } from '@/app/action_module/recepciones';
 import { obtenerDatosIniciales as getOrdenesData } from '@/app/action_module/ordenes';
+import { obtenerFacturas } from '@/app/action_module/facturas';
+import { obtenerSellos } from '@/app/action_module/sellos';
+import { obtenerParametrosSistema } from '@/app/action_module/parametros_sistema';
+import { obtenerCertificadosConContexto } from '@/app/action_module/certificados';
 
 const initialState: RealtimeTablesState = {
   usuarios: [],
@@ -35,6 +39,7 @@ const initialState: RealtimeTablesState = {
   sellos: [],
   tramites: [],
   version_plantillas: [],
+  facturas: [],
 };
 
 export const useDbStore = create<
@@ -119,6 +124,35 @@ updateTable: (table, updater) =>
           if (res && Array.isArray(res.data)) data = res.data;
           break;
         }
+        case 'facturas': {
+          const res = await obtenerFacturas();
+          if (res.ok && Array.isArray(res.data)) data = res.data;
+          break;
+        }
+        case 'sellos': {
+          const res = await obtenerSellos();
+          if (res.success && Array.isArray(res.data)) data = res.data;
+          break;
+        }
+        case 'parametros_sistema': {
+          const res = await obtenerParametrosSistema();
+          if (res.success && Array.isArray(res.data)) data = res.data;
+          break;
+        }
+        case 'certificados': {
+          const res = await obtenerCertificadosConContexto();
+          if (res.success && res.data) {
+            data = res.data.certificados;
+            set((s) => ({
+              ...s,
+              calibraciones: res.data!.calibraciones,
+              recepcion_equipo_detalles: res.data!.instrumentos,
+              ordenes_trabajo: res.data!.ordenes,
+              clientes: res.data!.clientes,
+            }));
+          }
+          break;
+        }
         default:
           console.warn(`⚠️ loadTable: Tabla "${table}" sin acción definida.`);
           data = [];
@@ -153,6 +187,7 @@ updateTable: (table, updater) =>
       'roles',
       'recepciones_equipo',
       'ordenes_trabajo',
+      'facturas',
     ];
 
     await Promise.allSettled(

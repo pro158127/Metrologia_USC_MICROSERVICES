@@ -143,7 +143,7 @@ const ChartsSection: React.FC = () => {
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={barData}>
             <XAxis dataKey="mes" tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: "#94A3B8", fontSize :11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#94A3B8", fontSize :411 }} axisLine={false} tickLine={false} />
             <Tooltip contentStyle={{ background: "#0F172A", border: "none", borderRadius: 12, color: "#fff", fontSize: 11 }} />
             <Bar dataKey="externo" name="Externo" fill="#5680F9" radius={[0, 0, 0, 0]} stackId="a" />
             <Bar dataKey="interno" name="Interno USC" fill="#AFC4FD" radius={[4, 4, 0, 0]} stackId="a" />

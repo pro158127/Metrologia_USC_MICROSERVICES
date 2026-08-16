@@ -1,58 +1,42 @@
 // 1. Imports
-import React, { useState } from "react";
-import { Send, CheckCircle, Lock, Plus, X, FileText } from "lucide-react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { Send, CheckCircle, Lock, Plus, X, FileText, Eye, Upload, Paperclip } from "lucide-react";
+import type {
+  OTItem,
+  HistorialItem,
+  AlertBannerProps,
+  ToastProps,
+  HeaderProps,
+  ColumnFacturadasProps,
+  ColumnListasEnvioProps,
+  ColumnSinFacturarProps,
+  DetailPanelProps,
+  SendPanelProps,
+  HistoryTableProps,
+} from "@/tipos/envio";
+import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 
-// Tipos e Interfaces
-interface OTItem {
-  id: string;
-  cliente: string;
-  correo: string;
-  certs: number;
-  valor: string;
-  facturado: boolean;
-  pagado: boolean;
-}
+// ========== UTILIDADES DE FORMATO ==========
+const formatValor = (val: number) => {
+  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(val);
+};
 
-interface HistorialItem {
-  fecha: string;
-  ots: string;
-  correo: string;
-  certs: number;
-  estado: "enviado" | "error";
-}
-
-// Datos Iniciales Mock
-const initialOTs: OTItem[] = [
-  { id: "OT-2026-087", cliente: "Clínica del Sur IPS", correo: "compras@clinicasur.com", certs: 2, valor: "$1.420.000", facturado: false, pagado: false },
-  { id: "OT-2026-085", cliente: "USC Ingeniería", correo: "laboratorio@usc.edu.co", certs: 1, valor: "$890.000", facturado: true, pagado: false },
-  { id: "OT-2026-078", cliente: "Industrias Andinas S.A.", correo: "calidad@andinas.com.co", certs: 3, valor: "$3.350.000", facturado: false, pagado: false },
-  { id: "OT-2026-071", cliente: "Empresa ABC S.A.S", correo: "gerencia@empresaabc.com", certs: 2, valor: "$2.100.000", facturado: true, pagado: false },
-];
-
-const initialHistorial: HistorialItem[] = [
-  { fecha: "2026-06-08 15:30", ots: "OT-2026-065, OT-2026-066", correo: "cliente@empresa.com", certs: 4, estado: "enviado" },
-  { fecha: "2026-06-07 11:20", ots: "OT-2026-060", correo: "gerencia@clinica.com", certs: 2, estado: "enviado" },
-  { fecha: "2026-06-05 16:45", ots: "OT-2026-055", correo: "sistemas@andinas.com.co", certs: 3, estado: "error" },
-];
+const formatFecha = (fecha: string | Date | null) => {
+  if (!fecha) return "";
+  const d = typeof fecha === "string" ? new Date(fecha) : fecha;
+  return d.toLocaleString("es-CO");
+};
 
 // 2. Declaración de Componentes Hijos (Extraídos)
-
-interface AlertBannerProps {
-  count: number;
-}
 
 const AlertBanner: React.FC<AlertBannerProps> = ({ count }) => {
   if (count === 0) return null;
   return (
-    <div className="flex items-center justify-center bg-orange-200 text-orange-900 py-2 mb-4 rounded">
+    <div className="flex items-center justify-center bg-orange-200 text-orange-900 py-2.5 mb-5 rounded-xl">
       <span className="text-sm font-bold">⚠️ {count} OTs sin factura registrada</span>
     </div>
   );
 };
-
-interface ToastProps {
-  message: string;
-}
 
 const Toast: React.FC<ToastProps> = ({ message }) => {
   if (!message) return null;
@@ -63,15 +47,9 @@ const Toast: React.FC<ToastProps> = ({ message }) => {
   );
 };
 
-interface HeaderProps {
-  selectedCount: number;
-  totalCerts: number;
-  onOpenSendPanel: () => void;
-}
-
 const Header: React.FC<HeaderProps> = ({ selectedCount, totalCerts, onOpenSendPanel }) => {
   return (
-    <div className="flex items-center justify-between mb-6">
+    <div className="flex items-center justify-between mb-7">
       <h1 className="text-xl font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
         Entrega y Envío de Certificados
       </h1>
@@ -87,13 +65,6 @@ const Header: React.FC<HeaderProps> = ({ selectedCount, totalCerts, onOpenSendPa
   );
 };
 
-interface ColumnFacturadasProps {
-  items: OTItem[];
-  selectedIds: string[];
-  onSelectDetail: (ot: OTItem) => void;
-  onConfirmarPago: (id: string) => void;
-}
-
 const ColumnFacturadas: React.FC<ColumnFacturadasProps> = ({
   items,
   selectedIds,
@@ -101,19 +72,24 @@ const ColumnFacturadas: React.FC<ColumnFacturadasProps> = ({
   onConfirmarPago,
 }) => {
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
+    <div className="flex flex-col min-h-0">
+      <div className="flex items-center gap-2 mb-4">
         <CheckCircle size={15} className="text-emerald-500" />
         <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">OT facturadas</span>
         <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-bold">
           {items.length}
         </span>
       </div>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4 max-h-[560px] overflow-y-auto pr-1 pb-1">
+        {items.length === 0 && (
+          <div className="text-[11px] text-slate-400 italic px-1 py-6 text-center border border-dashed border-slate-200 rounded-2xl">
+            No hay OT en este estado.
+          </div>
+        )}
         {items.map((ot) => (
           <div
             key={ot.id}
-            className="rounded-2xl p-4 transition-all bg-white border cursor-pointer hover:shadow-sm"
+            className="rounded-2xl p-5 transition-all bg-white border cursor-pointer hover:shadow-sm"
             style={{
               borderColor: selectedIds.includes(ot.id) ? "#5680F9" : "#E2E8F0",
               boxShadow: selectedIds.includes(ot.id)
@@ -122,7 +98,7 @@ const ColumnFacturadas: React.FC<ColumnFacturadasProps> = ({
             }}
             onClick={() => onSelectDetail(ot)}
           >
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[#5680F9] font-mono">{ot.id}</span>
               </div>
@@ -130,9 +106,9 @@ const ColumnFacturadas: React.FC<ColumnFacturadasProps> = ({
                 ✓ Facturado
               </span>
             </div>
-            <div className="text-xs font-bold text-slate-700 mb-1">{ot.cliente}</div>
+            <div className="text-xs font-bold text-slate-700 mb-1.5">{ot.cliente}</div>
             <div className="text-[11px] text-slate-400">📧 {ot.correo}</div>
-            <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-100/50">
+            <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100/70">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-bold text-slate-700 font-mono">{ot.valor}</span>
                 <span className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -146,7 +122,7 @@ const ColumnFacturadas: React.FC<ColumnFacturadasProps> = ({
                   e.preventDefault();
                   onConfirmarPago(ot.id);
                 }}
-                className="flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-emerald-700 transition-colors"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-emerald-700 transition-colors"
               >
                 Confirmar pago
               </button>
@@ -158,56 +134,55 @@ const ColumnFacturadas: React.FC<ColumnFacturadasProps> = ({
   );
 };
 
-interface ColumnListasEnvioProps {
-  items: OTItem[];
-  selectedIds: string[];
-  onToggleSelected: (id: string) => void;
-}
-
 const ColumnListasEnvio: React.FC<ColumnListasEnvioProps> = ({
   items,
   selectedIds,
   onToggleSelected,
 }) => {
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
+    <div className="flex flex-col min-h-0">
+      <div className="flex items-center gap-2 mb-4">
         <Send size={15} className="text-blue-500" />
         <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Listas para envío</span>
         <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-bold">
           {items.length}
         </span>
       </div>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4 max-h-[560px] overflow-y-auto pr-1 pb-1">
+        {items.length === 0 && (
+          <div className="text-[11px] text-slate-400 italic px-1 py-6 text-center border border-dashed border-slate-200 rounded-2xl">
+            No hay OT en este estado.
+          </div>
+        )}
         {items.map((ot) => (
           <div
             key={ot.id}
-            className="rounded-2xl p-4 bg-white border border-blue-200 shadow-sm cursor-pointer hover:shadow-md transition-all"
+            className="rounded-2xl p-5 bg-white border border-blue-200 shadow-sm cursor-pointer hover:shadow-md transition-all"
             onClick={() => onToggleSelected(ot.id)}
           >
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold text-[#5680F9] font-mono">{ot.id}</span>
               <span className="px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold">
                 ✓ PAGADO
               </span>
             </div>
-            <div className="text-xs font-bold text-slate-700 mb-1">{ot.cliente}</div>
+            <div className="text-xs font-bold text-slate-700 mb-1.5">{ot.cliente}</div>
             <div className="text-[11px] text-slate-400">📧 {ot.correo}</div>
-            <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-100">
+            <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
               <span className="text-xs font-bold text-slate-700 font-mono">{ot.valor}</span>
               <span className="flex items-center gap-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider">
                 <FileText size={12} />
                 {ot.certs} cert(s)
               </span>
             </div>
-            <div className="mt-3">
+            <div className="mt-4">
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleSelected(ot.id);
                 }}
-                className={`w-full py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                className={`w-full py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
                   selectedIds.includes(ot.id)
                     ? "bg-green-600 text-white"
                     : "bg-[#5680F9] text-white hover:bg-[#4069E2]"
@@ -223,95 +198,150 @@ const ColumnListasEnvio: React.FC<ColumnListasEnvioProps> = ({
   );
 };
 
-interface ColumnSinFacturarProps {
-  items: OTItem[];
-  paymentSelector: string | null;
-  selectedMethod: string;
-  onSetPaymentSelector: (id: string | null) => void;
-  onSetSelectedMethod: (method: string) => void;
-  onConfirmarFactura: (id: string) => void;
-}
-
 const ColumnSinFacturar: React.FC<ColumnSinFacturarProps> = ({
   items,
   paymentSelector,
   selectedMethod,
+  comprobantes,
   onSetPaymentSelector,
   onSetSelectedMethod,
+  onUploadComprobante,
   onConfirmarFactura,
 }) => {
+  const handleFileChange = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onUploadComprobante(id, file.name);
+    }
+  };
+
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-3">
+    <div className="flex flex-col min-h-0">
+      <div className="flex items-center gap-2 mb-4">
         <Lock size={15} className="text-red-700" />
         <span className="text-xs font-bold text-red-700 uppercase tracking-wider">Pendientes de factura</span>
         <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold">
           {items.length}
         </span>
       </div>
-      <div className="flex flex-col gap-3">
-        {items.map((ot) => (
-          <div key={ot.id} className="rounded-2xl p-4 bg-slate-50/50 border border-slate-200/60 opacity-80 shadow-inner">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-500 font-mono">{ot.id}</span>
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 text-[10px] font-bold">
-                <Lock size={10} /> Sin factura
-              </span>
-            </div>
-            <div className="text-xs font-bold text-slate-500 mb-1">{ot.cliente}</div>
-            <div className="text-[11px] text-slate-400">📧 {ot.correo}</div>
-            <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-200/50">
-              <span className="text-xs font-semibold text-slate-400 font-mono">
-                {ot.valor} · {ot.certs} cert(s)
-              </span>
-              {paymentSelector === ot.id ? (
-                <div className="flex items-center gap-2 bg-white p-2 border border-slate-200 rounded-lg">
-                  <select
-                    value={selectedMethod}
-                    onChange={(e) => onSetSelectedMethod(e.target.value)}
-                    className="border border-slate-300 rounded px-2 py-1 text-sm"
-                  >
-                    <option value="Efectivo">Efectivo</option>
-                    <option value="Tarjeta">Tarjeta</option>
-                    <option value="Transferencia">Transferencia</option>
-                  </select>
+      <div className="flex flex-col gap-4 max-h-[560px] overflow-y-auto pr-1 pb-1">
+        {items.length === 0 && (
+          <div className="text-[11px] text-slate-400 italic px-1 py-6 text-center border border-dashed border-slate-200 rounded-2xl">
+            No hay OT en este estado.
+          </div>
+        )}
+        {items.map((ot) => {
+          const isEditing = paymentSelector === ot.id;
+          const comprobanteNombre = comprobantes[ot.id];
+          const puedeConfirmar = Boolean(selectedMethod) && Boolean(comprobanteNombre);
+
+          return (
+            <div key={ot.id} className="rounded-2xl p-5 bg-slate-50/50 border border-slate-200/60 opacity-90 shadow-inner">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-bold text-slate-500 font-mono">{ot.id}</span>
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 text-[10px] font-bold">
+                  <Lock size={10} /> Sin factura
+                </span>
+              </div>
+              <div className="text-xs font-bold text-slate-500 mb-1.5">{ot.cliente}</div>
+              <div className="text-[11px] text-slate-400">📧 {ot.correo}</div>
+
+              <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-200/50">
+                <span className="text-xs font-semibold text-slate-400 font-mono">
+                  {ot.valor} · {ot.certs} cert(s)
+                </span>
+                {!isEditing && (
                   <button
-                    onClick={() => onConfirmarFactura(ot.id)}
-                    className="flex items-center gap-1 px-3 py-1 rounded-lg bg-[#5680F9] text-white text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-[#4069E2] transition-colors"
+                    onClick={() => onSetPaymentSelector(ot.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-[#5680F9] text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-50 transition-colors"
                   >
-                    Confirmar
+                    <CheckCircle size={12} /> Registrar factura
                   </button>
-                  <button onClick={() => onSetPaymentSelector(null)} className="text-slate-500 hover:text-slate-700">
-                    <X size={16} />
-                  </button>
+                )}
+              </div>
+
+              {isEditing && (
+                <div className="mt-3 flex flex-col gap-3 bg-white p-4 border border-slate-200 rounded-xl">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                      Método de pago
+                    </label>
+                    <select
+                      value={selectedMethod}
+                      onChange={(e) => onSetSelectedMethod(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-xs"
+                    >
+                      <option value="">Seleccione un método</option>
+                      <option value="Efectivo">Efectivo</option>
+                      <option value="Tarjeta">Tarjeta</option>
+                      <option value="Transferencia">Transferencia</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                      Comprobante de pago (imagen o PDF)
+                    </label>
+                    <label
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border border-dashed text-[11px] font-semibold cursor-pointer transition-colors ${
+                        comprobanteNombre
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                          : "border-slate-300 bg-slate-50 text-slate-500 hover:bg-slate-100"
+                      }`}
+                    >
+                      {comprobanteNombre ? (
+                        <>
+                          <Paperclip size={13} />
+                          <span className="truncate">{comprobanteNombre}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={13} />
+                          <span>Subir comprobante</span>
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        className="hidden"
+                        onChange={(e) => handleFileChange(ot.id, e)}
+                      />
+                    </label>
+                    {!comprobanteNombre && (
+                      <p className="text-[10px] text-red-500 mt-1.5">
+                        Debes subir el comprobante para poder confirmar.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 justify-end">
+                    <button
+                      onClick={() => onSetPaymentSelector(null)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-200 transition-colors"
+                    >
+                      <X size={13} /> Cancelar
+                    </button>
+                    <button
+                      onClick={() => onConfirmarFactura(ot.id)}
+                      disabled={!puedeConfirmar}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                        puedeConfirmar
+                          ? "bg-[#5680F9] text-white cursor-pointer hover:bg-[#4069E2]"
+                          : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      }`}
+                    >
+                      Confirmar
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => onSetPaymentSelector(ot.id)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-[#5680F9] text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-50 transition-colors"
-                >
-                  <CheckCircle size={12} /> Registrar factura
-                </button>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 };
-
-interface DetailPanelProps {
-  detail: OTItem;
-  email: string;
-  cc: string;
-  message: string;
-  onSetEmail: (val: string) => void;
-  onSetCC: (val: string) => void;
-  onSetMessage: (val: string) => void;
-  onSend: () => void;
-  onClose: () => void;
-}
 
 const DetailPanel: React.FC<DetailPanelProps> = ({
   detail,
@@ -323,10 +353,11 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
   onSetMessage,
   onSend,
   onClose,
+  onCertificadoPress,
 }) => {
   return (
-    <div className="mt-2 mb-6 rounded-2xl p-5 bg-white border border-slate-200 shadow-md">
-      <div className="flex items-center justify-between mb-4">
+    <div className="mt-2 mb-7 rounded-2xl p-6 bg-white border border-slate-200 shadow-md">
+      <div className="flex items-center justify-between mb-5">
         <h2 className="text-sm font-bold text-slate-800 border-l-[3px] border-[#5680F9] pl-2">
           Detalle — {detail.id}
         </h2>
@@ -334,20 +365,20 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
           <X size={18} />
         </button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
         <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
             Correo del cliente
           </label>
           <input
             type="email"
             value={email}
             onChange={(e) => onSetEmail(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
+            className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
           />
         </div>
         <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
             CC (opcional)
           </label>
           <input
@@ -355,31 +386,40 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
             value={cc}
             onChange={(e) => onSetCC(e.target.value)}
             placeholder="cc@empresa.com"
-            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
+            className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
           />
         </div>
       </div>
-      <div className="mb-4">
-        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mensaje</label>
+      <div className="mb-5">
+        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Mensaje</label>
         <textarea
           rows={3}
           value={message}
           onChange={(e) => onSetMessage(e.target.value)}
-          className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
+          className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
         />
       </div>
-      <div className="mb-5">
-        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+      <div className="mb-6">
+        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">
           Certificados adjuntos
         </span>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           {Array.from({ length: detail.certs }).map((_, i) => (
             <div
               key={i}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-mono text-slate-600"
+              className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-slate-50 border border-slate-100 rounded-lg text-xs font-mono text-slate-600"
             >
-              <FileText size={12} className="text-[#5680F9]" />
-              Certificado_{detail.id}_{i + 1}.pdf
+              <span className="flex items-center gap-2">
+                <FileText size={12} className="text-[#5680F9]" />
+                Certificado_{detail.id}_{i + 1}.pdf
+              </span>
+              <button
+                type="button"
+                onClick={() => onCertificadoPress(detail.id, i + 1)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-slate-200 text-[#5680F9] text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
+              >
+                <Eye size={12} /> Ver
+              </button>
             </div>
           ))}
         </div>
@@ -387,13 +427,13 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
       <div className="flex gap-3">
         <button
           onClick={onSend}
-          className="flex items-center gap-2 px-4 py-2 bg-[#5680F9] text-white text-xs font-bold rounded-xl hover:bg-[#4069E2] transition-colors"
+          className="flex items-center gap-2 px-4 py-2.5 bg-[#5680F9] text-white text-xs font-bold rounded-xl hover:bg-[#4069E2] transition-colors"
         >
           <Send size={14} /> Enviar certificado por Outlook
         </button>
         <button
           onClick={onClose}
-          className="px-4 py-2 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-200 transition-colors"
+          className="px-4 py-2.5 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-200 transition-colors"
         >
           Cerrar
         </button>
@@ -401,15 +441,6 @@ const DetailPanel: React.FC<DetailPanelProps> = ({
     </div>
   );
 };
-
-interface SendPanelProps {
-  selectedOTs: OTItem[];
-  totalCerts: number;
-  ccEmail: string;
-  onSetCcEmail: (val: string) => void;
-  onEnviar: () => void;
-  onClose: () => void;
-}
 
 const SendPanel: React.FC<SendPanelProps> = ({
   selectedOTs,
@@ -420,8 +451,8 @@ const SendPanel: React.FC<SendPanelProps> = ({
   onClose,
 }) => {
   return (
-    <div className="rounded-2xl p-5 mb-6 bg-white border-2 border-[#C7D2FE] shadow-[0_8px_30px_rgba(86,128,249,0.1)]">
-      <div className="flex items-center justify-between mb-4">
+    <div className="rounded-2xl p-6 mb-7 bg-white border-2 border-[#C7D2FE] shadow-[0_8px_30px_rgba(86,128,249,0.1)]">
+      <div className="flex items-center justify-between mb-5">
         <span className="text-xs font-bold text-slate-700 uppercase tracking-wider border-l-[3px] border-[#5680F9] pl-2">
           Panel de envío
         </span>
@@ -429,35 +460,35 @@ const SendPanel: React.FC<SendPanelProps> = ({
           <X size={18} color="#94A3B8" />
         </button>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-        <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <div className="bg-slate-50/50 p-5 rounded-xl border border-slate-100">
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
             OT seleccionadas
           </div>
-          <div className="divide-y divide-slate-100 max-h-32 overflow-y-auto">
+          <div className="divide-y divide-slate-100 max-h-36 overflow-y-auto">
             {selectedOTs.map((o) => (
-              <div key={o.id} className="flex items-center justify-between py-2">
+              <div key={o.id} className="flex items-center justify-between py-2.5">
                 <span className="text-xs font-bold text-[#5680F9] font-mono">{o.id}</span>
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{o.certs} cert(s)</span>
               </div>
             ))}
           </div>
-          <div className="flex justify-between pt-3 border-t border-slate-200/50 mt-1">
+          <div className="flex justify-between pt-3.5 border-t border-slate-200/50 mt-2">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Total</span>
             <span className="text-xs font-extrabold text-[#5680F9] font-mono">{totalCerts} certificados PDF</span>
           </div>
         </div>
-        <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between">
+        <div className="bg-slate-50/50 p-5 rounded-xl border border-slate-100 flex flex-col justify-between">
           <div>
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Correos destino</div>
-            <div className="divide-y divide-slate-100 max-h-24 overflow-y-auto font-mono text-[11px] text-slate-600">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Correos destino</div>
+            <div className="divide-y divide-slate-100 max-h-28 overflow-y-auto font-mono text-[11px] text-slate-600">
               {selectedOTs.map((o) => (
-                <div key={o.id} className="py-2">📧 {o.correo}</div>
+                <div key={o.id} className="py-2.5">📧 {o.correo}</div>
               ))}
             </div>
           </div>
-          <div className="mt-3">
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+          <div className="mt-4">
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
               Agregar CC (opcional)
             </label>
             <div className="flex items-center gap-2">
@@ -465,7 +496,7 @@ const SendPanel: React.FC<SendPanelProps> = ({
                 value={ccEmail}
                 onChange={(e) => onSetCcEmail(e.target.value)}
                 placeholder="cc@empresa.com"
-                className="flex-1 px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium outline-none focus:border-[#5680F9]"
+                className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-xs font-medium outline-none focus:border-[#5680F9]"
               />
               <button className="bg-transparent border-none cursor-pointer">
                 <Plus size={14} color="#5680F9" />
@@ -476,17 +507,13 @@ const SendPanel: React.FC<SendPanelProps> = ({
       </div>
       <button
         onClick={onEnviar}
-        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-[#5680F9] text-white text-xs font-bold uppercase tracking-wider border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-sm"
+        className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#5680F9] text-white text-xs font-bold uppercase tracking-wider border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-sm"
       >
         <Send size={16} /> Enviar certificados seleccionados
       </button>
     </div>
   );
 };
-
-interface HistoryTableProps {
-  historial: HistorialItem[];
-}
 
 const HistoryTable: React.FC<HistoryTableProps> = ({ historial }) => {
   return (
@@ -509,11 +536,11 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ historial }) => {
         <tbody className="divide-y divide-slate-100">
           {historial.map((h, i) => (
             <tr key={i} className="transition-colors hover:bg-slate-50/50 bg-white">
-              <td className="px-4 py-3.5 text-slate-400 font-mono">{h.fecha}</td>
-              <td className="px-4 py-3.5 text-[#5680F9] font-bold font-mono">{h.ots}</td>
-              <td className="px-4 py-3.5 text-slate-500 font-mono truncate max-w-xs">{h.correo}</td>
-              <td className="px-4 py-3.5 text-slate-700 font-semibold">{h.certs} cert(s)</td>
-              <td className="px-4 py-3.5">
+              <td className="px-4 py-4 text-slate-400 font-mono">{h.fecha}</td>
+              <td className="px-4 py-4 text-[#5680F9] font-bold font-mono">{h.ots}</td>
+              <td className="px-4 py-4 text-slate-500 font-mono truncate max-w-xs">{h.correo}</td>
+              <td className="px-4 py-4 text-slate-700 font-semibold">{h.certs} cert(s)</td>
+              <td className="px-4 py-4">
                 <span
                   className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${
                     h.estado === "enviado"
@@ -534,10 +561,23 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ historial }) => {
 
 // 3. Declaración del Componente Padre (MainRenderer)
 
-export function MainRenderer() {
-  const [items, setItems] = useState<OTItem[]>(initialOTs);
+export function MainRendererenv() {
+  const ordenes = useDbTable("ordenes_trabajo");
+  const clientes = useDbTable("clientes");
+  const facturas = useDbTable("facturas");
+  const usuarios = useDbTable("usuarios");
+  const { loadTable } = useDbActions();
+
+  useEffect(() => {
+    loadTable("ordenes_trabajo");
+    loadTable("clientes");
+    loadTable("facturas");
+    loadTable("usuarios");
+  }, [loadTable]);
+
   const [paymentSelector, setPaymentSelector] = useState<string | null>(null);
-  const [selectedMethod, setSelectedMethod] = useState<string>("Efectivo");
+  const [selectedMethod, setSelectedMethod] = useState<string>("");
+  const [comprobantes, setComprobantes] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<string[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<OTItem | null>(null);
   const [detailEmail, setDetailEmail] = useState<string>("");
@@ -546,59 +586,101 @@ export function MainRenderer() {
   );
   const [detailCC, setDetailCC] = useState<string>("");
   const [toast, setToast] = useState("");
-  const [historial, setHistorial] = useState<HistorialItem[]>(initialHistorial);
+  const [historialExtra, setHistorialExtra] = useState<HistorialItem[]>([]);
   const [showSendPanel, setShowSendPanel] = useState(false);
   const [ccEmail, setCcEmail] = useState("");
 
-  const showToast = (msg: string) => {
+  const items = useMemo<OTItem[]>(() => {
+    return ordenes
+      .filter((ot) => ot.estado === "Certificado_enviado")
+      .map((ot) => {
+        const factura = facturas.find((f) => f.idOrdenTrabajo === ot.idOrdenTrabajo);
+        return {
+          id: ot.codigo,
+          cliente: ot.cliente?.razonSocial ?? ot.Razon_social ?? "",
+          correo: ot.correoCertificado ?? ot.cliente?.correo ?? "",
+          certs: ot.instrumentos?.length ?? 0,
+          valor: formatValor(Number(factura?.valor ?? 0)),
+          facturado: Boolean(factura),
+          pagado: ot.estado_pago === "PAGADO",
+        };
+      });
+  }, [ordenes, facturas, usuarios, clientes]);
+
+  const historialBase = useMemo<HistorialItem[]>(() => {
+    return ordenes
+      .filter((ot) => ot.estado === "Certificado_enviado")
+      .map((ot) => ({
+        fecha: formatFecha(ot.createdAt),
+        ots: ot.codigo,
+        correo: ot.correoCertificado ?? ot.cliente?.correo ?? "",
+        certs: ot.instrumentos?.length ?? 0,
+        estado: "enviado" as const,
+      }));
+  }, [ordenes, usuarios]);
+
+  const historial = useMemo<HistorialItem[]>(
+    () => [...historialExtra, ...historialBase],
+    [historialExtra, historialBase]
+  );
+
+  const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(""), 4000);
-  };
+  }, []);
 
-  const toggleFacturado = (id: string) =>
-    setItems((prev) => prev.map((o) => (o.id === id ? { ...o, facturado: true } : o)));
-
-  const confirmarPago = (id: string) => {
-    setItems((prev) => prev.map((o) => (o.id === id ? { ...o, pagado: true } : o)));
+  const confirmarPago = useCallback((id: string) => {
     showToast(`✅ Pago confirmado para ${id}`);
     setSelectedDetail(null);
-  };
+  }, [showToast]);
 
-  const toggleSelected = (id: string) => {
+  const toggleSelected = useCallback((id: string) => {
     const ot = items.find((o) => o.id === id);
     if (!ot?.facturado || !ot?.pagado) return;
     setSelected((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
-  };
+  }, [items]);
 
-  const handleConfirmarFactura = (id: string) => {
-    toggleFacturado(id);
-    showToast(`✅ ${id} registrada como facturada con ${selectedMethod}.`);
+  const handleUploadComprobante = useCallback((id: string, fileName: string) => {
+    setComprobantes((prev) => ({ ...prev, [id]: fileName }));
+  }, []);
+
+  const handleCertificadoPress = useCallback((otId: string, certIndex: number) => {
+    console.log("certificadoPress", { otId, certIndex });
+  }, []);
+
+  const handleConfirmarFactura = useCallback((id: string) => {
+    if (!selectedMethod || !comprobantes[id]) {
+      showToast("⚠️ Debes seleccionar el método de pago y subir el comprobante.");
+      return;
+    }
+    showToast(`✅ ${id} registrada como facturada con ${selectedMethod} (comprobante: ${comprobantes[id]}).`);
     setPaymentSelector(null);
-  };
+    setSelectedMethod("");
+  }, [selectedMethod, comprobantes, showToast]);
 
-  const selectedOTs = items.filter((o) => selected.includes(o.id));
-  const totalCerts = selectedOTs.reduce((acc, o) => acc + o.certs, 0);
+  const selectedOTs = useMemo(() => items.filter((o) => selected.includes(o.id)), [items, selected]);
+  const totalCerts = useMemo(() => selectedOTs.reduce((acc, o) => acc + o.certs, 0), [selectedOTs]);
 
-  const handleEnviar = () => {
+  const handleEnviar = useCallback(() => {
     if (selectedOTs.length === 0) return;
     const correos = [...new Set(selectedOTs.map((o) => o.correo))].join(", ");
     const newEntry: HistorialItem = {
-      fecha: "2026-06-09 " + new Date().toTimeString().slice(0, 5),
+      fecha: new Date().toLocaleString("es-CO"),
       ots: selectedOTs.map((o) => o.id).join(", "),
       correo: correos + (ccEmail ? `, ${ccEmail}` : ""),
       certs: totalCerts,
       estado: "enviado",
     };
-    setHistorial((prev) => [newEntry, ...prev]);
+    setHistorialExtra((prev) => [newEntry, ...prev]);
     showToast(`✅ Correo enviado a ${correos} con ${totalCerts} certificados adjuntos.`);
     setSelected([]);
     setShowSendPanel(false);
     setCcEmail("");
-  };
+  }, [selectedOTs, ccEmail, totalCerts, showToast]);
 
-  const facturadas = items.filter((o) => o.facturado && !o.pagado);
-  const listasEnvio = items.filter((o) => o.facturado && o.pagado);
-  const sinFacturar = items.filter((o) => !o.facturado);
+  const facturadas = useMemo(() => items.filter((o) => o.facturado && !o.pagado), [items]);
+  const listasEnvio = useMemo(() => items.filter((o) => o.facturado && o.pagado), [items]);
+  const sinFacturar = useMemo(() => items.filter((o) => !o.facturado), [items]);
 
   return (
     <div className="module-page" style={{ position: "relative" }}>
@@ -611,7 +693,7 @@ export function MainRenderer() {
         onOpenSendPanel={() => setShowSendPanel(true)}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-7">
         <ColumnFacturadas
           items={facturadas}
           selectedIds={selected}
@@ -636,8 +718,13 @@ export function MainRenderer() {
           items={sinFacturar}
           paymentSelector={paymentSelector}
           selectedMethod={selectedMethod}
-          onSetPaymentSelector={setPaymentSelector}
+          comprobantes={comprobantes}
+          onSetPaymentSelector={(id) => {
+            setPaymentSelector(id);
+            setSelectedMethod("");
+          }}
           onSetSelectedMethod={setSelectedMethod}
+          onUploadComprobante={handleUploadComprobante}
           onConfirmarFactura={handleConfirmarFactura}
         />
       </div>
@@ -651,6 +738,7 @@ export function MainRenderer() {
           onSetEmail={setDetailEmail}
           onSetCC={setDetailCC}
           onSetMessage={setDetailMessage}
+          onCertificadoPress={handleCertificadoPress}
           onSend={() => {
             showToast(`✅ Certificado enviado por Outlook para ${selectedDetail.id}`);
             setSelectedDetail(null);
@@ -676,4 +764,4 @@ export function MainRenderer() {
 }
 
 // 4. Exportación por defecto
-export default MainRenderer;
+export default MainRendererenv;

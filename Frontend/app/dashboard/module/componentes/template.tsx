@@ -14,19 +14,21 @@ import {
   Layers ,Table,MousePointerClick
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
-
+import type {
+  CellMapping,
+  PlantillaWithVersionResponse,
+  TemplateHistoryLog,
+  SystemVariable,
+  EditorModalProps,
+  HistorialModalProps,
+  MapeoExcelCategory,
+  MapeoExcelField,
+  MapeoExcelTable,
+} from '@/tipos/plantillas';
 
 // ============================================================================
-// 1. TIPOS E INTERFACES DEL DOMINIO
+// 1. COMPONENTE UNIVER (CARGA DINÁMICA)
 // ============================================================================
-export type DataType = 'text' | 'number' | 'currency' | 'date' | 'option';
-
-// 1. Identificar: Interfaz de Props expuestas al Padre
-interface UniverSheetProps {
-  initialData?: PlantillaWithVersionResponse;
-  activeVariable: SystemVariable | null; // 👈 Variable activa del menú lateral
-  onCellSelected: (mapping: CellMapping) => void; // 👈 Callback para notificar al padre
-}
 
 const UniverSheet = dynamic(
   () => import('@/app/dashboard/module/componentes/UniverSheetCompoenete').then((mod) => mod.UniverSheet),
@@ -45,67 +47,10 @@ const UniverSheet = dynamic(
   }
 );
 
-
-export interface CellMapping {
-  variableId: string;
-  sheetName: string;
-  row: number;
-  col: number;
-  cellAddress: string;
-  type?: 'SINGLE_FIELD' | 'TABLE_FIELD';
-  mappedRange?: {
-    startRow: number;
-    endRow: number;
-    startColumn: number;
-    endColumn: number;
-  };
-}
-
-export interface PlantillaWithVersionResponse {
-  success: boolean;
-  data?: {
-    idPlantilla: number;
-    nombre: string;
-    modulo: string;
-    activa: boolean;
-    versionActual: {
-      idVersionPlantilla: number;
-      version: number;
-      mapeoExcelJson: any;
-      createdAt: Date;
-      documento: {
-        idDocumento: number;
-        nombre: string;
-        rutaUrl: string;
-        proveedor: string;
-        mimeType: string;
-      } | null;
-    } | null;
-  };
-  error?: string;
-}
-
-
-export interface TemplateHistoryLog {
-  name:string;
-  id_plantilla: number;
-  version: {
-      idVersionPlantilla: number;
-      version: number;
-      mapeoExcelJson: any;
-      createdAt: string;
-      createby:string;
-    }[] | null;
-
-}
-
-
 // ============================================================================
 // 2. COMPONENTE PRINCIPAL (PADRE)
 // ============================================================================
 import { getTodasLasPlantillasCompletas } from '@/app/action_module/template';
-import { wrap } from 'module';
-import { url } from 'inspector';
 export default function TemplatesMappingPage() {
   // Estado de plantillas
   const [templates,setTemplates] = useState<PlantillaWithVersionResponse[]>();
@@ -117,8 +62,12 @@ export default function TemplatesMappingPage() {
   const [selectedTemplateForEdit, setSelectedTemplateForEdit] = useState<PlantillaWithVersionResponse | null|false>(null);
   const [HistoryFromTemplate, setSelectedTemplateForHistory] = useState<Record<number, TemplateHistoryLog> | null|undefined>(null);
   const [openmodalhistoia,setOpenmodalhistoia]=useState<TemplateHistoryLog|null>(null);
-  const plantillasFiltradas = templates?.filter((t) =>
-    t.data?.nombre.toLowerCase().includes(busqueda.toLowerCase())
+  const plantillasFiltradas = useMemo(
+    () =>
+      templates?.filter((t) =>
+        t.data?.nombre.toLowerCase().includes(busqueda.toLowerCase())
+      ) ?? [],
+    [templates, busqueda]
   );
 
   
@@ -315,28 +264,6 @@ useEffect(() => {
 // ============================================================================
 // 3. SUB-COMPONENTE LOCAL: MODAL EDITOR (UNIVER + BANDEJA DE VARIABLES)
 // ============================================================================
-// ---------- Tipos (igual que antes) ----------
-interface SystemVariable {
-  id: string;
-  key: string;
-  label: string;
-  dataType: string;
-  required: boolean;
-  color: string;
-  type?: 'SINGLE_FIELD' | 'TABLE_FIELD';
-  columns?: { label: string; key?: string; dataType?: string }[];
-}
-
-
-
-
-
-
-interface EditorModalProps {
-  template: any;
-  onClose: () => void;
-  onSaveMapping?: (mappings: Record<string, CellMapping>) => Promise<void>;
-}
 
 export function EditorModal({ template, onClose, onSaveMapping }: EditorModalProps) {
   const [variableActiva, setVariableActiva] = useState<SystemVariable | null>(null);
@@ -373,7 +300,7 @@ export function EditorModal({ template, onClose, onSaveMapping }: EditorModalPro
     return rawData.categories;
   }, [template]);
 
-  const handleCellSelected = (mapping: any) => {
+  const handleCellSelected = (mapping: CellMapping) => {
     if (variableActiva && mapping?.cellAddress) {
       const cellMapping: CellMapping = {
         variableId: variableActiva.id,
@@ -480,7 +407,7 @@ export function EditorModal({ template, onClose, onSaveMapping }: EditorModalPro
 
             {/* Recorrido Por Categorías */}
             <div className="flex flex-col gap-5">
-              {categoriesList.map((category: any) => (
+              {categoriesList.map((category: MapeoExcelCategory) => (
                 <div key={category.id} className="flex flex-col gap-2">
                   
                   {/* Encabezado Categoría */}
@@ -495,7 +422,7 @@ export function EditorModal({ template, onClose, onSaveMapping }: EditorModalPro
 
                   {/* SINGLE_FIELD */}
                   {Array.isArray(category.fields) &&
-                    category.fields.map((field: any) => {
+                    category.fields.map((field: MapeoExcelField) => {
                       const variableData: SystemVariable = {
                         id: field.id,
                         key: field.id,
@@ -546,7 +473,7 @@ export function EditorModal({ template, onClose, onSaveMapping }: EditorModalPro
 
                   {/* TABLE_FIELD */}
                   {Array.isArray(category.tables) &&
-                    category.tables.map((table: any) => {
+                    category.tables.map((table: MapeoExcelTable) => {
                       const variableData: SystemVariable = {
                         id: table.id,
                         key: table.id,
@@ -630,11 +557,6 @@ export function EditorModal({ template, onClose, onSaveMapping }: EditorModalPro
 // ============================================================================
 // 4. SUB-COMPONENTE LOCAL: MODAL HISTORIAL
 // ============================================================================
-interface HistorialModalProps {
-  template: TemplateHistoryLog;
-  onClose: () => void;
-}
-
 function HistorialModal({ template, onClose }: HistorialModalProps) {
 
   return (

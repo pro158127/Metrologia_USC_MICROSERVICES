@@ -21,29 +21,14 @@ import {
   TarifaModel,
   actulzar_tarifa,
 } from "@/app/action_module/tarifas";
-
-// ----------------------------------------------------------------------
-// Interfaces
-// ----------------------------------------------------------------------
-export interface PriceRecord {
-  idHistorial: number;
-  precioU: number;
-  fechaInicio: string;
-  fechaFin: string | null;
-}
-
-export interface CatalogItem {
-  idTarifa: number;
-  magnitud: string;
-  instrumento: string;
-  tipoServicio: string;
-  norma: string;
-  estado: "ACTIVO" | "INACTIVO";
-  acreditadoONAC: boolean;
-  precioVigente: number;
-  fechaFin: string | null;
-  historialPrecios: PriceRecord[];
-}
+import type {
+  PriceRecord,
+  CatalogItem,
+  CatalogHeaderControlsProps,
+  PriceHistoryModalProps,
+  CatalogFormModalProps,
+  CatalogRowProps,
+} from "@/tipos/tarifas";
 
 const formatCurrency = (val: number) => {
   return new Intl.NumberFormat("es-CO", {
@@ -67,17 +52,7 @@ const CatalogHeaderControls = ({
   magnitudesDisponibles,
   tiposServicioDisponibles,
   onOpenCreate,
-}: {
-  searchTerm: string;
-  setSearchTerm: (v: string) => void;
-  selectedMagnitud: string;
-  setSelectedMagnitud: (v: string) => void;
-  selectedTipoServicio: string;
-  setSelectedTipoServicio: (v: string) => void;
-  magnitudesDisponibles: string[];
-  tiposServicioDisponibles: string[];
-  onOpenCreate: () => void;
-}) => {
+}: CatalogHeaderControlsProps) => {
   return (
     <div className="flex flex-col space-y-4 px-6 py-5 border-b border-slate-100 bg-slate-50/50">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -156,11 +131,7 @@ const PriceHistoryModal = ({
   isOpen,
   onClose,
   item,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  item: CatalogItem | null;
-}) => {
+}: PriceHistoryModalProps) => {
   if (!isOpen || !item) return null;
 
   return (
@@ -230,13 +201,7 @@ const CatalogFormModal = ({
   onSave,
   initialData,
   isSaving,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (item: Partial<CatalogItem> & { fechaInicio?: string; fechaFin?: string | null }) => void;
-  initialData?: CatalogItem | null;
-  isSaving: boolean;
-}) => {
+}: CatalogFormModalProps) => {
   const today = new Date().toISOString().split('T')[0];
 
   const [formData, setFormData] = useState<Partial<CatalogItem> & { fechaInicio?: string; fechaFin?: string | null }>({
@@ -445,12 +410,7 @@ const CatalogRow = ({
   onEdit,
   onToggleStatus,
   onViewHistory,
-}: {
-  item: CatalogItem;
-  onEdit: (item: CatalogItem) => void;
-  onToggleStatus: (idTarifa: number, estadoActual: "ACTIVO" | "INACTIVO") => void;
-  onViewHistory: (item: CatalogItem) => void;
-}) => {
+}: CatalogRowProps) => {
   return (
     <tr className="hover:bg-slate-50/60 transition-colors">
       <td className="px-4 py-3 align-top">
@@ -508,7 +468,7 @@ const CatalogRow = ({
 // ----------------------------------------------------------------------
 export const CatalogTableView = () => {
   const tarifas = useDbTable("tarifas");
-  const { setDbState } = useDbActions();
+  const { setDbState, loadTable } = useDbActions();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMagnitud, setSelectedMagnitud] = useState("TODAS");
   const [selectedTipoServicio, setSelectedTipoServicio] = useState("TODOS");
@@ -518,26 +478,26 @@ export const CatalogTableView = () => {
   const [isSaving, setIsSaving] = useState(false);
 
   // Mapeador de la respuesta de Prisma a CatalogItem
-  const mapTarifaToCatalog = (tarifaList: any[]): CatalogItem[] => {
+  const mapTarifaToCatalog = (tarifaList: TarifaModel[]): CatalogItem[] => {
     return (tarifaList || []).map((t) => {
       const historialOrdenado = [...(t.historial || [])].sort(
         (a, b) => new Date(b.fechaInicio).getTime() - new Date(a.fechaInicio).getTime()
       );
 
-      const historialActivo = historialOrdenado.find((h: any) => !h.fechaFin) || historialOrdenado[0];
+      const historialActivo = historialOrdenado.find((h) => !h.fechaFin) || historialOrdenado[0];
       const precioVigente = historialActivo ? Number(historialActivo.precioU ?? 0) : 0;
 
       return {
         idTarifa: t.idTarifa,
         magnitud: t.magnitud,
-        instrumento: t.Instrumento || t.instrumento || "Sin nombre",
+        instrumento: t.Instrumento || "Sin nombre",
         tipoServicio: t.tipoServicio,
         norma: t.Norma || "N/A",
         estado: (t.estado as "ACTIVO" | "INACTIVO") || "ACTIVO",
         acreditadoONAC: String(t.tipoServicio || "").toLowerCase().includes("acreditad"),
         precioVigente,
         fechaFin: historialActivo?.fechaFin ? new Date(historialActivo.fechaFin).toISOString() : null,
-        historialPrecios: historialOrdenado.map((h: any) => ({
+        historialPrecios: historialOrdenado.map((h) => ({
           idHistorial: h.idHistorial,
           precioU: Number(h.precioU ?? 0),
           fechaInicio: new Date(h.fechaInicio).toISOString(),
@@ -552,16 +512,19 @@ export const CatalogTableView = () => {
     if (res.ok && res.data) {
       setDbState((prev) => ({
         ...prev,
-        tarifas: res.data as any,
+        tarifas: res.data as unknown as typeof prev.tarifas,
       }));
     }
   };
 
   useEffect(() => {
-    recargarTarifas();
-  }, []);
+    loadTable("tarifas");
+  }, [loadTable]);
 
-  const catalog = useMemo(() => mapTarifaToCatalog(tarifas || []), [tarifas]);
+  const catalog = useMemo(
+    () => mapTarifaToCatalog((tarifas || []) as unknown as TarifaModel[]),
+    [tarifas]
+  );
 
   const magnitudesDisponibles = useMemo(() => {
     return Array.from(new Set(catalog.map((i) => i.magnitud))).filter(Boolean);

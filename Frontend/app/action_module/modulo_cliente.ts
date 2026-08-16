@@ -61,13 +61,11 @@ export async function obtenerUltimaCotizacionFinalizada(clienteId: number) {
         idCliente: clienteId,
         estado: {
           in: [
-            "APROBADO",
-            "VENCIDA",
-            "RECHAZADA",
-             "BORRADOR",
-            "PENDIENTE_CONSOLIDAR",
-            "PENDIENTE_APROBAR",
-            "FINALIZADA"
+            Estados.ENVIADA,
+            Estados.APROBADA,
+            Estados.RECHAZADA,
+            Estados.BORRADOR,
+            Estados.EN_SEGUIMIENTO,
           ],
         },
       },
@@ -83,21 +81,8 @@ export async function obtenerUltimaCotizacionFinalizada(clienteId: number) {
 }
 
 
-import { statuscliente, tipocliente } from "@prisma/client";
-
-export interface CrearClienteInput {
-  nitCedula: string;
-  razonSocial: string;
-  correo: string;
-  nombreContacto?: string;
-  telefono?: string;
-  observacion?: string;
-  tipoCliente?: tipocliente;
-  ciudad?: string;
-  idRutDocumento?: number;
-}
-
-export type ActualizarClienteInput = Partial<CrearClienteInput>;
+import { statuscliente, tipocliente, Estados } from "@prisma/client";
+import type { CrearClienteInput, ActualizarClienteInput } from "@/tipos/clientes";
 
 async function validarPermiso(accion: 'consultar' | 'desactivar' | 'crear_editar' | 'ver_historial') {
   const session = await auth();

@@ -1,19 +1,7 @@
 'use server';
 
 import { prisma } from '@/app/lib/data_base/prisma'; // Asegúrate de tener el cliente Prisma configurado
-import type { RecepcionEquipoModel } from '@/app/componets/tables_recharge'; // Opcional, para tipado
-
-// Definimos el tipo de salida exacto (coincide con el del frontend)
-export interface RecepcionConInfo {
-  idRecepcion: number;
-  codigo: string;
-  clienteNombre: string;
-  fecha: string;
-  cantidadInstrumentos: number;
-  codigoCotizacion?: string;
-  codigoOT?: string;
-  raw: any; // O puedes usar RecepcionEquipoModel, pero con relaciones incluidas
-}
+import type { RecepcionConInfo } from "@/tipos/recepciones"; // Tipado centralizado
 
 /**
  * Obtiene todas las recepciones de equipo enriquecidas con datos de cliente,
