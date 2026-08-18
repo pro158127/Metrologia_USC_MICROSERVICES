@@ -3,8 +3,24 @@
 
 import { prisma } from "@/app/lib/data_base/prisma";
 import { auth } from "@/app/Login/types/auth"; // <-- Importas la función auth directa de la v5
+import { fastifyRequest, FastifyHttpError } from "@/app/lib/api/fastifyClient";
 
-
+interface ClienteDTO {
+  idCliente: number;
+  nitCedula: string;
+  razonSocial: string;
+  correo: string;
+  nombreContacto: string | null;
+  telefono: string | null;
+  observacion: string | null;
+  idRutDocumento: number | null;
+  status: string;
+  createat: string | Date;
+  dirrecion: string;
+  updatedAt: string | Date;
+  ciudad: string | null;
+  tipoCliente: string;
+}
 
 export async function obtenerClientes() {
   try {
@@ -23,19 +39,16 @@ export async function obtenerClientes() {
       };
     }
 
-    // 3. Consulta sin includes (solo campos planos)
-    const clientes = await prisma.cliente.findMany({
-      orderBy: { createat: 'desc' },
-      // Si quieres excluir algunos campos, usa 'select'
-      // select: { idCliente: true, razonSocial: true, ... }
-    });
+    // 3. Consulta delegada al backend Fastify (centraliza Prisma)
+    const res = await fastifyRequest<{ success: boolean; data: ClienteDTO[] }>(
+      session,
+      '/api/v1/clientes'
+    );
 
-    // 4. Convertir Decimal a number si es necesario (no aplica en Cliente)
-    // Pero si hubiera Decimal, lo convertiríamos.
-
-    return { success: true, data: clientes };
+    return { success: true, data: res.data };
   } catch (error) {
     console.error('Error en obtenerClientes:', error);
+    if (error instanceof FastifyHttpError) return { success: false, error: error.message };
     return { success: false, error: 'Error interno del servidor' };
   }
 }
@@ -101,31 +114,30 @@ export async function crearCliente(input: CrearClienteInput) {
     const perm = await validarPermiso('crear_editar');
     if (!perm.autorizado) return { success: false, error: perm.error };
 
-    // Validar NIT/Cédula único
-    const existeNit = await prisma.cliente.findUnique({
-      where: { nitCedula: input.nitCedula },
-    });
-    if (existeNit) {
-      return { success: false, error: 'Ya existe un cliente registrado con este NIT/Cédula' };
-    }
+    const session = await auth();
+    const res = await fastifyRequest<{ success: boolean; data: ClienteDTO }>(
+      session,
+      '/api/v1/clientes',
+      {
+        method: 'POST',
+        body: {
+          nitCedula: input.nitCedula,
+          razonSocial: input.razonSocial,
+          correo: input.correo,
+          nombreContacto: input.nombreContacto,
+          telefono: input.telefono,
+          observacion: input.observacion,
+          tipoCliente: input.tipoCliente ?? 'NATURAL',
+          ciudad: input.ciudad ?? 'Cali',
+          idRutDocumento: input.idRutDocumento ?? null,
+        },
+      }
+    );
 
-    const nuevoCliente = await prisma.cliente.create({
-      data: {
-        nitCedula: input.nitCedula,
-        razonSocial: input.razonSocial,
-        correo: input.correo,
-        nombreContacto: input.nombreContacto,
-        telefono: input.telefono,
-        observacion: input.observacion,
-        tipoCliente: input.tipoCliente ?? "NATURAL",
-        ciudad: input.ciudad ?? "Cali",
-        idRutDocumento: input.idRutDocumento??null,
-      },
-    });
-
-    return { success: true, data: nuevoCliente };
+    return { success: true, data: res.data };
   } catch (error) {
     console.error('Error en crearCliente:', error);
+    if (error instanceof FastifyHttpError) return { success: false, error: error.message };
     return { success: false, error: 'Error interno al crear el cliente' };
   }
 }

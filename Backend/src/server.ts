@@ -10,6 +10,7 @@ import prismaPlugin from './plugins/prisma';
 import auditRoutes from './routes/audit';
 import { excelFileRoutes } from './routes/excel-univer-parser';
 import { documentosRoutes } from './routes/documentos';
+import clientesRoutes from './routes/clientes';
 import fastifyMultipart from '@fastify/multipart';
 import { pdfRoutes } from './routes/pdfRoutes';
 async function bootstrap() {
@@ -38,6 +39,7 @@ async function bootstrap() {
   await fastify.register(pdfRoutes);
   await fastify.register(excelFileRoutes);
   await fastify.register(documentosRoutes);
+  await fastify.register(clientesRoutes);
 
   // 4. Health Check
   fastify.get('/health', async () => {

@@ -59,8 +59,13 @@ model clientes {
   NOMBRE_CONTACTO     String?
   TELEFONO            String?
   OBSERVACION         String?
-  TIPO_CLIENTE        String            @default("EXTERNO")
   ID_RUT_DOCUMENTO_FK Int?              @unique
+  status              statuscliente     @default(ACTIVO)
+  createat            DateTime          @default(now())
+  dirrecion           String            @default("n/a")
+  updatedAt           DateTime          @default(now())
+  ciudad              String?           @default("Cali")
+  TIPO_CLIENTE        tipocliente       @default(NATURAL)
   documentos          documentos?       @relation(fields: [ID_RUT_DOCUMENTO_FK], references: [ID_DOCUMENTO])
   cotizaciones        cotizaciones[]
   ordenes_trabajo     ordenes_trabajo[]
@@ -377,4 +382,14 @@ enum ProveedorAlmacenamiento {
   LOCAL
   AWS_S3
   GOOGLE_DRIVE
+}
+
+enum statuscliente {
+  ACTIVO
+  INACTIVO
+}
+
+enum tipocliente {
+  NATURAL
+  JURIDICO
 }
