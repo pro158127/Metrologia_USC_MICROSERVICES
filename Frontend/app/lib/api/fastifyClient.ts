@@ -1,6 +1,6 @@
 import { generarTokenBackend } from '@/app/lib/auth-token';
 
-const BASE_URL =  'http://metrologia_backend:3001';
+export const BASE_URL = 'http://metrologia_backend:3001';
 
 export interface FastifyRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';

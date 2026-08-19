@@ -445,10 +445,10 @@ enum tipocliente {
 
 enum EstadoOT {
   Creada
-  En_recepci_n            @map("En_recepción")
+  En_recepción
   Asignada
-  En_calibraci_n          @map("En_calibración")
-  Certificado_en_revisi_n @map("Certificado_en_revisión")
+  En_calibración
+  Certificado_en_revisión
   Certificado_aprobado
   Certificado_enviado
 }

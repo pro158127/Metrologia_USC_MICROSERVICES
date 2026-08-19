@@ -3,8 +3,14 @@
 // Tipos del dominio de Clientes (DTOs UI + inputs de server actions).
 // ============================================================
 
-import type { statuscliente, tipocliente, Prisma } from '@prisma/client';
-import type { ClienteModel } from './entidades';
+import type { statuscliente, tipocliente } from './enums';
+import type {
+  ClienteModel,
+  DocumentoModel,
+  CotizacionModel,
+  RecepcionEquipoModel,
+  OrdenTrabajoModel,
+} from './entidades';
 
 // ============================================================
 // SERVER ACTIONS (inputs)
@@ -124,18 +130,11 @@ export interface DocumentConfig {
 }
 
 /** Cotización dentro de la trazabilidad de un cliente. */
-export type TrazabilidadCotizacion = Prisma.CotizacionGetPayload<{
-  include: {
-    detalles: true;
-    documentos: true;
-    recepciones: {
-      include: { instrumentos: true; documentos: true };
-    };
-    ordenes: {
-      include: { instrumentos: true; documentos: true };
-    };
-  };
-}>;
+export type TrazabilidadCotizacion = CotizacionModel & {
+  documentos?: DocumentoModel[];
+  recepciones?: RecepcionEquipoModel[];
+  ordenes?: OrdenTrabajoModel[];
+};
 
 /** Vista de cotización usada por las tarjetas del perfil. */
 export type TrazabilidadCotizacionCard = TrazabilidadCotizacion & {
@@ -144,25 +143,10 @@ export type TrazabilidadCotizacionCard = TrazabilidadCotizacion & {
 };
 
 /** Resultado de `obtenerTrazabilidadCliente` (data normalizada para la UI). */
-export type TrazabilidadCliente = Prisma.ClienteGetPayload<{
-  include: {
-    rutDocumento: {
-      include: { versiones: true };
-    };
-    cotizaciones: {
-      include: {
-        detalles: true;
-        documentos: true;
-        recepciones: {
-          include: { instrumentos: true; documentos: true };
-        };
-        ordenes: {
-          include: { instrumentos: true; documentos: true };
-        };
-      };
-    };
-  };
-}>;
+export type TrazabilidadCliente = ClienteModel & {
+  rutDocumento?: DocumentoModel | null;
+  cotizaciones: TrazabilidadCotizacion[];
+};
 
 export interface CotizacionCardProps {
   cotizacion: TrazabilidadCotizacionCard;

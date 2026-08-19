@@ -11,6 +11,20 @@ import auditRoutes from './routes/audit';
 import { excelFileRoutes } from './routes/excel-univer-parser';
 import { documentosRoutes } from './routes/documentos';
 import clientesRoutes from './routes/clientes';
+import notificacionesRoutes from './routes/notificaciones';
+import authRoutes from './routes/auth';
+import usuariosRoutes from './routes/usuarios';
+import cotizacionesRoutes from './routes/cotizaciones';
+import tarifasRoutes from './routes/tarifas';
+import sellosRoutes from './routes/sellos';
+import parametrosSistemaRoutes from './routes/parametros_sistema';
+import facturasRoutes from './routes/facturas';
+import certificadosRoutes from './routes/certificados';
+import reportesRoutes from './routes/reportes';
+import plantillasRoutes from './routes/plantillas';
+import ordenesRoutes from './routes/ordenes';
+import recepcionesRoutes from './routes/recepciones';
+import consecutivosRoutes from './routes/consecutivos';
 import fastifyMultipart from '@fastify/multipart';
 import { pdfRoutes } from './routes/pdfRoutes';
 async function bootstrap() {
@@ -40,6 +54,20 @@ async function bootstrap() {
   await fastify.register(excelFileRoutes);
   await fastify.register(documentosRoutes);
   await fastify.register(clientesRoutes);
+  await fastify.register(notificacionesRoutes);
+  await fastify.register(authRoutes);
+  await fastify.register(usuariosRoutes);
+  await fastify.register(cotizacionesRoutes);
+  await fastify.register(tarifasRoutes);
+  await fastify.register(sellosRoutes);
+  await fastify.register(parametrosSistemaRoutes);
+  await fastify.register(facturasRoutes);
+  await fastify.register(certificadosRoutes);
+  await fastify.register(reportesRoutes);
+  await fastify.register(plantillasRoutes);
+  await fastify.register(ordenesRoutes);
+  await fastify.register(recepcionesRoutes);
+  await fastify.register(consecutivosRoutes);
 
   // 4. Health Check
   fastify.get('/health', async () => {

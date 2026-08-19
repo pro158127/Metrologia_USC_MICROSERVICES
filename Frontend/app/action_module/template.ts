@@ -1,10 +1,8 @@
 'use server';
 
-import { PrismaClient } from '@prisma/client';
-import { create } from 'domain';
-
-// Reutilización de la instancia de Prisma Client
-const prisma = new PrismaClient();
+import { auth } from '@/app/Login/types/auth';
+import { fastifyRequest, FastifyHttpError } from '@/app/lib/api/fastifyClient';
+import type { MapeoExcel } from '@/tipos/plantillas';
 
 // Tipado estricto para el parámetro de entrada
 interface GetPlantillaParams {
@@ -23,7 +21,7 @@ export interface PlantillaWithVersionResponse {
     versionActual: {
       idVersionPlantilla: number;
       version: number;
-      mapeoExcelJson: any;
+      mapeoExcelJson: MapeoExcel | null;
       createdAt: Date;
       documento: {
         idDocumento: number;
@@ -39,84 +37,38 @@ export interface PlantillaWithVersionResponse {
 
 /**
  * Server Action para obtener una plantilla con su versión y documento asociado.
- * 
+ *
  * @param params Objetos con idPlantilla y versión opcional.
  * @returns Objeto estructurado con el estado de la operación y los datos devueltos.
  */
 export async function getPlantillaConDocumento(
   params: GetPlantillaParams
 ): Promise<PlantillaWithVersionResponse> {
-  try {
-    const { idPlantilla, version } = params;
+  const { idPlantilla, version } = params;
 
-    if (!idPlantilla || typeof idPlantilla !== 'number') {
-      return {
-        success: false,
-        error: 'El idPlantilla es requerido y debe ser un número válido.',
-      };
-    }
-
-    // Consulta relacional usando Prisma
-    const plantilla = await prisma.plantilla.findUnique({
-      where: { idPlantilla },
-      include: {
-        versiones: {
-          where: version ? { version } : undefined,
-          orderBy: { version: 'desc' }, // Trae la versión más reciente por defecto
-          take: 1, // Limita el resultado a 1 sola versión
-          include: {
-            documentos: true, // Incluye los metadatos del documento en MinIO/S3
-          },
-        },
-      },
-    });
-
-    if (!plantilla) {
-      return {
-        success: false,
-        error: `No se encontró la plantilla con el ID: ${idPlantilla}`,
-      };
-    }
-
-    const versionEncontrada = plantilla.versiones[0] || null;
-
+  if (!idPlantilla || typeof idPlantilla !== 'number') {
     return {
-      success: true,
-      data: {
-        idPlantilla: plantilla.idPlantilla,
-        nombre: plantilla.nombre,
-        modulo: plantilla.modulo,
-        activa: plantilla.activa,
-        versionActual: versionEncontrada
-          ? {
-              idVersionPlantilla: versionEncontrada.idVersionPlantilla,
-              version: versionEncontrada.version,
-              mapeoExcelJson: versionEncontrada.mapeoExcelJson,
-              createdAt: versionEncontrada.createdAt,
-              documento: versionEncontrada.documentos
-                ? {
-                    idDocumento: versionEncontrada.documentos.idDocumento,
-                    nombre: versionEncontrada.documentos.nombre,
-                    rutaUrl: versionEncontrada.documentos.rutaUrl, // Object Key para MinIO
-                    proveedor: versionEncontrada.documentos.proveedor,
-                    mimeType: versionEncontrada.documentos.mimeType,
-                  }
-                : null,
-            }
-          : null,
-      },
+      success: false,
+      error: 'El idPlantilla es requerido y debe ser un número válido.',
     };
-  } catch (error: any) {
+  }
+
+  try {
+    const session = await auth();
+    const path = `/api/v1/plantillas/${idPlantilla}${version ? `?version=${version}` : ''}`;
+
+    return await fastifyRequest<PlantillaWithVersionResponse>(session, path);
+  } catch (error) {
     console.error('[SERVER ACTION ERROR - getPlantillaConDocumento]:', error);
+    if (error instanceof FastifyHttpError) {
+      return { success: false, error: error.message };
+    }
     return {
       success: false,
       error: 'Error interno del servidor al consultar la plantilla.',
     };
   }
 }
-
-
-
 
 // Tipado explícito para la respuesta unificada de la consulta
 export interface PlantillasCompletasResponse {
@@ -130,17 +82,16 @@ export interface PlantillasCompletasResponse {
       idVersionPlantilla: number;
       idPlantilla: number;
       version: number;
-      mapeoExcelJson: any;
-      createdby:{
-        nombre:string
-
-      }
+      mapeoExcelJson: MapeoExcel | null;
+      createdby: {
+        nombre: string;
+      };
       createdAt: Date;
       iddocumentos: number | null;
       documento: {
         idDocumento: number;
         nombre: string;
-        rutaUrl: string; // Object Key de MinIO
+        rutaUrl: string;
         proveedor: string;
         mimeType: string;
         createdAt: Date;
@@ -156,62 +107,13 @@ export interface PlantillasCompletasResponse {
  */
 export async function getTodasLasPlantillasCompletas(): Promise<PlantillasCompletasResponse> {
   try {
-    const plantillas = await prisma.plantilla.findMany({
-      orderBy: {
-        idPlantilla: 'desc',
-      },
-      include: {
-        versiones: {
-          orderBy: {
-            version: 'desc', // Mantiene la última versión al inicio
-          },
-          include: {
-            documentos: true, // Incluye la relación completa con la tabla Documento
-            usuarioCreador: {
-              select: {
-                nombreCompleto: true,
-              },
-            },
-          }
-        },
-      },
-    });
-
-    return {
-      success: true,
-      data: plantillas.map((p) => ({
-        idPlantilla: p.idPlantilla,
-        nombre: p.nombre,
-        modulo: p.modulo,
-        activa: p.activa,
-        versiones: p.versiones.map((v) => ({
-          idVersionPlantilla: v.idVersionPlantilla,
-          idPlantilla: v.idPlantilla,
-          version: v.version,
-          mapeoExcelJson: v.mapeoExcelJson,
-          
-          // Alinea con la interfaz: incluye createdby con el nombre del usuario creador
-          createdby: {
-            nombre: v.usuarioCreador?.nombreCompleto || '',
-          },
-
-          createdAt: v.createdAt,
-          iddocumentos: v.iddocumentos,
-          documento: v.documentos
-            ? {
-                idDocumento: v.documentos.idDocumento,
-                nombre: v.documentos.nombre,
-                rutaUrl: v.documentos.rutaUrl,
-                proveedor: v.documentos.proveedor,
-                mimeType: v.documentos.mimeType,
-                createdAt: v.documentos.createdAt,
-              }
-            : null,
-        })),
-      })),
-    };
-  } catch (error: any) {
+    const session = await auth();
+    return await fastifyRequest<PlantillasCompletasResponse>(session, '/api/v1/plantillas');
+  } catch (error) {
     console.error('[SERVER ACTION ERROR - getTodasLasPlantillasCompletas]:', error);
+    if (error instanceof FastifyHttpError) {
+      return { success: false, error: error.message };
+    }
     return {
       success: false,
       error: 'Error interno al obtener la totalidad de plantillas y sus documentos.',

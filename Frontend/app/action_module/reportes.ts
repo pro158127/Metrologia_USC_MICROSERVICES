@@ -1,6 +1,7 @@
 'use server';
 
-import { prisma } from "@/app/lib/data_base/prisma";
+import { auth } from "@/app/Login/types/auth";
+import { fastifyRequest, FastifyHttpError } from "@/app/lib/api/fastifyClient";
 import type {
   CotizacionModel,
   OrdenTrabajoModel,
@@ -27,28 +28,16 @@ export async function obtenerDatosReportes(): Promise<{
   error?: string;
 }> {
   try {
-    const [cotizaciones, ordenes, certificados, facturas, usuarios] = await Promise.all([
-      prisma.cotizacion.findMany({
-        include: { cliente: true, detalles: true, historialEstados: true },
-      }),
-      prisma.ordenTrabajo.findMany({
-        include: {
-          cliente: true,
-          instrumentos: true,
-          cotizacion: { include: { cliente: true } },
-        },
-      }),
-      prisma.certificado.findMany({ include: { sellos: true } }),
-      prisma.factura.findMany({ include: { ordenTrabajo: true, cliente: true } }),
-      prisma.usuario.findMany({ omit: { contraseña: true } }),
-    ]);
+    const session = await auth();
+    const res = await fastifyRequest<{ success: boolean; data: DatosReportes }>(
+      session,
+      '/api/v1/reportes'
+    );
 
-    return {
-      success: true,
-      data: { cotizaciones, ordenes, certificados, facturas, usuarios },
-    };
+    return { success: true, data: res.data };
   } catch (error) {
     console.error('Error en obtenerDatosReportes:', error);
+    if (error instanceof FastifyHttpError) return { success: false, error: error.message };
     return { success: false, error: 'Error interno del servidor al consultar los reportes' };
   }
 }

@@ -1,6 +1,7 @@
 'use server';
 
-import { prisma } from "@/app/lib/data_base/prisma";
+import { auth } from "@/app/Login/types/auth";
+import { fastifyRequest, FastifyHttpError } from "@/app/lib/api/fastifyClient";
 import type {
   CertificadoModel,
   CalibracionModel,
@@ -27,29 +28,16 @@ export async function obtenerCertificadosConContexto(): Promise<{
   error?: string;
 }> {
   try {
-    const [certificados, calibraciones, instrumentos, ordenes, clientes] = await Promise.all([
-      prisma.certificado.findMany({
-        include: { sellos: true },
-        orderBy: { idCertificado: 'desc' },
-      }),
-      prisma.calibracion.findMany(),
-      prisma.recepcionEquipoDetalle.findMany(),
-      prisma.ordenTrabajo.findMany({
-        include: {
-          cliente: true,
-          cotizacion: { include: { cliente: true } },
-          instrumentos: true,
-        },
-      }),
-      prisma.cliente.findMany(),
-    ]);
+    const session = await auth();
+    const res = await fastifyRequest<{ success: boolean; data: CertificadosConContexto }>(
+      session,
+      '/api/v1/certificados'
+    );
 
-    return {
-      success: true,
-      data: { certificados, calibraciones, instrumentos, ordenes, clientes },
-    };
+    return { success: true, data: res.data };
   } catch (error) {
     console.error('Error en obtenerCertificadosConContexto:', error);
+    if (error instanceof FastifyHttpError) return { success: false, error: error.message };
     return { success: false, error: 'Error interno del servidor al consultar los certificados' };
   }
 }
