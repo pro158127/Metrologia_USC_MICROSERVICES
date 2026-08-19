@@ -74,7 +74,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       try {
         const clientes = await fastify.prisma.clientes.findMany({
-          orderBy: { createat: 'desc' },
+      
         });
 
         return { success: true, data: clientes.map(serializeCliente) };

@@ -45,6 +45,8 @@ export async function obtenerClientes() {
       '/api/v1/clientes'
     );
 
+    console.log(res,"aqui esta FGDFG")
+
     return { success: true, data: res.data };
   } catch (error) {
     console.error('Error en obtenerClientes:', error);
