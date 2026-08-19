@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
@@ -68,8 +68,8 @@ model clientes {
   TIPO_CLIENTE        tipocliente       @default(NATURAL)
   documentos          documentos?       @relation(fields: [ID_RUT_DOCUMENTO_FK], references: [ID_DOCUMENTO])
   cotizaciones        cotizaciones[]
+  facturas            facturas[]
   ordenes_trabajo     ordenes_trabajo[]
-  tramites            tramites[]
 }
 
 model cotizacion_detalles {
@@ -82,29 +82,28 @@ model cotizacion_detalles {
   CANTIDAD           Int
   VALOR_UNITARIO     Decimal      @db.Decimal(12, 2)
   VALOR_TOTAL        Decimal      @db.Decimal(12, 2)
+  sitio              String?
   cotizaciones       cotizaciones @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
 }
 
 model cotizaciones {
-  ID_COTIZACION       Int                   @id @default(autoincrement())
-  CODIGO_COTIZACION   String                @unique
-  ID_TRAMITE_FK       Int?
-  ID_CLIENTE_FK       Int?
-  CONTACTO_NOMBRE     String?
-  CONTACTO_EMAIL      String?
-  CONTACTO_TELEFONO   String?
-  ES_INTERNO_USC      Boolean               @default(false)
-  MONTO_TOTAL         Decimal               @db.Decimal(12, 2)
-  ESTADO              String                @default("BORRADOR")
-  CREATED_AT          DateTime              @default(now())
-  UPDATED_AT          DateTime?
-  viaticos            Decimal?              @default(0) @db.Decimal(12, 2)
-  cotizacion_detalles cotizacion_detalles[]
-  clientes            clientes?             @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
-  tramites            tramites?             @relation(fields: [ID_TRAMITE_FK], references: [ID_TRAMITE])
-  documentos          documentos[]
-  ordenes_trabajo     ordenes_trabajo[]
-  recepciones_equipo  recepciones_equipo[]
+  ID_COTIZACION               Int                           @id @default(autoincrement())
+  CODIGO_COTIZACION           String                        @unique
+  ID_CLIENTE_FK               Int?
+  MONTO_TOTAL                 Decimal?                      @db.Decimal(12, 2)
+  CREATED_AT                  DateTime                      @default(now())
+  UPDATED_AT                  DateTime?
+  viaticos                    Decimal?                      @default(0) @db.Decimal(12, 2)
+  ESTADO                      Estados                       @default(BORRADOR)
+  descuento                   Int?                          @default(0)
+  enviar                      Boolean                       @default(false)
+  cotizacion_detalles         cotizacion_detalles[]
+  clientes                    clientes?                     @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
+  documentos                  documentos[]
+  historial_cambios           historial_cambios[]
+  historial_estado_cotizacion historial_estado_cotizacion[]
+  ordenes_trabajo             ordenes_trabajo[]
+  recepciones_equipo          recepciones_equipo[]
 
   @@index([CREATED_AT])
 }
@@ -118,42 +117,41 @@ model document_chunks {
 }
 
 model documentos {
-  ID_DOCUMENTO        Int                     @id @default(autoincrement())
-  NOMBRE              String
-  RUTA_URL            String
-  PROVEEDOR           ProveedorAlmacenamiento @default(LOCAL)
-  MIME_TYPE           String
-  CREATED_AT          DateTime                @default(now())
-  ID_COTIZACION_FK    Int?
-  ID_ORDEN_TRABAJO_FK Int?
-  ID_RECEPCION_FK     Int?
-  ID_TRAMITE_FK       Int?
-  ID_PLANTILLA_FK     Int?
-  certificados        certificados[]
-  clientes            clientes?
-  document_chunks     document_chunks[]
-  cotizaciones        cotizaciones?           @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
-  ordenes_trabajo     ordenes_trabajo?        @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO], onDelete: Cascade)
-  recepciones_equipo  recepciones_equipo?     @relation(fields: [ID_RECEPCION_FK], references: [ID_RECEPCION], onDelete: Cascade)
-  tramites            tramites?               @relation(fields: [ID_TRAMITE_FK], references: [ID_TRAMITE], onDelete: Cascade)
-  sellos              sellos[]
-  version_documentos  version_documentos[]
-  version_plantillas  version_plantillas[]
+  ID_DOCUMENTO                                            Int                     @id @default(autoincrement())
+  NOMBRE                                                  String
+  RUTA_URL                                                String
+  PROVEEDOR                                               ProveedorAlmacenamiento @default(LOCAL)
+  MIME_TYPE                                               String
+  CREATED_AT                                              DateTime                @default(now())
+  ID_COTIZACION_FK                                        Int?
+  ID_ORDEN_TRABAJO_FK                                     Int?
+  ID_RECEPCION_FK                                         Int?
+  ID_PLANTILLA_FK                                         Int?
+  ordenPagoId                                             Int?
+  certificados                                            certificados[]
+  clientes                                                clientes?
+  document_chunks                                         document_chunks[]
+  cotizaciones                                            cotizaciones?           @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
+  ordenes_trabajo                                         ordenes_trabajo?        @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO])
+  recepciones_equipo                                      recepciones_equipo?     @relation(fields: [ID_RECEPCION_FK], references: [ID_RECEPCION], onDelete: Cascade)
+  ordenes_trabajo_documentos_ordenPagoIdToordenes_trabajo ordenes_trabajo?        @relation("documentos_ordenPagoIdToordenes_trabajo", fields: [ordenPagoId], references: [ID_ORDEN_TRABAJO])
+  sellos                                                  sellos[]
+  version_documentos                                      version_documentos[]
+  version_plantillas                                      version_plantillas[]
 
   @@index([ID_COTIZACION_FK])
   @@index([ID_ORDEN_TRABAJO_FK])
   @@index([ID_PLANTILLA_FK])
   @@index([ID_RECEPCION_FK])
-  @@index([ID_TRAMITE_FK])
 }
 
 model historial_tarifas {
-  ID_HISTORIAL  Int       @id @default(autoincrement())
-  ID_TARIFA_FK  Int
-  PRECIO_MINIMO Decimal   @db.Decimal(12, 2)
-  FECHA_INICIO  DateTime  @default(now())
-  FECHA_FIN     DateTime?
-  tarifas       tarifas   @relation(fields: [ID_TARIFA_FK], references: [ID_TARIFA], onDelete: Cascade)
+  ID_HISTORIAL Int       @id @default(autoincrement())
+  ID_TARIFA_FK Int
+  FECHA_INICIO DateTime  @default(now())
+  FECHA_FIN    DateTime?
+  PRECIO_U     Decimal   @db.Decimal(12, 2)
+  tarifas      tarifas   @relation(fields: [ID_TARIFA_FK], references: [ID_TARIFA], onDelete: Cascade)
 
   @@index([ID_TARIFA_FK, FECHA_INICIO, FECHA_FIN])
 }
@@ -184,40 +182,58 @@ model orden_trabajo_detalles {
   UNIDAD                  String?
   INTERVALO_RANGO         String?
   RESOLUCION              String?
+  asignado                Int
   DECLARACION_CONFORMIDAD Boolean         @default(false)
   LIMITE_CONTROL_EMC      String?
   DOC_ESPECIFICACION      String?
   REGLA_DECISION          String?
   ordenes_trabajo         ordenes_trabajo @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO], onDelete: Cascade)
+  usuarios                usuarios        @relation(fields: [asignado], references: [ID_USUARIO_AUTO_INCREMENT], onDelete: Cascade)
 }
 
 model ordenes_trabajo {
-  ID_ORDEN_TRABAJO         Int                      @id @default(autoincrement())
-  CODIGO_OT                String                   @unique
-  ID_TRAMITE_FK            Int?
-  ID_COTIZACION_FK         Int?
-  ID_CLIENTE_FK            Int?
-  CORREO_CERTIFICADO       String?
-  CORREO_FACTURA           String?
-  FECHA_LIMITE_FACTURACION DateTime?
-  ES_INTERNO_USC           Boolean                  @default(false)
-  ES_EN_SITIO              Boolean                  @default(false)
-  ES_LAB_PERMANENTE        Boolean                  @default(true)
-  PERSONA_CONTACTO         String?
-  TELEFONO_CONTACTO        String?
-  FECHA_CALIBRACION        DateTime?
-  RESPONSABLE              String?
-  OBSERVACIONES            String?
-  ESTADO                   String                   @default("EN_PROCESO")
-  ESTADO_REVISION          String                   @default("PENDIENTE_REVISION")
-  MOTIVO_RECHAZO           String?
-  CREATED_AT               DateTime                 @default(now())
-  documentos               documentos[]
-  orden_trabajo_detalles   orden_trabajo_detalles[]
-  clientes                 clientes?                @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
-  cotizaciones             cotizaciones?            @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
-  tramites                 tramites?                @relation(fields: [ID_TRAMITE_FK], references: [ID_TRAMITE])
-  recepciones_equipo       recepciones_equipo[]
+  ID_ORDEN_TRABAJO                                   Int                      @id @default(autoincrement())
+  CODIGO_OT                                          String                   @unique
+  ID_COTIZACION_FK                                   Int?
+  ID_CLIENTE_FK                                      Int?
+  CORREO_CERTIFICADO                                 String?
+  CORREO_FACTURA                                     String?
+  FECHA_LIMITE_FACTURACION                           DateTime?
+  ES_INTERNO_USC                                     Boolean?                 @default(false)
+  ES_EN_SITIO                                        Boolean?                 @default(false)
+  ES_LAB_PERMANENTE                                  Boolean?                 @default(true)
+  TELEFONO_CONTACTO                                  String?
+  FECHA_CALIBRACION                                  DateTime?
+  RESPONSABLE                                        String?
+  OBSERVACIONES                                      String?
+  REQUIERE_ANEXO                                     Boolean?                 @default(false)
+  ESTADO_REVISION                                    String?                  @default("PENDIENTE_REVISION")
+  MOTIVO_RECHAZO                                     String?
+  CREATED_AT                                         DateTime?                @default(now())
+  estado                                             EstadoOT?                @default(Creada)
+  estado_pago                                        estadopay?               @default(PAGADO)
+  alertamessag                                       String?                  @default("sin novedades")
+  PERSONA_CONTACTO                                   String?
+  hora                                               DateTime?                @default(now())
+  FECHA_CALIBRACION_DILIGENCIAMENTO                  DateTime?
+  NIT                                                String?                  @default("sin nit")
+  NIT_solicitante                                    String?                  @default("sin nit")
+  PERSONA_CONTACT_SOLCITANTE                         String?
+  Razon_social                                       String?                  @default("sin razon_social")
+  TELEFONO_CONTACTO_SOLICITANTE                      String?
+  ciudad                                             String?                  @default("sin ciudad")
+  ciudad_solcitante                                  String?                  @default("sin ciudad")
+  dirrecion                                          String?                  @default("sin dirreccion")
+  dirrecion_solcitante                               String?                  @default("sin dirreccion")
+  no_cotizacion                                      String?                  @default("n/a")
+  no_orden_trabajo                                   String?                  @default("n/a")
+  documentos                                         documentos[]
+  documentos_documentos_ordenPagoIdToordenes_trabajo documentos[]             @relation("documentos_ordenPagoIdToordenes_trabajo")
+  facturas                                           facturas[]
+  orden_trabajo_detalles                             orden_trabajo_detalles[]
+  clientes                                           clientes?                @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
+  cotizaciones                                       cotizaciones?            @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
+  recepciones_equipo                                 recepciones_equipo[]
 
   @@index([CODIGO_OT])
   @@index([FECHA_CALIBRACION])
@@ -263,7 +279,6 @@ model recepcion_equipo_detalles {
 model recepciones_equipo {
   ID_RECEPCION              Int                         @id @default(autoincrement())
   CODIGO_RECEPCION          String                      @unique
-  ID_TRAMITE_FK             Int?
   ID_COTIZACION_FK          Int?
   ID_ORDEN_TRABAJO_FK       Int?
   SOLICITANTE               String
@@ -284,7 +299,6 @@ model recepciones_equipo {
   recepcion_equipo_detalles recepcion_equipo_detalles[]
   cotizaciones              cotizaciones?               @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
   ordenes_trabajo           ordenes_trabajo?            @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO])
-  tramites                  tramites?                   @relation(fields: [ID_TRAMITE_FK], references: [ID_TRAMITE])
 
   @@index([CREATED_AT])
 }
@@ -312,39 +326,30 @@ model tarifas {
   MAGNITUD          String
   TIPO_SERVICIO     String
   ESTADO            String              @default("ACTIVO")
+  Instrumento       String              @default("n/a")
+  Norma             String              @default("n/a")
   historial_tarifas historial_tarifas[]
 }
 
-model tramites {
-  ID_TRAMITE         Int                  @id @default(autoincrement())
-  CODIGO_TRAMITE     String               @unique
-  ID_CLIENTE_FK      Int?
-  ESTADO_FLUJO       String               @default("EN_PROCESO")
-  CREATED_AT         DateTime             @default(now())
-  cotizaciones       cotizaciones[]
-  documentos         documentos[]
-  ordenes_trabajo    ordenes_trabajo[]
-  recepciones_equipo recepciones_equipo[]
-  clientes           clientes?            @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
-}
-
 model usuarios {
-  ID_USUARIO_AUTO_INCREMENT Int                  @id @default(autoincrement())
-  NOMBRE_COMPLETO           String
-  contrase_a                String               @map("contraseña")
-  ID_ROL_FK                 Int
-  CORREO_INSTITUCION        String               @unique
-  CREATED_AT                DateTime             @default(now())
-  UPDATE_AT                 DateTime?
-  ESTADO                    Boolean
-  intentos                  Int                  @default(0)
-  elminado                  Boolean              @default(false)
-  audit_logs                audit_logs[]
-  calibraciones             calibraciones[]
-  notificaciones            notificaciones[]
-  roles                     roles                @relation(fields: [ID_ROL_FK], references: [ID_ROL_INCREMENT])
-  version_documentos        version_documentos[]
-  version_plantillas        version_plantillas[]
+  ID_USUARIO_AUTO_INCREMENT   Int                           @id @default(autoincrement())
+  NOMBRE_COMPLETO             String
+  contrase_a                  String                        @map("contraseña")
+  ID_ROL_FK                   Int
+  CORREO_INSTITUCION          String                        @unique
+  CREATED_AT                  DateTime                      @default(now())
+  UPDATE_AT                   DateTime?
+  ESTADO                      Boolean
+  elminado                    Boolean                       @default(false)
+  intentos                    Int                           @default(0)
+  audit_logs                  audit_logs[]
+  calibraciones               calibraciones[]
+  historial_estado_cotizacion historial_estado_cotizacion[]
+  notificaciones              notificaciones[]
+  orden_trabajo_detalles      orden_trabajo_detalles[]
+  roles                       roles                         @relation(fields: [ID_ROL_FK], references: [ID_ROL_INCREMENT])
+  version_documentos          version_documentos[]
+  version_plantillas          version_plantillas[]
 }
 
 model version_documentos {
@@ -354,6 +359,7 @@ model version_documentos {
   RUTA_URL        String
   CREATED_AT      DateTime   @default(now())
   usuario_fk      Int
+  content_json    Json?
   documentos      documentos @relation(fields: [ID_DOCUMENTO_FK], references: [ID_DOCUMENTO], onDelete: Cascade)
   usuarios        usuarios   @relation(fields: [usuario_fk], references: [ID_USUARIO_AUTO_INCREMENT])
 }
@@ -369,6 +375,49 @@ model version_plantillas {
   documentos            documentos? @relation(fields: [ID_DOCUMENTOS_FK], references: [ID_DOCUMENTO])
   plantillas            plantillas  @relation(fields: [ID_PLANTILLA_FK], references: [ID_PLANTILLA], onDelete: Cascade)
   usuarios              usuarios    @relation(fields: [ID_USUARIO_CREADOR_FK], references: [ID_USUARIO_AUTO_INCREMENT])
+}
+
+model facturas {
+  ID_FACTURA          Int              @id @default(autoincrement())
+  NUMERO_FACTURA      String           @unique
+  ID_ORDEN_TRABAJO_FK Int?
+  ID_CLIENTE_FK       Int?
+  FECHA               DateTime         @default(now())
+  VALOR               Decimal          @db.Decimal(12, 2)
+  ESTADO              String           @default("EMITIDA")
+  OBSERVACION         String?
+  clientes            clientes?        @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
+  ordenes_trabajo     ordenes_trabajo? @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO])
+
+  @@index([ID_CLIENTE_FK])
+  @@index([ID_ORDEN_TRABAJO_FK])
+}
+
+model historial_cambios {
+  id                       String       @id
+  numero_version           String
+  fecha_cambio             DateTime
+  descripcion              String
+  requiere_validacion_hoja Boolean      @default(false)
+  observaciones            String?
+  aprobo                   String
+  id_cotizacion            Int
+  created_at               DateTime     @default(now())
+  updated_at               DateTime
+  cotizaciones             cotizaciones @relation(fields: [id_cotizacion], references: [ID_COTIZACION], onDelete: Cascade)
+}
+
+model historial_estado_cotizacion {
+  ID_HISTORIAL     Int          @id @default(autoincrement())
+  ID_COTIZACION_FK Int
+  ESTADO_ANTERIOR  Estados?
+  ESTADO_NUEVO     Estados      @default(APROBADA)
+  ID_USUARIO_FK    Int
+  CREATED_AT       DateTime     @default(now())
+  cotizaciones     cotizaciones @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
+  usuarios         usuarios     @relation(fields: [ID_USUARIO_FK], references: [ID_USUARIO_AUTO_INCREMENT])
+
+  @@index([ID_COTIZACION_FK])
 }
 
 enum FrecuenciaEjecucion {
@@ -392,4 +441,28 @@ enum statuscliente {
 enum tipocliente {
   NATURAL
   JURIDICO
+}
+
+enum EstadoOT {
+  Creada
+  En_recepci_n            @map("En_recepción")
+  Asignada
+  En_calibraci_n          @map("En_calibración")
+  Certificado_en_revisi_n @map("Certificado_en_revisión")
+  Certificado_aprobado
+  Certificado_enviado
+}
+
+enum Estados {
+  BORRADOR
+  ENVIADA
+  APROBADA
+  RECHAZADA
+  EN_SEGUIMIENTO
+}
+
+enum estadopay {
+  PAGADO
+  PENDINDE
+  VENCIDA
 }
