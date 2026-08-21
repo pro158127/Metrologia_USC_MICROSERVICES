@@ -1,14 +1,21 @@
 'use server';
 
-import { Prisma } from '@prisma/client';
-import { prisma } from '@/app/lib/data_base/prisma';
+import { auth } from '@/app/Login/types/auth';
+import { fastifyRequest, FastifyHttpError } from '@/app/lib/api/fastifyClient';
+import type { ClienteModel, OrdenTrabajoModel } from '@/tipos/entidades';
 
 // Tipo serializable plano para el cliente (Decimal -> number)
-export type FacturaModel = Omit<
-  Prisma.FacturaGetPayload<{ include: { ordenTrabajo: true; cliente: true } }>,
-  'valor'
-> & {
+export type FacturaModel = {
+  idFactura: number;
+  numero: string;
+  idOrdenTrabajo: number | null;
+  idCliente: number | null;
+  fecha: Date | string;
   valor: number;
+  estado: string;
+  observacion: string | null;
+  ordenTrabajo: (OrdenTrabajoModel & { cliente?: ClienteModel | null }) | null;
+  cliente: ClienteModel | null;
 };
 
 export type ResponseAction<T> = {
@@ -22,26 +29,16 @@ export type ResponseAction<T> = {
 // ==========================================
 export async function obtenerFacturas(): Promise<ResponseAction<FacturaModel[]>> {
   try {
-    const facturas = await prisma.factura.findMany({
-      include: {
-        ordenTrabajo: {
-          include: {
-            cliente: true,
-          },
-        },
-        cliente: true,
-      },
-      orderBy: { fecha: 'desc' },
-    });
+    const session = await auth();
+    const res = await fastifyRequest<{ ok: boolean; data: FacturaModel[] }>(
+      session,
+      '/api/v1/facturas'
+    );
 
-    const facturasSerializadas: FacturaModel[] = facturas.map((f) => ({
-      ...f,
-      valor: f.valor ? Number(f.valor) : 0,
-    }));
-
-    return { ok: true, data: facturasSerializadas };
-  } catch (error: any) {
+    return { ok: true, data: res.data };
+  } catch (error) {
     console.error('[obtenerFacturas_ERROR]:', error);
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
     return { ok: false, error: 'Error al consultar las facturas.' };
   }
 }

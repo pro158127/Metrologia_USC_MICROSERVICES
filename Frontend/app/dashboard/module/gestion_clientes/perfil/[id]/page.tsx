@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import type { Estados } from "@prisma/client";
+import type { Estados } from "@/tipos/enums";
 import type {
   FileNode,
   FileTreeNodeProps,

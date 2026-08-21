@@ -1345,7 +1345,7 @@ export const OrdenesTrabajo = () => {
 
   const instrumentos_cot:OTasiignemet[]= useMemo(()=>{
    const ot=ordenesTrabajo.find((e)=>e.idOrdenTrabajo==Number(selectedOT?.id))
-   const parse:OTasiignemet[]=ot?.instrumentos.map((e):OTasiignemet=>{
+   const parse:OTasiignemet[]=(ot?.instrumentos ?? []).map((e):OTasiignemet=>{
     return({
       asignado:e.asignado,
       id_instrumento:e.idDetalle,
@@ -1419,7 +1419,7 @@ export const OrdenesTrabajo = () => {
       razonSocialCert: clienteData?.razonSocial || "",
       nitCert: clienteData?.nitCedula || "",
       correoCertificados: otCompleta.correoCertificado || "",
-      fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion?.toLocaleDateString(),
+      fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion ? new Date(otCompleta.fechaLimiteFacturacion).toLocaleDateString() : '',
       ciudadCert: clienteData?.ciudad || "",
       correoFactura: otCompleta.correoFactura || "",
       lugarCalibracion: otCompleta.esInternoUSC

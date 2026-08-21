@@ -1,6 +1,7 @@
 'use server';
 
-import { prisma } from "@/app/lib/data_base/prisma";
+import { auth } from "@/app/Login/types/auth";
+import { fastifyRequest, FastifyHttpError } from "@/app/lib/api/fastifyClient";
 import type { SelloModel } from "@/tipos/entidades";
 
 /**
@@ -8,12 +9,15 @@ import type { SelloModel } from "@/tipos/entidades";
  */
 export async function obtenerSellos(): Promise<{ success: boolean; data?: SelloModel[]; error?: string }> {
   try {
-    const sellos = await prisma.sello.findMany({
-      orderBy: { idSello: 'asc' },
-    });
-    return { success: true, data: sellos };
+    const session = await auth();
+    const res = await fastifyRequest<{ success: boolean; data: SelloModel[] }>(
+      session,
+      '/api/v1/sellos'
+    );
+    return { success: true, data: res.data };
   } catch (error) {
     console.error('Error en obtenerSellos:', error);
+    if (error instanceof FastifyHttpError) return { success: false, error: error.message };
     return { success: false, error: 'Error interno del servidor al consultar los sellos' };
   }
 }

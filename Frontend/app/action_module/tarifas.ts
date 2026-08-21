@@ -1,21 +1,24 @@
-
 'use server';
 
-import { PrismaClient, Prisma } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { auth } from '@/app/Login/types/auth';
+import { fastifyRequest, FastifyHttpError } from '@/app/lib/api/fastifyClient';
 
 // 1. Tipo serializable plano para el cliente
-export type TarifaModel = Omit<
-  Prisma.TarifaGetPayload<{ include: { historial: true } }>,
-  'historial'
-> & {
-  historial: Array<
-    Omit<Prisma.HistorialTarifaGetPayload<{}>, 'precioU'> & {
-      precioU: number;
-    }
-  >;
-};
+export interface TarifaModel {
+  idTarifa: number;
+  magnitud: string;
+  tipoServicio: string;
+  estado: string;
+  Instrumento: string;
+  Norma: string;
+  historial: {
+    idHistorial: number;
+    idTarifa: number;
+    fechaInicio: Date | string;
+    fechaFin: Date | string | null;
+    precioU: number;
+  }[];
+}
 
 export type ResponseAction<T> = {
   ok: boolean;
@@ -23,37 +26,17 @@ export type ResponseAction<T> = {
   error?: string;
 };
 
-// Helper interno para sanitizar las instancias de Decimal
-function serializeTarifa(
-  tarifa: Prisma.TarifaGetPayload<{ include: { historial: true } }>
-): TarifaModel {
-  return {
-    ...tarifa,
-    historial: tarifa.historial.map((h) => ({
-      ...h,
-      precioU: h.precioU ? Number(h.precioU) : 0,
-    })),
-  };
-}
-
 // ==========================================
 // 1. Obtener todas las tarifas
 // ==========================================
 export async function obtenerTodasLasTarifas(): Promise<ResponseAction<TarifaModel[]>> {
+  const session = await auth();
   try {
-    const tarifas = await prisma.tarifa.findMany({
-      include: {
-        historial: {
-          orderBy: { fechaInicio: 'desc' },
-        },
-      },
-      orderBy: { idTarifa: 'desc' },
-    });
-
-    const tarifasSerializadas = tarifas.map(serializeTarifa);
-    return { ok: true, data: tarifasSerializadas };
-  } catch (error: any) {
+    const res = await fastifyRequest<ResponseAction<TarifaModel[]>>(session, '/api/v1/tarifas');
+    return res;
+  } catch (error) {
     console.error('[obtenerTodasLasTarifas_ERROR]:', error);
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
     return { ok: false, error: 'Error al consultar el catálogo de tarifas.' };
   }
 }
@@ -75,68 +58,20 @@ export interface ActualizarTarifaInput {
 export async function actulzar_tarifa(
   input: ActualizarTarifaInput
 ): Promise<ResponseAction<TarifaModel>> {
-  const { idTarifa, precioVigente, fechaInicio, fechaFin, ...camposTarifa } = input;
+  const session = await auth();
 
-  // Validar ID
-  if (!idTarifa) return { ok: false, error: 'ID de tarifa requerido.' };
+  if (!input.idTarifa) return { ok: false, error: 'ID de tarifa requerido.' };
 
   try {
-    // 1. Actualizar campos principales de la tarifa (si se proporcionan)
-    const updateData: any = {};
-    if (camposTarifa.magnitud) updateData.magnitud = camposTarifa.magnitud;
-    if (camposTarifa.tipoServicio) updateData.tipoServicio = camposTarifa.tipoServicio;
-    if (camposTarifa.instrumento) updateData.Instrumento = camposTarifa.instrumento;
-    if (camposTarifa.norma) updateData.Norma = camposTarifa.norma;
-
-    // 2. Si se envía un nuevo precio, manejar el historial (SCD2)
-    if (precioVigente !== undefined && precioVigente !== null) {
-      const ahora = new Date();
-      const nuevaFechaInicio = fechaInicio ? new Date(fechaInicio) : ahora;
-      const nuevaFechaFin = fechaFin ? new Date(fechaFin) : null;
-
-      // Usamos transacción para asegurar consistencia
-      await prisma.$transaction(async (tx) => {
-        // Cerrar el historial vigente (fechaFin = null)
-        await tx.historialTarifa.updateMany({
-          where: {
-            idTarifa: idTarifa,
-            fechaFin: null,
-          },
-          data: { fechaFin: nuevaFechaInicio }, // El registro anterior termina cuando inicia el nuevo
-        });
-
-        // Crear nuevo registro histórico
-        await tx.historialTarifa.create({
-          data: {
-            idTarifa: idTarifa,
-            precioU: new Prisma.Decimal(precioVigente),
-            fechaInicio: nuevaFechaInicio,
-            fechaFin: nuevaFechaFin,
-          },
-        });
-      });
-    }
-
-    // 3. Actualizar la tarifa (si hay campos para actualizar)
-    let tarifaActualizada;
-    if (Object.keys(updateData).length > 0) {
-      tarifaActualizada = await prisma.tarifa.update({
-        where: { idTarifa },
-        data: updateData,
-        include: { historial: { orderBy: { fechaInicio: 'desc' } } },
-      });
-    } else {
-      // Si solo se actualizó el precio, recuperamos la tarifa con historial
-      tarifaActualizada = await prisma.tarifa.findUniqueOrThrow({
-        where: { idTarifa },
-        include: { historial: { orderBy: { fechaInicio: 'desc' } } },
-      });
-    }
-
-    return { ok: true, data: serializeTarifa(tarifaActualizada) };
-  } catch (error: unknown) {
-    const err = error as Error;
-    console.error('[actulzar_tarifa_ERROR]:', err?.message || error);
+    const res = await fastifyRequest<ResponseAction<TarifaModel>>(
+      session,
+      `/api/v1/tarifas/${input.idTarifa}`,
+      { method: 'PUT', body: input }
+    );
+    return res;
+  } catch (error) {
+    console.error('[actulzar_tarifa_ERROR]:', error);
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
     return { ok: false, error: 'Error al actualizar la tarifa.' };
   }
 }
@@ -157,40 +92,17 @@ export interface CrearTarifaInput {
 export async function crearTarifa(
   input: CrearTarifaInput
 ): Promise<ResponseAction<TarifaModel>> {
+  const session = await auth();
   try {
-    const precio = Number(input.precioInicial);
-    if (isNaN(precio) || precio < 0) {
-      return { ok: false, error: 'El precio inicial debe ser un número válido.' };
-    }
-
-    const ahora = new Date();
-    const fechaInicio = input.fechaInicio ? new Date(input.fechaInicio) : ahora;
-    const fechaFin = input.fechaFin ? new Date(input.fechaFin) : null;
-
-    const nuevaTarifa = await prisma.$transaction(async (tx) => {
-      return await tx.tarifa.create({
-        data: {
-          magnitud: input.magnitud,
-          tipoServicio: input.tipoServicio,
-          Instrumento: input.instrumento,
-          Norma: input.norma || 'n/a',
-          estado: 'ACTIVO',
-          historial: {
-            create: {
-              precioU: new Prisma.Decimal(precio),
-              fechaInicio: fechaInicio,
-              fechaFin: fechaFin,
-            },
-          },
-        },
-        include: { historial: true },
-      });
-    });
-
-    return { ok: true, data: serializeTarifa(nuevaTarifa) };
-  } catch (error: unknown) {
-    const err = error as Error;
-    console.error('[crearTarifa_ERROR]:', err?.message || error);
+    const res = await fastifyRequest<ResponseAction<TarifaModel>>(
+      session,
+      '/api/v1/tarifas',
+      { method: 'POST', body: input }
+    );
+    return res;
+  } catch (error) {
+    console.error('[crearTarifa_ERROR]:', error);
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
     return { ok: false, error: 'No se pudo crear la tarifa metrológica.' };
   }
 }
@@ -208,44 +120,17 @@ export interface ActualizarPrecioTarifaInput {
 export async function actualizarPrecioTarifa(
   input: ActualizarPrecioTarifaInput
 ): Promise<ResponseAction<TarifaModel>> {
+  const session = await auth();
   try {
-    const ahora = new Date();
-    const nuevaFechaInicio = input.fechaInicio ? new Date(input.fechaInicio) : ahora;
-    const nuevaFechaFin = input.fechaFin ? new Date(input.fechaFin) : null;
-
-    const tarifaActualizada = await prisma.$transaction(async (tx) => {
-      // Cerrar el vigente
-      await tx.historialTarifa.updateMany({
-        where: {
-          idTarifa: input.idTarifa,
-          fechaFin: null,
-        },
-        data: { fechaFin: nuevaFechaInicio },
-      });
-
-      // Crear nuevo
-      await tx.historialTarifa.create({
-        data: {
-          idTarifa: input.idTarifa,
-          precioU: new Prisma.Decimal(input.nuevoPrecio),
-          fechaInicio: nuevaFechaInicio,
-          fechaFin: nuevaFechaFin,
-        },
-      });
-
-      return await tx.tarifa.findUniqueOrThrow({
-        where: { idTarifa: input.idTarifa },
-        include: {
-          historial: {
-            orderBy: { fechaInicio: 'desc' },
-          },
-        },
-      });
-    });
-
-    return { ok: true, data: serializeTarifa(tarifaActualizada) };
-  } catch (error: any) {
+    const res = await fastifyRequest<ResponseAction<TarifaModel>>(
+      session,
+      `/api/v1/tarifas/${input.idTarifa}/precio`,
+      { method: 'PUT', body: input }
+    );
+    return res;
+  } catch (error) {
     console.error('[actualizarPrecioTarifa_ERROR]:', error);
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
     return { ok: false, error: 'Error al actualizar el precio de la tarifa.' };
   }
 }
@@ -257,20 +142,17 @@ export async function cambiarEstadoTarifa(
   idTarifa: number,
   nuevoEstado: 'ACTIVO' | 'INACTIVO'
 ): Promise<ResponseAction<TarifaModel>> {
+  const session = await auth();
   try {
-    const tarifa = await prisma.tarifa.update({
-      where: { idTarifa },
-      data: { estado: nuevoEstado },
-      include: {
-        historial: {
-          orderBy: { fechaInicio: 'desc' },
-        },
-      },
-    });
-
-    return { ok: true, data: serializeTarifa(tarifa) };
-  } catch (error: any) {
+    const res = await fastifyRequest<ResponseAction<TarifaModel>>(
+      session,
+      `/api/v1/tarifas/${idTarifa}/estado`,
+      { method: 'PATCH', body: { nuevoEstado } }
+    );
+    return res;
+  } catch (error) {
     console.error('[cambiarEstadoTarifa_ERROR]:', error);
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
     return { ok: false, error: 'Error al cambiar el estado de la tarifa.' };
   }
 }

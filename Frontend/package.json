@@ -7,13 +7,11 @@
     "build": "next build",
     "start": "next start",
     "dev:server": "ts-node --project tsconfig.server.json server.ts",
-    "lint": "eslint",
-    "studio": "prisma studio --browser none"
+    "lint": "eslint"
   },
   "dependencies": {
     "@fortune-sheet/core": "^1.0.4",
     "@fortune-sheet/react": "^1.0.4",
-    "@prisma/client": "6.4.1",
     "@types/bcryptjs": "^3.0.0",
     "@univerjs/preset-sheets-core": "^0.25.1",
     "@univerjs/presets": "^0.25.1",
@@ -54,7 +52,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "jose": "^6.2.4",
-    "prisma": "6.4.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

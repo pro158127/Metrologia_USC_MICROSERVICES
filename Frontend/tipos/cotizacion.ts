@@ -4,20 +4,14 @@
 // Los tipos de entidad provienen de ./entidades (Prisma-derived).
 // ============================================================
 
-import type { Prisma } from '@prisma/client';
-import { Estados } from '@prisma/client';
-import type { HistorialEstadoCotizacionModel } from './entidades';
+import { Estados } from './enums';
+import type { HistorialEstadoCotizacionModel, CotizacionModel } from './entidades';
 
 // ============================================================
 // SERVER ACTIONS (inputs / payloads)
 // ============================================================
 
-export type CotizacionConDetalles = Prisma.CotizacionGetPayload<{
-  include: {
-    cliente: true;
-    detalles: true;
-  };
-}>;
+export type CotizacionConDetalles = CotizacionModel;
 
 export interface DetalleInput {
   equipoDescripcion: string;
@@ -122,8 +116,8 @@ export type CotizacionVista = {
   idCliente: number | null;
   montoTotal: number;
   estado: Estados;
-  createdAt: Date;
-  updatedAt: Date | null;
+  createdAt: Date | string;
+  updatedAt: Date | string | null;
   viaticos: number;
   descuento: number;
   detalles: CotizacionDetalleVista[];

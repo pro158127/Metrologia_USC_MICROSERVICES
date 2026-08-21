@@ -1,54 +1,35 @@
 // app/actions/ordenes.actions.ts
 'use server';
 
-import prisma from '@/app/lib/data_base/prisma';
+import { auth } from '@/app/Login/types/auth';
+import { fastifyRequest } from '@/app/lib/api/fastifyClient';
+import type {
+  OrdenTrabajoModel,
+  ClienteModel,
+  UsuarioModel,
+  RolesModel,
+  TarifaModel,
+  DocumentoModel,
+} from '@/tipos/entidades';
 
-export async function obtenerDatosIniciales() {
+type UsuarioConRolModel = UsuarioModel & { rol: RolesModel };
+
+export interface DatosInicialesOrdenes {
+  ordenes: OrdenTrabajoModel[];
+  clientes: ClienteModel[];
+  usuarios: UsuarioConRolModel[];
+  roles: RolesModel[];
+  tarifas: TarifaModel[];
+  version: DocumentoModel[];
+}
+
+export async function obtenerDatosIniciales(): Promise<DatosInicialesOrdenes> {
   try {
-    const [ordenes, clientes, usuarios, roles, tarifas, version] = await Promise.all([
-      prisma.ordenTrabajo.findMany({
-        include: {
-          cliente: true,
-          cotizacion: { include: { cliente: true } },
-          instrumentos: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-
-      prisma.cliente.findMany(),
-
-      prisma.usuario.findMany({
-        omit: {
-          contraseña: true,
-        },
-        include: { rol: true },
-        where: { elminado: false },
-      }),
-
-      // Asegúrate de usar la propiedad exacta generada por Prisma Client (Roles)
-      prisma.roles.findMany(),
-
-      prisma.tarifa.findMany({
-        include: {
-          historial: true,
-        },
-      }),
-
-     prisma.documento.findMany({
-        include: {
-          versiones: true,
-        },
-      }),
-    ]);
-
-    return {
-      ordenes,
-      clientes,
-      usuarios,
-      roles,
-      tarifas,
-      version,
-    };
+    const session = await auth();
+    return await fastifyRequest<DatosInicialesOrdenes>(
+      session,
+      '/api/v1/ordenes/datos-iniciales'
+    );
   } catch (error) {
     console.error('Error cargando datos iniciales:', error);
     // Devuelve arreglos vacíos explícitos en lugar de undefined o lanzar throw

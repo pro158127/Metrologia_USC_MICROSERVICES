@@ -93,7 +93,7 @@ services:
       NEXT_PUBLIC_API_URL: "http://localhost:3001"
       NEXT_PUBLIC_SOCKET_URL: "http://192.168.1.11:3001"
       NEXT_PUBLIC_MINIO_URL: "http://localhost:9000"
-    command: sh -c "pnpm exec prisma generate && pnpm dev"
+    command: sh -c "pnpm exec pnpm dev"
     volumes:
       - ./Frontend:/app                     # 👈 Mapea SOLO la carpeta ./Backend dentro de /app
       - /app/node_modules

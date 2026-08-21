@@ -2,6 +2,13 @@
 packages:
   - '.'
 
+allowBuilds:
+  '@prisma/client': set this to true or false
+  '@prisma/engines': set this to true or false
+  argon2: set this to true or false
+  esbuild: set this to true or false
+  prisma: set this to true or false
+
 # Lista blanca oficial de pnpm v10+ para compilar binarios C++/Rust nativos
 onlyBuiltDependencies:
   - '@prisma/client'

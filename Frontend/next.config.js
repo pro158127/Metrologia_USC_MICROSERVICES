@@ -1,21 +1,20 @@
 // next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // En Next.js 15+/16 la propiedad oficial para orígenes permitidos en dev:
-  allowedDevOrigins: ['172.19.0.6'],
+  // En Next.js 16 se declaran los orígenes válidos (IPs locales y del contenedor)
+  allowedDevOrigins: [
+    '192.168.1.3',
+    'localhost:3000',
+    '127.0.0.1',
+    '172.18.0.6',
+    '172.18.0.*', // Comodín para toda la subred de Docker
+  ],
 
-  // Proxy: redirige /api/* al contenedor del backend, EXCEPTO /api/auth/*
   async rewrites() {
     return [
-      // 1. PRIMERO: La regla para /api/auth (NO redirige)
-      // Esta tiene prioridad por el orden
       {
-        source: '/api/auth/:path*',
-        destination: '/api/auth/:path*', // Se mantiene local
-      },
-      // 2. DESPUÉS: Todas las demás rutas /api/* van al backend
-      {
-        source: '/api/:path*',
+        // Redirige todo /api/* EXCEPTO /api/auth/* usando Negative Lookahead
+        source: '/api/:path((?!auth).*)*',
         destination: 'http://backend:3001/api/:path*',
       },
     ];

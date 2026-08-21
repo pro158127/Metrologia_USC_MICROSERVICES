@@ -11,7 +11,7 @@ import {
   actualizarCotizacion,
   cambiarEstadoCotizacion,
 } from "@/app/action_module/cotizacion";
-import { Estados } from "@prisma/client";
+import { Estados } from "@/tipos/enums";
 import type { ClienteModel, CotizacionModel, HistorialEstadoCotizacionModel } from "@/tipos/entidades";
 import type {
   QuoteItem,
