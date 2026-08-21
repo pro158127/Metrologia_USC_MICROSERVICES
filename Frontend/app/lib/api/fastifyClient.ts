@@ -1,6 +1,7 @@
 import { generarTokenBackend } from '@/app/lib/auth-token';
 
-export const BASE_URL = 'http://metrologia_backend:3001';
+// Usa variable de entorno con fallback para compatibilidad en Docker / Local
+export const BASE_URL =  'http://metrologia_backend:3001';
 
 export interface FastifyRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -45,12 +46,19 @@ export async function fastifyRequest<T = unknown>(
     },
   });
 
+  // 1. Construir headers base
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  };
+
+  // 2. SOLUCIÓN AL HTTP 400: Asignar Content-Type SOLO si se envía un body
+  if (opts.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const res = await fetch(`${BASE_URL}${path}`, {
     method: opts.method ?? 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers,
     ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
   });
 

@@ -163,12 +163,19 @@ export async function eliminarUsuario(datos: DatosEliminarUsuario): Promise<{ su
     if (session.user.id_user && Number(session.user.id_user) === datos.idUsuario) {
       return { success: false, error: "No puedes eliminar tu propia cuenta de usuario." };
     }
+    
+    if (!datos?.idUsuario) {
+      console.error("El idUsuario está indefinido:", datos);
+      return  { success: false, error: "No  hay usuario ." } ;
+      }
+    
 
     const res = await fastifyRequest<{ success: boolean; message?: string }>(
       session,
       `/api/v1/usuarios/${datos.idUsuario}`,
       { method: 'DELETE' }
     );
+    
     return res;
   } catch (error) {
     console.error("Error al eliminar usuario:", error);

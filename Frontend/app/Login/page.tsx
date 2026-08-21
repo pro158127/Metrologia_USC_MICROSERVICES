@@ -76,13 +76,13 @@ function LoginContent({ onLogin }: LoginProps) {
         style={{ background: "linear-gradient(160deg, #0f172a 0%, #111827 46%, #1e293b 100%)" }}
       >
         <div className="relative z-10 max-w-md text-center">
-          <div className="relative mx-auto mb-8 inline-flex h-20 w-20 items-center justify-center rounded-[28px] border border-white/12 bg-white/5 backdrop-blur-xl">
-            <Ruler size={36} color="#A5B4FC" />
-          </div>
-          <div className="mb-4">
-            <h1 className="text-4xl font-semibold tracking-tight text-white">MetroSoft</h1>
-            <p className="mt-2 text-sm uppercase tracking-[0.35em] text-slate-300">USC</p>
-          </div>
+          <div className="relative mx-auto mb-8 flex justify-center items-center">
+  <img 
+    src="/logo.png" 
+    alt="logo"
+    className="h-28 w-auto object-contain drop-shadow-[0_0_25px_rgba(99,102,241,0.7)] group-hover:scale-105 group-hover:drop-shadow-[0_0_35px_rgba(56,189,248,1)] transition-all duration-300"
+  />
+</div>
           <p className="mx-auto max-w-xs text-sm leading-7 text-slate-300">
             Plataforma de control y trazabilidad para el Laboratorio de Metrología.
           </p>

@@ -107,7 +107,7 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
         correo: rawData.CORREO_INSTITUCION ?? rawData.correo ?? "",
         estado: Boolean(rawData.ESTADO ?? rawData.estado),
         intentos: Number(rawData.INTENTOS ?? rawData.intentos ?? 0),
-        eleminado: Boolean(rawData.elminado ?? rawData.ELIMINADO ?? false),
+        elminado: Boolean(rawData.elminado ?? rawData.ELIMINADO ?? false),
         updatedAt: rawData.UPDATE_AT ?? rawData.updatedAt
           ? new Date(rawData.UPDATE_AT ?? rawData.updatedAt)
           : null,

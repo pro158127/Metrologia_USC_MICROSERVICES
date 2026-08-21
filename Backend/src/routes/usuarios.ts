@@ -223,6 +223,7 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
     { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       try {
+        console.log("ENTRO A L ARUTA")
         const idUsuario = Number(request.params.id);
         const userId = Number((request.user as any)?.sub ?? 0);
         if (userId === idUsuario) {

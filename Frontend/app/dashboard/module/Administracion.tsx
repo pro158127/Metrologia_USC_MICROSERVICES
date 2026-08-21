@@ -2,8 +2,8 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
-import { Plus, Shield, X, Check, Search, FileSpreadsheet } from "lucide-react";
+import { useEffect, useState, useCallback, useMemo, useEffectEvent } from "react";
+import { Plus, Shield, X, Check, Search, FileSpreadsheet, User } from "lucide-react";
 
 import { actualizarUsuarioGenerico, crearUsuarioGenerico, restablecerContrasenaGenerico, obtenerBitacoraPorPermiso, eliminarUsuario, restaurarUsuario } from "@/app/action_module/administration";
 
@@ -192,11 +192,15 @@ const [showDeleted, setShowDeleted] = useState(false);
 const [loadingrestaurar,setRestaurar]=useState<number | null>(null);
 const [elemianarloading,setEleminar]=useState<number | null>(null);
 const activeUsers = useMemo(() => filteredUsers.filter((u) => !u.elminado), [filteredUsers]);
-const deletedUsers = useMemo(() => filteredUsers.filter((u) => u.elminado), [filteredUsers]);
 
+const deletedUsers = useMemo(() =>{
+  console.log(...filteredUsers," mir  fsdfdsdffdsfsd  fdsfsfdsf DSFSDFDSFSDa")
+  return( [...filteredUsers].filter((u) => u.elminado==true))
+}, [filteredUsers]);
 
+const userdelted=[...deletedUsers]
 
-console.log(filteredUsers)
+console.log(userdelted,"esto es  ")
   return (
     <div className="w-full px-2 md:px-0">
       {/* Barra de herramientas superior (Responsiva: Apilada en móvil, en línea en md) */}
@@ -633,7 +637,13 @@ console.log(filteredUsers)
         onClick={async()=>{
           setEleminar(u.idUsuario)
           try{
-         const a=await eliminarUsuario({idUsuario:u.idUsuario})}
+         const a=await eliminarUsuario({idUsuario:u.idUsuario})
+        console.log(a,"jjsdoosd")
+        
+        }
+         
+
+
           catch(error){
            showToast("Algo sucedio ,contacta al administrador")
           }
@@ -775,7 +785,7 @@ console.log(filteredUsers)
 </tr>
 
 {showDeleted &&
-deletedUsers.map((u) => (
+[...deletedUsers].map((u) => (
 
 <tr
     key={u.idUsuario}
@@ -965,6 +975,11 @@ const [exportando, setExportando] = useState(false);
   }, [filtros.fecha]);
 
   // 4. CÁLCULO DERIVADO (Sin useEffect ni setInforamtion extra)
+  useEffect(()=>{
+    recarga()
+    console.log("entro")
+
+  },[])
   const filterinFormation = useMemo(
     () =>
       (info_bitacora || []).filter((item) => {
@@ -1193,6 +1208,7 @@ const [exportando, setExportando] = useState(false);
     setestaRecargando(true);
     try {
       await recarga();
+
     } finally {
       setestaRecargando(false);
     }
@@ -1521,6 +1537,7 @@ import { useSession } from "next-auth/react";
 import { generarTokenBackend } from "@/app/lib/auth-token";
 // 🔄 Reemplazar useDbRealtime por los nuevos hooks
 import { UsuarioModel, useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { warn } from "console";
 
 // ==========================================
 // COMPONENTE PRINCIPAL
@@ -1591,10 +1608,21 @@ export function Administracion() {
   }, [session]);
 
   // 4. Carga de Bitácora memorizada sin loops
-  const cargarBitacoraRealtime = useCallback(async () => {
-    if (!tab_permission.bitacora) return;
+
+
+
+  // 5. Indexación de Roles O(1) + Asignación de Nombres O(N)
+  const rolesMap = useMemo(() => {
+    const map = new Map<number, string>();
+    roles?.forEach((r) => map.set(Number(r.idRol), r.nombreRol));
+    return map;
+  }, [roles]);
+    const cargarBitacoraRealtime = useCallback(async () => {
+    console.warn("entrooo213")
+    if (tab!="bitacora") return;
     try {
       const resultado = (await obtenerBitacoraPorPermiso()) || [];
+      console.log(resultado,"HOLALASLDSLADASL")
       if (resultado?.success && resultado.data) {
         const bitacorasFormateadas: init_bitacora[] = resultado.data.map((u) => ({
           fecha: u.fecha
@@ -1616,15 +1644,7 @@ export function Administracion() {
     } catch (error) {
       console.error("Error al cargar bitácora:", error);
     }
-  }, [tab_permission.bitacora]);
-
-
-  // 5. Indexación de Roles O(1) + Asignación de Nombres O(N)
-  const rolesMap = useMemo(() => {
-    const map = new Map<number, string>();
-    roles?.forEach((r) => map.set(Number(r.idRol), r.nombreRol));
-    return map;
-  }, [roles]);
+  }, [tab]);
 
   const rolColors = useMemo<RolColorMap>(() => {
     const mapa: RolColorMap = {};
@@ -1636,7 +1656,7 @@ export function Administracion() {
 
   const usuario_final = useMemo(() => {
     if (!usuarios?.length) return [];
-    return usuarios.map((u): UsuarioModel & uso_rol => ({
+    return [...usuarios].map((u): UsuarioModel & uso_rol => ({
       ...u,
       rolnombre: rolesMap.get(Number(u.idRol)) ?? "Sin Rol Asignado",
     }));
