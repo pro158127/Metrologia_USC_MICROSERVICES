@@ -5,26 +5,9 @@
   "description": "Contrato de entrada para la plantilla de Cotización de Servicios de Calibración (R-CM003 Versión 9)",
   "fields": {
     "scalars": [
-      {
-        "key": "codigo_formato",
-        "label": "Código del Formato",
-        "dataType": "STRING",
-        "required": true,
-        "defaultValue": "R-CM003"
-      },
-      {
-        "key": "version_formato",
-        "label": "Versión del Formato",
-        "dataType": "STRING",
-        "required": true,
-        "defaultValue": "9"
-      },
-      {
-        "key": "fecha_vigencia_formato",
-        "label": "Fecha de Vigencia del Formato",
-        "dataType": "DATE",
-        "required": true
-      },
+   
+
+
       {
         "key": "no_cotizacion",
         "label": "No. Cotización",
@@ -90,26 +73,10 @@
         "label": "Monto Total",
         "dataType": "FLOAT",
         "required": true
-      },
-      {
-        "key": "nota_acreditacion_obs1",
-        "label": "Nota de Acreditación (Acreditado_Obs1)",
-        "dataType": "STRING",
-        "required": false
-      },
-      {
-        "key": "metodo_pago",
-        "label": "Método de Pago",
-        "dataType": "STRING",
-        "required": true
-      },
-      {
-        "key": "dias_validez_oferta",
-        "label": "Días de Validez de la Oferta",
-        "dataType": "INTEGER",
-        "required": true,
-        "defaultValue": 30
       }
+
+      
+  
     ],
     "tables": [
       {

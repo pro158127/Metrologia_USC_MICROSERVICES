@@ -449,6 +449,8 @@ model VersionPlantilla {
   idPlantilla        Int        @map("ID_PLANTILLA_FK")
   version            Int        @default(1) @map("VERSION")
   mapeoExcelJson     Json?      @map("MAPEO_EXCEL_JSON")
+  inputSchema        Json?      @map("INPUT_SCHEMA")
+  mappingConfig      Json?      @map("MAPPING_CONFIG")
   idUsuarioCreador   Int        @map("ID_USUARIO_CREADOR_FK")
   createdAt          DateTime   @default(now()) @map("CREATED_AT")
   iddocumentos       Int?       @map("ID_DOCUMENTOS_FK")
@@ -502,6 +504,19 @@ model CertificadoSello {
 
   @@id([idCertificado, idSello])
   @@map("certificado_sellos")
+}
+
+model PlantillaSello {
+  idPlantillaSello Int      @id @default(autoincrement()) @map("ID_PLANTILLA_SELLO")
+  nombre           String   @map("NOMBRE")
+  descripcion      String?  @map("DESCRIPCION")
+  templatePdfKey   String?  @map("TEMPLATE_PDF_KEY")
+  documentArea     Json?    @map("DOCUMENT_AREA")
+  watermarkAreas   Json?    @map("WATERMARK_AREAS")
+  createdAt        DateTime @default(now()) @map("CREATED_AT")
+  updatedAt        DateTime @updatedAt @map("UPDATED_AT")
+
+  @@map("plantillas_sellos")
 }
 
 enum FrecuenciaEjecucion {

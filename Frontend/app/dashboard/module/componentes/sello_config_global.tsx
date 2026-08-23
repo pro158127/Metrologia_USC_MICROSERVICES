@@ -1,74 +1,76 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useMemo, MouseEvent } from 'react';
-import { 
-  X, 
-  Upload, 
-  Eye, 
-  Maximize2, 
-  Sparkles, 
-  FileText, 
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  X,
+  Upload,
+  Eye,
+  Maximize2,
+  Sparkles,
+  FileText,
   CheckCircle2,
   Sliders,
   Plus,
   Edit3,
   Trash2,
   Layers,
-  Award
+  Award,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
 import type { SealConfig, BoundingBox, WatermarkArea, SelloConfigModalProps } from '@/tipos/sellos';
-import type { SelloModel } from '@/tipos/entidades';
-import { useDbTable, useDbActions } from '@/app/componets/tables_recharge';
+import {
+  obtenerPlantillasSellos,
+  crearPlantillaSello,
+  actualizarPlantillaSello,
+  eliminarPlantillaSello,
+} from '@/app/action_module/sellos';
 
 // ============================================================================
 // 2. COMPONENTE PADRE: GESTOR Y GALERÍA DE SELLOS
 // ============================================================================
 
 function SelloManagementDashboard() {
-  const sellosStore = useDbTable('sellos');
-  const { loadTable } = useDbActions();
-
-  // Estado local que sincroniza los registros de la Base de Datos
+  // Estado local vinculado a la API (sin sincronizadoRef / doble source of truth).
   const [seals, setSeals] = useState<SealConfig[]>([]);
-  const sincronizadoRef = useRef(false);
-
-  // Mapeo de SelloModel → SealConfig
-  const sellosMapeados = useMemo<SealConfig[]>(
-    () =>
-      sellosStore.map((s) => ({
-        id: String(s.idSello),
-        nombre: s.nombre,
-        templatePdfUrl: null,
-        documentArea: null,
-        watermarkAreas: [],
-      })),
-    [sellosStore]
-  );
-
-  // Cargar sellos desde el store
-  useEffect(() => {
-    loadTable('sellos');
-  }, [loadTable]);
-
-  // Inicializar el estado local una sola vez cuando el store tenga datos
-  useEffect(() => {
-    if (sincronizadoRef.current) return;
-    if (sellosMapeados.length > 0) {
-      setSeals(sellosMapeados);
-      sincronizadoRef.current = true;
-    }
-  }, [sellosMapeados]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Estado para controlar qué sello se está editando en el modal (null = cerrado)
   const [editingSeal, setEditingSeal] = useState<SealConfig | null>(null);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 
+  const applySellosResult = useCallback((res: Awaited<ReturnType<typeof obtenerPlantillasSellos>>) => {
+    if (res.success && res.data) {
+      setSeals(res.data);
+    } else {
+      setError(res.error ?? 'Error al cargar los sellos');
+    }
+    setLoading(false);
+  }, []);
+
+  const fetchSellos = useCallback(async () => {
+    applySellosResult(await obtenerPlantillasSellos());
+  }, [applySellosResult]);
+
+  useEffect(() => {
+    let active = true;
+    obtenerPlantillasSellos().then((res) => {
+      if (!active) return;
+      applySellosResult(res);
+    });
+    return () => {
+      active = false;
+    };
+  }, [applySellosResult]);
+
   // Abrir modal para CREAR un nuevo sello
   const handleCreateNew = () => {
     setEditingSeal({
-      id: `sello_${Date.now()}`,
+      id: -Date.now(),
       nombre: 'Nueva Plantilla de Sello',
       descripcion: 'Descripción del área de sellado',
+      templatePdfKey: null,
       templatePdfUrl: null,
       documentArea: null,
       watermarkAreas: [],
@@ -82,34 +84,31 @@ function SelloManagementDashboard() {
     setIsModalOpen(true);
   };
 
-  // Eliminar un sello del catálogo
-  const handleDelete = (id: string) => {
-    if (confirm('¿Estás seguro de eliminar este sello de la base de datos?')) {
-      setSeals((prev) => prev.filter((s) => s.id !== id));
+  // Eliminar un sello del catálogo (llamada real a la API)
+  const handleDelete = async (id: number) => {
+    if (!confirm('¿Estás seguro de eliminar este sello de la base de datos?')) return;
+    const res = await eliminarPlantillaSello(id);
+    if (res.success) {
+      fetchSellos();
+    } else {
+      alert(res.error ?? 'Error al eliminar el sello');
     }
   };
 
-  // Guardar/Actualizar la configuración procesada por el Modal
-  const handleSaveSeal = (updatedConfig: SealConfig) => {
-    setSeals((prev) => {
-      const exists = prev.some((s) => s.id === updatedConfig.id);
-      if (exists) {
-        return prev.map((s) =>
-          s.id === updatedConfig.id
-            ? { ...updatedConfig, updatedAt: new Date().toISOString().split('T')[0] }
-            : s
-        );
-      }
-      return [
-        ...prev,
-        { ...updatedConfig, updatedAt: new Date().toISOString().split('T')[0] },
-      ];
-    });
+  // Guardar/Actualizar la configuración procesada por el Modal (llamada real a la API)
+  const handleSaveSeal = async (updatedConfig: SealConfig, templateFile?: File | null) => {
+    const res =
+      updatedConfig.id < 0
+        ? await crearPlantillaSello(updatedConfig, templateFile ?? undefined)
+        : await actualizarPlantillaSello(updatedConfig.id, updatedConfig, templateFile ?? undefined);
 
-    loadTable('sellos');
-
-    setIsModalOpen(false);
-    setEditingSeal(null);
+    if (res.success) {
+      await fetchSellos();
+      setIsModalOpen(false);
+      setEditingSeal(null);
+    } else {
+      alert(res.error ?? 'Error al guardar la configuración');
+    }
   };
 
   return (
@@ -135,8 +134,28 @@ function SelloManagementDashboard() {
           </button>
         </div>
 
-        {/* Grid de Sellos Guardados */}
-        {seals.length === 0 ? (
+        {/* Estados de carga / error / vacío / grid */}
+        {loading ? (
+          <div className="bg-white border border-slate-200 rounded-xl p-12 flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-10 h-10 text-slate-300 animate-spin" />
+            <p className="text-sm font-semibold text-slate-600">Cargando sellos...</p>
+          </div>
+        ) : error ? (
+          <div className="bg-white border border-red-200 rounded-xl p-12 flex flex-col items-center justify-center gap-3">
+            <AlertTriangle className="w-10 h-10 text-red-400" />
+            <p className="text-sm font-semibold text-red-700">{error}</p>
+            <button
+              onClick={() => {
+                setLoading(true);
+                setError(null);
+                void fetchSellos();
+              }}
+              className="mt-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded-lg"
+            >
+              Reintentar
+            </button>
+          </div>
+        ) : seals.length === 0 ? (
           <div className="bg-white border-2 border-dashed border-slate-300 rounded-xl p-12 text-center flex flex-col items-center justify-center gap-3">
             <Layers className="w-12 h-12 text-slate-300" />
             <p className="text-sm font-semibold text-slate-700">No hay sellos ni plantillas configuradas</p>
@@ -158,14 +177,13 @@ function SelloManagementDashboard() {
                 {/* Visualizador Miniatura de Coordenadas Bounding Box */}
                 <div className="h-48 bg-slate-800 relative flex items-center justify-center overflow-hidden border-b border-slate-200">
                   {seal.templatePdfUrl ? (
-                    <div
-                      className="w-full h-full relative"
-                      style={{
-                        backgroundImage: `url(${seal.templatePdfUrl})`,
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center',
-                      }}
-                    >
+                    <div className="w-full h-full relative">
+                      <iframe
+                        src={seal.templatePdfUrl}
+                        title={seal.nombre}
+                        loading="lazy"
+                        className="absolute inset-0 w-full h-full border-none pointer-events-none"
+                      />
                       {/* Render de BoundingBox: Document Area */}
                       {seal.documentArea && (
                         <div
@@ -216,8 +234,8 @@ function SelloManagementDashboard() {
 
                     <div className="mt-3 flex items-center gap-2 flex-wrap">
                       <span className={`text-[10px] px-2 py-0.5 rounded font-bold border ${
-                        seal.documentArea 
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                        seal.documentArea
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : 'bg-amber-50 text-amber-700 border-amber-200'
                       }`}>
                         {seal.documentArea ? 'Área Documento OK' : 'Sin Área Mapeada'}
@@ -278,7 +296,7 @@ function SelloManagementDashboard() {
 
 export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModalProps) {
   const [activeTab, setActiveTab] = useState<'MAPPER' | 'PREVIEW'>('MAPPER');
-  
+
   // Estado local para la edición activa
   const [config, setConfig] = useState<SealConfig>(sealData);
 
@@ -288,73 +306,113 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
 
   // Estados para simulación de arrastre/dibujo
   const [isDrawing, setIsDrawing] = useState(false);
-  const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null);
   const [currentBox, setCurrentBox] = useState<BoundingBox | null>(null);
 
-  // Documento cliente de prueba
+  // Documento cliente de prueba (preview)
   const [sampleDocUrl, setSampleDocUrl] = useState<string | null>(null);
+  // Archivo de plantilla seleccionado para enviar al backend en el guardado
+  const [templateFile, setTemplateFile] = useState<File | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Refs espejo para los listeners globales de arrastre (sin closures obsoletos)
+  const isDrawingRef = useRef(false);
+  const startPosRef = useRef<{ x: number; y: number } | null>(null);
+  const currentBoxRef = useRef<BoundingBox | null>(null);
+  const drawModeRef = useRef<'DOC_AREA' | 'WATERMARK'>('DOC_AREA');
+  const configRef = useRef<SealConfig>(sealData);
+  // Registro de URLs blob para revocarlas al reemplazar/desmontar (evita memory leaks)
+  const blobUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
+  useEffect(() => {
+    drawModeRef.current = drawMode;
+  }, [drawMode]);
+
+  useEffect(() => {
+    currentBoxRef.current = currentBox;
+  }, [currentBox]);
+
+  const createBlobUrl = useCallback((file: File): string => {
+    const url = URL.createObjectURL(file);
+    blobUrlsRef.current.push(url);
+    return url;
+  }, []);
+
+  const revokeBlobUrl = useCallback((url: string | null | undefined) => {
+    if (!url || !url.startsWith('blob:')) return;
+    URL.revokeObjectURL(url);
+    blobUrlsRef.current = blobUrlsRef.current.filter((u) => u !== url);
+  }, []);
 
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setConfig((prev) => ({ ...prev, templatePdfUrl: url }));
-    }
+    if (!file) return;
+    setTemplateFile(file);
+    revokeBlobUrl(config.templatePdfUrl);
+    const url = createBlobUrl(file);
+    setConfig((prev) => ({ ...prev, templatePdfUrl: url }));
   };
 
   const handleSampleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setSampleDocUrl(url);
-    }
+    if (!file) return;
+    revokeBlobUrl(sampleDocUrl);
+    const url = createBlobUrl(file);
+    setSampleDocUrl(url);
   };
 
-  const getCanvasCoordinates = (e: MouseEvent<HTMLDivElement>) => {
-    if (!canvasRef.current) return { x: 0, y: 0 };
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
-    return { x, y };
-  };
+  const getCanvasCoordinates = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100)),
+      y: Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100)),
+    };
+  }, []);
 
-  const handleMouseDown = (e: MouseEvent<HTMLDivElement>) => {
-    if (!config.templatePdfUrl) return;
-    const coords = getCanvasCoordinates(e);
-    setStartPos(coords);
-    setIsDrawing(true);
-    setCurrentBox({ x: coords.x, y: coords.y, width: 0, height: 0 });
-  };
+  // Listeners GLOBALES de arrastre: no se pierde el trazo si el ratón sale del canvas
+  const onMouseMove = useCallback(
+    (e: globalThis.MouseEvent) => {
+      if (!isDrawingRef.current || !startPosRef.current) return;
+      const coords = getCanvasCoordinates(e.clientX, e.clientY);
+      if (!coords) return;
+      const start = startPosRef.current;
+      const box: BoundingBox = {
+        x: Math.min(start.x, coords.x),
+        y: Math.min(start.y, coords.y),
+        width: Math.abs(coords.x - start.x),
+        height: Math.abs(coords.y - start.y),
+      };
+      currentBoxRef.current = box;
+      setCurrentBox(box);
+    },
+    [getCanvasCoordinates]
+  );
 
-  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
-    if (!isDrawing || !startPos) return;
-    const coords = getCanvasCoordinates(e);
-    
-    const x = Math.min(startPos.x, coords.x);
-    const y = Math.min(startPos.y, coords.y);
-    const width = Math.abs(coords.x - startPos.x);
-    const height = Math.abs(coords.y - startPos.y);
+  const onMouseUp = useCallback(() => {
+    if (!isDrawingRef.current) return;
+    isDrawingRef.current = false;
 
-    setCurrentBox({ x, y, width, height });
-  };
-
-  const handleMouseUp = () => {
-    if (!isDrawing || !currentBox) return;
+    const box = currentBoxRef.current;
+    startPosRef.current = null;
+    currentBoxRef.current = null;
+    setCurrentBox(null);
     setIsDrawing(false);
 
-    if (currentBox.width < 2 || currentBox.height < 2) {
-      setCurrentBox(null);
-      return;
-    }
+    if (!box || box.width < 2 || box.height < 2) return;
 
-    if (drawMode === 'DOC_AREA') {
-      setConfig((prev) => ({ ...prev, documentArea: currentBox }));
+    const mode = drawModeRef.current;
+    if (mode === 'DOC_AREA') {
+      setConfig((prev) => ({ ...prev, documentArea: box }));
     } else {
       const newWatermark: WatermarkArea = {
         id: `wm_${Date.now()}`,
-        label: `Sello ${config.watermarkAreas.length + 1}`,
-        box: currentBox,
+        label: `Sello ${configRef.current.watermarkAreas.length + 1}`,
+        box,
         opacity: 0.8,
       };
       setConfig((prev) => ({
@@ -363,10 +421,40 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
       }));
       setSelectedWatermarkId(newWatermark.id);
     }
+  }, []);
 
-    setCurrentBox(null);
-    setStartPos(null);
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!config.templatePdfUrl) return;
+    const coords = getCanvasCoordinates(e.clientX, e.clientY);
+    if (!coords) return;
+
+    startPosRef.current = coords;
+    isDrawingRef.current = true;
+    setIsDrawing(true);
+    const box: BoundingBox = { x: coords.x, y: coords.y, width: 0, height: 0 };
+    currentBoxRef.current = box;
+    setCurrentBox(box);
   };
+
+  // Adjunta listeners globales de arrastre mientras isDrawing esté activo;
+  // se limpian automáticamente al soltar (mouseup) o al desmontar.
+  useEffect(() => {
+    if (!isDrawing) return;
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isDrawing, onMouseMove, onMouseUp]);
+
+  // Limpieza al desmontar: URLs blob (evita memory leaks)
+  useEffect(() => {
+    return () => {
+      blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      blobUrlsRef.current = [];
+    };
+  }, []);
 
   const handleOpacityChange = (id: string, newOpacity: number) => {
     setConfig((prev) => ({
@@ -396,7 +484,10 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
               Configurador de Plantilla y Bounding Boxes
             </h2>
             <p className="text-[11px] text-slate-500">
-              Identificador: <span className="font-mono text-slate-700">{config.id}</span>
+              Identificador:{' '}
+              <span className="font-mono text-slate-700">
+                {config.id < 0 ? 'Nuevo (sin guardar)' : config.id}
+              </span>
             </p>
           </div>
 
@@ -436,15 +527,13 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
                   <div
                     ref={canvasRef}
                     onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
                     className="relative w-[500px] h-[700px] bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
-                    style={{
-                      backgroundImage: `url(${config.templatePdfUrl})`,
-                      backgroundSize: 'cover',
-                      backgroundPosition: 'center',
-                    }}
                   >
+                    <iframe
+                      src={config.templatePdfUrl}
+                      title="Plantilla base"
+                      className="absolute inset-0 w-full h-full border-none pointer-events-none"
+                    />
                     {/* Render Area Documento */}
                     {config.documentArea && (
                       <div
@@ -615,7 +704,7 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
                 </div>
 
                 <button
-                  onClick={() => onSave(config)}
+                  onClick={() => onSave(config, templateFile)}
                   className="mt-auto bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2.5 rounded-lg transition-colors shadow-sm"
                 >
                   Guardar Configuración en Base de Datos
@@ -629,14 +718,12 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
             <div className="flex-1 flex bg-slate-100 overflow-hidden">
               <div className="flex-1 p-4 flex items-center justify-center">
                 {config.templatePdfUrl ? (
-                  <div
-                    className="relative w-[500px] h-[700px] bg-white shadow-2xl rounded border border-slate-300 overflow-hidden"
-                    style={{
-                      backgroundImage: `url(${config.templatePdfUrl})`,
-                      backgroundSize: 'cover',
-                      backgroundPosition: 'center',
-                    }}
-                  >
+                  <div className="relative w-[500px] h-[700px] bg-white shadow-2xl rounded border border-slate-300 overflow-hidden">
+                    <iframe
+                      src={config.templatePdfUrl}
+                      title="Vista previa plantilla"
+                      className="absolute inset-0 w-full h-full border-none pointer-events-none"
+                    />
                     {config.documentArea && (
                       <div
                         className="absolute overflow-hidden bg-slate-200 border border-slate-400/50 shadow-inner"

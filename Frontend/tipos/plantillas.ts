@@ -12,6 +12,137 @@ export type UniverWorkbook = ReturnType<UniverAPI['createWorkbook']>;
 
 export type DataType = 'text' | 'number' | 'currency' | 'date' | 'option';
 
+// ============================================================
+// INPUT SCHEMA (contrato de variables)
+// ============================================================
+
+export type SchemaDataType = 'STRING' | 'DATE' | 'BOOLEAN' | 'FLOAT' | 'INTEGER' | 'OBJECT';
+export type TemplateType = 'ORDEN_TRABAJO' | 'COTIZACION' | 'RECEPCION';
+
+export interface InputSchemaField {
+  key: string;
+  label: string;
+  dataType: SchemaDataType;
+  required?: boolean;
+  description?: string;
+}
+
+export interface InputSchemaObjectField extends InputSchemaField {
+  type: 'OBJECT';
+  fields: InputSchemaField[];
+}
+
+export interface InputSchemaTableColumn {
+  key: string;
+  label: string;
+  dataType?: SchemaDataType;
+  required?: boolean;
+  type?: 'OBJECT';
+  fields?: InputSchemaField[];
+}
+
+export interface InputSchemaTable {
+  key: string;
+  label: string;
+  required?: boolean;
+  maxRowsLimit?: number;
+  dependsOn?: { fieldKey: string; value: boolean };
+  description?: string;
+  columns: InputSchemaTableColumn[];
+}
+
+export interface InputSchema {
+  $schema?: string;
+  templateType: TemplateType;
+  version: string;
+  description?: string;
+  fields: {
+    scalars: InputSchemaField[];
+    tables: InputSchemaTable[];
+  };
+}
+
+// ============================================================
+// MAPPING CONFIG (estructura de salida - Fase 3)
+// ============================================================
+
+export interface ScalarMapping {
+  key: string;
+  cell: string;
+  dataType: string;
+  sheet?: string;
+}
+
+export interface SubfieldMapping {
+  key: string;
+  column: string;
+}
+
+export interface ColumnMapping {
+  key: string;
+  column: string;
+  dataType?: string;
+  type?: 'OBJECT';
+  subfields?: SubfieldMapping[];
+}
+
+export interface TableMapping {
+  key: string;
+  startRow: number;
+  columns: ColumnMapping[];
+}
+
+export interface MappingConfig {
+  templateId: string | number;
+  templateType: TemplateType | string;
+  version: string;
+  fileRef: string;
+  mappings: {
+    scalars: ScalarMapping[];
+    tables: TableMapping[];
+  };
+}
+
+// ============================================================
+// UNIVER SHEET (selección + resaltado)
+// ============================================================
+
+export interface CellSelection {
+  sheetName: string;
+  cellAddress: string;
+  row: number;
+  col: number;
+  endRow: number;
+  endColumn: number;
+}
+
+export interface HighlightRange {
+  sheetName: string;
+  /** Notación A1 (ej: 'C4', 'B12'). */
+  a1: string;
+  color: string;
+  /** Verdadero si representa una columna de tabla (destaca la celda cabecera). */
+  isColumn?: boolean;
+}
+
+export interface UniverSheetHandle {
+  /** Resalta celdas/columnas en el canvas. */
+  highlightRanges: (ranges: HighlightRange[]) => void;
+  /** Limpia todos los resaltados aplicados en la sesión. */
+  clearHighlights: () => void;
+}
+
+export interface UniverSheetProps {
+  snapshot?: unknown;
+  onCellSelect?: (selection: CellSelection) => void;
+  /** Se invoca cuando el workbook quedó renderizado y listo para operar. */
+  onReady?: () => void;
+}
+
+// ============================================================
+// LEGACY: Mapeo de variables (formato MAPEO_EXCEL_JSON)
+// ============================================================
+
 export interface CellMapping {
   variableId: string;
   sheetName: string;
@@ -60,6 +191,10 @@ export interface MapeoExcel {
   [key: string]: unknown;
 }
 
+// ============================================================
+// DTOs de Plantillas / Versiones
+// ============================================================
+
 export interface PlantillaDocumento {
   idDocumento: number;
   nombre: string;
@@ -72,6 +207,8 @@ export interface VersionActualPlantilla {
   idVersionPlantilla: number;
   version: number;
   mapeoExcelJson: MapeoExcel | null;
+  inputSchema: InputSchema | null;
+  mappingConfig: MappingConfig | null;
   createdAt: Date;
   documento: PlantillaDocumento | null;
 }
@@ -113,17 +250,34 @@ export interface SystemVariable {
   columns?: MapeoExcelColumn[];
 }
 
-export interface UniverSheetProps {
-  fileUrl?: string;
-}
+// ============================================================
+// PROPS DE MODALES
+// ============================================================
 
 export interface EditorModalProps {
   template: PlantillaWithVersionResponse;
   onClose: () => void;
-  onSaveMapping?: (mappings: Record<string, CellMapping>) => Promise<void>;
+  onReload: () => void;
 }
 
 export interface HistorialModalProps {
   template: TemplateHistoryLog;
   onClose: () => void;
+}
+
+// ============================================================
+// RESPUESTAS DE SNAPSHOT (backend)
+// ============================================================
+
+export interface SnapshotJobStatus {
+  status: 'completed' | 'pending' | 'failed' | 'active' | 'delayed' | 'waiting' | 'unknown';
+  jobId?: string;
+  snapshot?: unknown;
+  error?: string;
+}
+
+export interface SnapshotResponse {
+  success: boolean;
+  data?: SnapshotJobStatus;
+  error?: string;
 }

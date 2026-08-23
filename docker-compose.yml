@@ -13,6 +13,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - metrologia_net
 
@@ -39,11 +44,42 @@ services:
       MINIO_ROOT_PASSWORD: "PasswordSegura123"
     command: server /data --console-address ":9001"
     volumes:
-      - minio_data:/data
+      - ./.docker-data/minio_storage:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       metrologia_net:
         aliases:
           - minio-storage
+
+  postgres_backup:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.backup
+    container_name: metrologia_backup
+    restart: always
+    environment:
+      POSTGRES_HOST: "postgres_db"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "password123"
+      POSTGRES_DB: "metrologia_db"
+      MINIO_HOST: "minio-storage"
+      MINIO_ROOT_USER: "admin_metrologia"
+      MINIO_ROOT_PASSWORD: "PasswordSegura123"
+      MINIO_BUCKET_BACKUP: "backups-postgres"
+      CRON_SCHEDULE: "0 2 * * *"
+    volumes:
+      - ./scripts/backup.sh:/backup.sh
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - metrologia_net
 
   backend:
     build:
@@ -67,7 +103,14 @@ services:
       MINIO_ACCESS_KEY: "admin_metrologia"
       MINIO_SECRET_KEY: "PasswordSegura123"
       MINIO_BUCKET_NAME: "documentos-metrologia"
-    command: sh -c "pnpm exec prisma generate && pnpm dev"
+      MINIO_PUBLIC_URL: "http://localhost:9000"
+    command: >
+      sh -c "pnpm exec prisma generate && 
+             pnpm exec prisma db push --accept-data-loss && 
+             pnpm run db:seed && 
+             (pnpm worker:snapshot &) && 
+             (pnpm worker:stamp &) && 
+             pnpm dev"
     volumes:
       - ./Backend:/app
       - /app/node_modules
@@ -95,21 +138,17 @@ services:
       NEXT_PUBLIC_MINIO_URL: "http://localhost:9000"
     command: sh -c "pnpm exec pnpm dev"
     volumes:
-      - ./Frontend:/app                     # 👈 Mapea SOLO la carpeta ./Backend dentro de /app
+      - ./Frontend:/app
       - /app/node_modules
       - /app/.next
-      
-   
     depends_on:
       - backend
     networks:
       - metrologia_net
 
-# Declaración de Volúmenes y Redes Globales
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
 
 networks:
   metrologia_net:
