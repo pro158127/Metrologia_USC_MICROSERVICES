@@ -1,27 +1,39 @@
 {
   "name": "backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "Backend Standalone para WebSockets, PostgreSQL Listener, Webhooks, Integraciones de IA y Rutas API",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc"
+    "worker:snapshot": "tsx src/workers/snapshot.worker.ts",
+    "worker:stamp": "tsx src/workers/pdfStampingWorker.ts",
+    "build": "tsc",
+    "db:deploy": "prisma migrate deploy && prisma db seed",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "keywords": [],
   "author": "Usc by Cristian",
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1096.0",
+    "@aws-sdk/s3-request-presigner": "^3.1096.0",
     "@fastify/cors": "^11.3.0",
     "@fastify/jwt": "^10.2.0",
     "@fastify/multipart": "^10.1.0",
     "@prisma/client": "6.4.1",
     "argon2": "^0.44.0",
+    "bullmq": "^6.1.2",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "fastify": "^5.10.0",
     "fastify-plugin": "^6.0.0",
-    "nodemailer": "^9.0.3",
+    "ioredis": "^6.0.0",
+    "nodemailer": "^9.0.5",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.22.0",
     "socket.io": "^4.8.3",
     "xlsx": "^0.18.5"

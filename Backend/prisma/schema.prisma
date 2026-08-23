@@ -1,11 +1,14 @@
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  previewFeatures = ["postgresqlExtensions"]
+  
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL_LOCAL")
+  extensions = [pgvector(map: "vector")]
 }
 
 model audit_logs {
@@ -259,6 +262,17 @@ model plantillas {
   version_plantillas version_plantillas[]
 }
 
+model plantillas_sellos {
+  ID_PLANTILLA_SELLO Int      @id @default(autoincrement())
+  NOMBRE             String
+  DESCRIPCION        String?
+  TEMPLATE_PDF_KEY   String?
+  DOCUMENT_AREA      Json?
+  WATERMARK_AREAS    Json?
+  CREATED_AT         DateTime @default(now())
+  UPDATED_AT         DateTime @updatedAt
+}
+
 model recepcion_equipo_detalles {
   ID_INSTRUMENTO     Int                @id @default(autoincrement())
   ID_RECEPCION_FK    Int
@@ -369,6 +383,8 @@ model version_plantillas {
   ID_PLANTILLA_FK       Int
   VERSION               Int         @default(1)
   MAPEO_EXCEL_JSON      Json?
+  INPUT_SCHEMA          Json?
+  MAPPING_CONFIG        Json?
   ID_USUARIO_CREADOR_FK Int
   CREATED_AT            DateTime    @default(now())
   ID_DOCUMENTOS_FK      Int?

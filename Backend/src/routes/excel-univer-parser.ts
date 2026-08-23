@@ -1,18 +1,7 @@
-// routes/excel-file.ts
+// routes/excel-univer-parser.ts
 import { FastifyPluginAsync } from 'fastify';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-
-const s3Client = new S3Client({
-  endpoint: process.env.MINIO_ENDPOINT || 'http://minio-storage:9000',
-  region: process.env.MINIO_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId: process.env.MINIO_ACCESS_KEY || 'minioadmin',
-    secretAccessKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
-  },
-  forcePathStyle: true,
-});
-
-const BUCKET_NAME = 'documentos-metrologia';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client';
 
 export const excelFileRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/api/v1/excel/download/:fileId', async (request, reply) => {
@@ -26,14 +15,8 @@ export const excelFileRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'Archivo vacío' });
       }
 
-      // Convertir el stream a buffer (más fiable que enviar el stream directamente)
-      const chunks: Buffer[] = [];
-      for await (const chunk of s3Response.Body as any) {
-        chunks.push(Buffer.from(chunk));
-      }
-      const buffer = Buffer.concat(chunks);
+      const buffer = await streamToBuffer(s3Response.Body as any);
 
-      // Configurar headers para forzar la descarga del binario
       reply.header(
         'Content-Type',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

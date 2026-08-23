@@ -11,7 +11,7 @@ export const s3Client = new S3Client({
   forcePathStyle: true,
 });
 
-export const BUCKET_NAME = 'documentos-metrologia';
+export const BUCKET_NAME = process.env.MINIO_BUCKET_NAME || 'documentos-metrologia';
 
 /**
  * Serializa un Body de AWS S3 / MinIO a Buffer

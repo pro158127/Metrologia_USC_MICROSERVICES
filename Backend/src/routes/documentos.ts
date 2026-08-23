@@ -1,29 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
-
-const s3Client = new S3Client({
-  endpoint: process.env.MINIO_ENDPOINT || 'http://minio-storage:9000',
-  region: process.env.MINIO_REGION || 'us-east-1',
-  credentials: {
-    accessKeyId: process.env.MINIO_ACCESS_KEY || 'minioadmin',
-    secretAccessKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
-  },
-  forcePathStyle: true,
-});
-
-const BUCKET_NAME = 'documentos-metrologia';
-
-/**
- * HELPER: Helper puro para serializar un Body de AWS S3 / MinIO a Buffer
- */
-async function streamToBuffer(stream: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
+import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client';
 
 export const documentosRoutes: FastifyPluginAsync = async (fastify) => {
 
@@ -39,7 +17,6 @@ export const documentosRoutes: FastifyPluginAsync = async (fastify) => {
       const customFileName = (data.fields?.nombreArchivo as any)?.value;
       const fileName = customFileName || data.filename;
 
-      // Generación de Key en el Bucket
       const s3Key = `documentos/${Date.now()}_${fileName}`;
 
       const uploadCommand = new PutObjectCommand({
@@ -54,7 +31,6 @@ export const documentosRoutes: FastifyPluginAsync = async (fastify) => {
 
       await s3Client.send(uploadCommand);
 
-      // Retorna únicamente la ruta del objeto
       return reply.status(201).send({
         rutaUrl: s3Key,
       });
@@ -64,7 +40,6 @@ export const documentosRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(500).send({ error: 'Error interno al subir el archivo a almacenamiento' });
     }
   });
-
 
   // 2. RECUPERAR/DESCARGAR ARCHIVO POR SU RUTA URL EN MINIO (* Wildcard)
   fastify.get('/api/v1/documentos/ver/*', async (request, reply) => {
@@ -86,7 +61,6 @@ export const documentosRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: 'El archivo recuperado está vacío' });
       }
 
-      // Serialización mediante la función helper
       const buffer = await streamToBuffer(s3Response.Body as Readable);
 
       const contentType = s3Response.ContentType || 'application/octet-stream';
