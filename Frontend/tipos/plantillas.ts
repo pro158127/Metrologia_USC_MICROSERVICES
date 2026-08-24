@@ -266,6 +266,45 @@ export interface HistorialModalProps {
 }
 
 // ============================================================
+// MAPEO CONFIG TARIFAS (pipeline dinámico de tarifas)
+// ============================================================
+
+export interface MapeoConfigTarifas {
+  filaInicialDatos: number;
+  columnas: {
+    magnitud: number | null;
+    instrumento: number | null;
+    norma: number | null;
+    tipoServicio: number | null;
+  };
+  /** Mapa año -> índice de columna (ej: { "2025": 5, "2026": 6 }). */
+  anios: Record<string, number>;
+}
+
+export type EstadoJobTarifasValue = 'PENDIENTE' | 'PROCESANDO' | 'COMPLETADO' | 'ERROR' | string;
+
+export interface EstadoJobTarifas {
+  estado: EstadoJobTarifasValue;
+  errorLog: string | null;
+  procesadoEn: string | null;
+}
+
+export interface ConsolidarTarifasResponse {
+  success: boolean;
+  data?: {
+    estado: string;
+    jobId?: string;
+  };
+  error?: string;
+}
+
+export interface EstadoJobTarifasResponse {
+  success: boolean;
+  data?: EstadoJobTarifas;
+  error?: string;
+}
+
+// ============================================================
 // RESPUESTAS DE SNAPSHOT (backend)
 // ============================================================
 

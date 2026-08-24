@@ -4,6 +4,7 @@ import SessionWrapper from "./componets/session";
 import "./globals.css";
 import { IdleMonitor } from "./componets/timer_session";
 import { DbProvider } from "./componets/tables_recharge";
+import { Toaster } from "sonner";
 import { auth } from "@/app/Login/types/auth"; // 👈 IMPORTANTE: Importa tu función auth de NextAuth v5
 
 const geistSans = Geist({
@@ -42,6 +43,7 @@ export default async function RootLayout({
           <DbProvider>
             {children}
             <IdleMonitor />
+            <Toaster position="top-right" richColors />
           </DbProvider>
         </SessionWrapper>
       </body>

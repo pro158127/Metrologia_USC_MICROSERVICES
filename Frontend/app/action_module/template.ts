@@ -3,7 +3,15 @@
 import { auth } from '@/app/Login/types/auth';
 import { fastifyRequest, FastifyHttpError, BASE_URL } from '@/app/lib/api/fastifyClient';
 import { generarTokenBackend } from '@/app/lib/auth-token';
-import type { MapeoExcel, MappingConfig, InputSchema, SnapshotResponse } from '@/tipos/plantillas';
+import type {
+  MapeoExcel,
+  MappingConfig,
+  InputSchema,
+  SnapshotResponse,
+  MapeoConfigTarifas,
+  ConsolidarTarifasResponse,
+  EstadoJobTarifasResponse,
+} from '@/tipos/plantillas';
 
 // Tipado estricto para el parámetro de entrada
 interface GetPlantillaParams {
@@ -247,5 +255,47 @@ export async function crearNuevaVersion(params: NuevaVersionParams): Promise<{ s
       return { success: false, error: error.message };
     }
     return { success: false, error: 'Error interno al crear la nueva versión.' };
+  }
+}
+
+// ============================================================================
+// PIPELINE DE TARIFAS: CONSOLIDAR (dispara worker) + ESTADO DEL JOB (polling)
+// ============================================================================
+
+export async function consolidarTarifas(
+  versionId: number,
+  mapeoConfig: MapeoConfigTarifas
+): Promise<ConsolidarTarifasResponse> {
+  try {
+    const session = await auth();
+    return await fastifyRequest<ConsolidarTarifasResponse>(
+      session,
+      `/api/v1/plantillas/version/${versionId}/consolidar`,
+      { method: 'POST', body: { mapeoConfig } }
+    );
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - consolidarTarifas]:', error);
+    if (error instanceof FastifyHttpError) {
+      return { success: false, error: error.message };
+    }
+    return { success: false, error: 'Error interno al consolidar las tarifas.' };
+  }
+}
+
+export async function consultarEstadoJob(
+  versionId: number
+): Promise<EstadoJobTarifasResponse> {
+  try {
+    const session = await auth();
+    return await fastifyRequest<EstadoJobTarifasResponse>(
+      session,
+      `/api/v1/plantillas/version/${versionId}/estado-job`
+    );
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - consultarEstadoJob]:', error);
+    if (error instanceof FastifyHttpError) {
+      return { success: false, error: error.message };
+    }
+    return { success: false, error: 'Error interno al consultar el estado del job.' };
   }
 }

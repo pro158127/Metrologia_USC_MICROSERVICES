@@ -79,6 +79,7 @@ model Tarifa {
   historial        HistorialTarifa[]
   Norma            String     @default("n/a")
 
+  @@unique([magnitud, Instrumento, Norma, tipoServicio], name: "UQ_tarifa_identidad")
   @@map("tarifas")
 }
 
@@ -91,6 +92,7 @@ model HistorialTarifa {
   tarifa      Tarifa    @relation(fields: [idTarifa], references: [idTarifa], onDelete: Cascade)
 
   @@index([idTarifa, fechaInicio, fechaFin])
+  @@unique([idTarifa, fechaInicio], name: "UQ_tarifa_fecha_inicio")
   @@map("historial_tarifas")
 }
 
@@ -451,6 +453,10 @@ model VersionPlantilla {
   mapeoExcelJson     Json?      @map("MAPEO_EXCEL_JSON")
   inputSchema        Json?      @map("INPUT_SCHEMA")
   mappingConfig      Json?      @map("MAPPING_CONFIG")
+  mapeoConfig        Json?      @map("MAPEO_CONFIG")
+  estado             String     @default("PENDIENTE") @map("ESTADO")
+  procesadoEn        DateTime?  @map("PROCESADO_EN")
+  errorLog           String?    @map("ERROR_LOG")
   idUsuarioCreador   Int        @map("ID_USUARIO_CREADOR_FK")
   createdAt          DateTime   @default(now()) @map("CREATED_AT")
   iddocumentos       Int?       @map("ID_DOCUMENTOS_FK")

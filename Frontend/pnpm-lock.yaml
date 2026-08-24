@@ -92,6 +92,9 @@ importers:
       socket.io-client:
         specifier: ^4.8.3
         version: 4.8.3(supports-color@7.2.0)
+      sonner:
+        specifier: ^2.0.7
+        version: 2.0.7(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       ts-node:
         specifier: ^10.9.2
         version: 10.9.2(@types/node@20.19.43)(typescript@5.9.3)
@@ -1930,6 +1933,7 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@zwight/exceljs@4.4.2':
     resolution: {integrity: sha512-WA+u2zRE9Mf1rt3UiQesERv9bgv6DSjLjL9AEMPZgBgTRDOjS09Vi1MVzzhuehsaSaKaScgdK+MSInfOgoxxpg==}
@@ -2542,6 +2546,7 @@ packages:
   eslint@9.39.5:
     resolution: {integrity: sha512-DgZS62aPLXKlnxILS/AYCoRvHaZeXceIzlXPkkGGzJWSow1aEk0lbTlxUSlyjC8jcaKxAdOnTDz+o1JFSBsyjw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
     hasBin: true
     peerDependencies:
       jiti: '*'
