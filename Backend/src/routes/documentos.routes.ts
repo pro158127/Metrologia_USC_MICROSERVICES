@@ -4,6 +4,23 @@ import { Readable } from 'stream';
 import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client.js';
 import { AppError } from '../lib/errors.js';
 
+/**
+ * Sanitiza nombres de archivo para generar Keys compatibles con S3/MinIO.
+ * Remueve tildes, convierte espacios/caracteres especiales a guiones bajos.
+ */
+function sanitizeFileName(fileName: string): string {
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')) : '';
+  const baseName = fileName.includes('.') ? fileName.slice(0, fileName.lastIndexOf('.')) : fileName;
+
+  const cleanBase = baseName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Elimina acentos/tildes
+    .replace(/[^a-zA-Z0-9_-]/g, '_')  // Remueve espacios y caracteres especiales
+    .replace(/_+/g, '_');           // Evita guiones bajos repetidos
+
+  return `${cleanBase}${extension}`;
+}
+
 export default async function documentosRoutes(fastify: FastifyInstance) {
   fastify.post('/api/v1/documentos/upload', async (request, reply) => {
     const data = await (request as any).file();
@@ -11,9 +28,11 @@ export default async function documentosRoutes(fastify: FastifyInstance) {
 
     const buffer = await data.toBuffer();
     const customFileName = (data.fields?.nombreArchivo as any)?.value;
-    const fileName = customFileName || data.filename;
+    const rawFileName = customFileName || data.filename;
 
-    const s3Key = `documentos/${Date.now()}_${fileName}`;
+    // Sanitización del nombre para la clave de S3
+    const safeFileName = sanitizeFileName(rawFileName);
+    const s3Key = `documentos/${Date.now()}_${safeFileName}`;
 
     const uploadCommand = new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -21,7 +40,8 @@ export default async function documentosRoutes(fastify: FastifyInstance) {
       Body: buffer,
       ContentType: data.mimetype,
       Metadata: {
-        originalName: fileName,
+        // Guardamos el nombre raw codificado en base64 para evitar Signature Errors en los Metadata headers de S3
+        originalname: Buffer.from(rawFileName).toString('base64'),
       },
     });
 
@@ -53,10 +73,24 @@ export default async function documentosRoutes(fastify: FastifyInstance) {
       const buffer = await streamToBuffer(s3Response.Body as Readable);
 
       const contentType = s3Response.ContentType || 'application/octet-stream';
-      const filename = s3Response.Metadata?.originalname || rutaUrl.split('/').pop() || 'archivo';
+      
+      // Decodificamos el nombre original guardado en metadata o fallback al nombre sanitizado
+      let originalFilename = rutaUrl.split('/').pop() || 'archivo';
+      if (s3Response.Metadata?.originalname) {
+        try {
+          originalFilename = Buffer.from(s3Response.Metadata.originalname, 'base64').toString('utf-8');
+        } catch {
+          // Fallback si la decodificación falla
+        }
+      }
+
+      const encodedFilename = encodeURIComponent(originalFilename);
 
       reply.header('Content-Type', contentType);
-      reply.header('Content-Disposition', `inline; filename="${filename}"`);
+      reply.header(
+        'Content-Disposition',
+        `inline; filename="${sanitizeFileName(originalFilename)}"; filename*=UTF-8''${encodedFilename}`
+      );
       reply.header('Access-Control-Allow-Origin', '*');
 
       return reply.send(buffer);
