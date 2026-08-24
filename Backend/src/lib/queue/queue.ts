@@ -11,9 +11,12 @@ export const STAMP_PDF_QUEUE = 'stamp-pdf-queue';
 export const TEMPLATE_CACHE_TTL_SECONDS = 24 * 60 * 60; // 1 día de cache de plantillas base
 export const STAMP_JOB_PREFIX = 'stamp:job:';
 
+export const TARIFAS_QUEUE = 'tarifas-queue';
+
 let connection: IORedis | null = null;
 let snapshotQueue: Queue | null = null;
 let stampPdfQueue: Queue | null = null;
+let tarifasQueue: Queue | null = null;
 
 /**
  * Conexión Redis compartida (singleton) para colas y worker.
@@ -70,4 +73,26 @@ export function getStampPdfQueue(): Queue {
     });
   }
   return stampPdfQueue;
+}
+
+export interface TarifasJobData {
+  versionId: number;
+  rutaUrl: string;
+  fileName?: string;
+  mapeoConfig: object;
+}
+
+export function getTarifasQueue(): Queue {
+  if (!tarifasQueue) {
+    tarifasQueue = new Queue(TARIFAS_QUEUE, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 60 * 60 * 24 },
+        removeOnFail: { age: 60 * 60 * 24 },
+      },
+    });
+  }
+  return tarifasQueue;
 }

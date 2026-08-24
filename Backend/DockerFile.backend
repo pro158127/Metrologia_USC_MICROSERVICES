@@ -11,7 +11,10 @@ COPY package.json pnpm-lock.yaml* ./
 # 2. Instalación respetando estrictamente el lockfile (al no ser monorepo)
 RUN pnpm install --frozen-lockfile
 
-# 3. Copiar el resto del código fuente del Backend
+# 3. Python + pandas + openpyxl para el pipeline de tarifas (scripts/parse_excel_tarifas.py)
+RUN apk add --no-cache python3 py3-pandas py3-openpyxl
+
+# 4. Copiar el resto del código fuente del Backend
 COPY . .
 
 EXPOSE 3001

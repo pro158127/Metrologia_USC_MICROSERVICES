@@ -157,6 +157,7 @@ model historial_tarifas {
   tarifas      tarifas   @relation(fields: [ID_TARIFA_FK], references: [ID_TARIFA], onDelete: Cascade)
 
   @@index([ID_TARIFA_FK, FECHA_INICIO, FECHA_FIN])
+  @@unique([ID_TARIFA_FK, FECHA_INICIO], name: "UQ_tarifa_fecha_inicio")
 }
 
 model notificaciones {
@@ -343,6 +344,8 @@ model tarifas {
   Instrumento       String              @default("n/a")
   Norma             String              @default("n/a")
   historial_tarifas historial_tarifas[]
+
+  @@unique([MAGNITUD, Instrumento, Norma, TIPO_SERVICIO], name: "UQ_tarifa_identidad")
 }
 
 model usuarios {
@@ -385,6 +388,10 @@ model version_plantillas {
   MAPEO_EXCEL_JSON      Json?
   INPUT_SCHEMA          Json?
   MAPPING_CONFIG        Json?
+  MAPEO_CONFIG          Json?
+  ESTADO                String      @default("PENDIENTE")
+  PROCESADO_EN          DateTime?
+  ERROR_LOG             String?
   ID_USUARIO_CREADOR_FK Int
   CREATED_AT            DateTime    @default(now())
   ID_DOCUMENTOS_FK      Int?

@@ -4,15 +4,22 @@ import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { s3Client, BUCKET_NAME } from '../lib/s3Client.js';
-import { getSnapshotQueue, getRedisConnection } from '../lib/queue/queue.js';
+import {
+  getSnapshotQueue,
+  getRedisConnection,
+  getTarifasQueue,
+} from '../lib/queue/queue.js';
 import {
   actualizarMappingBodySchema,
+  consolidarTarifasBodySchema,
   detallePlantillaQuerySchema,
   documentoRawToDtoSchema,
   idParamSchema,
   jobIdParamSchema,
   plantillaCompletaRawToDtoSchema,
   plantillaConDocumentoRawToDtoSchema,
+  respuestaConsolidarTarifasSchema,
+  respuestaEstadoJobTarifasSchema,
   respuestaListaPlantillasSchema,
   respuestaMappingSchema,
   respuestaNuevaVersionSchema,
@@ -386,6 +393,108 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
             : null,
         },
       });
+    }
+  );
+
+  app.post(
+    '/api/v1/plantillas/version/:versionId/consolidar',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: versionIdParamSchema,
+        body: consolidarTarifasBodySchema,
+        response: { 202: respuestaConsolidarTarifasSchema },
+      },
+    },
+    async (request, reply) => {
+      const versionId = request.params.versionId;
+      const { mapeoConfig } = request.body;
+
+      if (versionId <= 0) {
+        throw new AppError(400, 'versionId inválido.');
+      }
+
+      const version = await fastify.prisma.version_plantillas.findUnique({
+        where: { ID_VERSION_PLANTILLA: versionId },
+        include: { documentos: true },
+      });
+
+      if (!version) {
+        throw new AppError(404, 'Versión de plantilla no encontrada.');
+      }
+      if (!version.documentos) {
+        throw new AppError(400, 'La versión no tiene un documento Excel asociado.');
+      }
+
+      const tieneColumnaBase =
+        typeof mapeoConfig.columnas.magnitud === 'number' ||
+        typeof mapeoConfig.columnas.instrumento === 'number';
+      if (!tieneColumnaBase) {
+        throw new AppError(
+          400,
+          'Debe mapearse al menos la columna de magnitud o de instrumento.'
+        );
+      }
+      if (Object.keys(mapeoConfig.anios).length === 0) {
+        throw new AppError(400, 'Debe mapearse al menos un año de precios.');
+      }
+
+      await fastify.prisma.version_plantillas.update({
+        where: { ID_VERSION_PLANTILLA: versionId },
+        data: {
+          MAPEO_CONFIG: mapeoConfig as any,
+          ESTADO: 'PROCESANDO',
+          ERROR_LOG: null,
+          PROCESADO_EN: null,
+        },
+      });
+
+      const queue = getTarifasQueue();
+      const job = await queue.add('consolidar-tarifas', {
+        versionId,
+        rutaUrl: version.documentos.RUTA_URL,
+        fileName: version.documentos.NOMBRE,
+        mapeoConfig,
+      });
+
+      return reply
+        .code(202)
+        .send({ success: true as const, data: { estado: 'PROCESANDO', jobId: job.id ?? undefined } });
+    }
+  );
+
+  app.get(
+    '/api/v1/plantillas/version/:versionId/estado-job',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: versionIdParamSchema,
+        response: { 200: respuestaEstadoJobTarifasSchema },
+      },
+    },
+    async (request) => {
+      const versionId = request.params.versionId;
+      if (versionId <= 0) {
+        throw new AppError(400, 'versionId inválido.');
+      }
+
+      const version = await fastify.prisma.version_plantillas.findUnique({
+        where: { ID_VERSION_PLANTILLA: versionId },
+        select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true },
+      });
+
+      if (!version) {
+        throw new AppError(404, 'Versión de plantilla no encontrada.');
+      }
+
+      return {
+        success: true as const,
+        data: {
+          estado: version.ESTADO,
+          errorLog: version.ERROR_LOG ?? null,
+          procesadoEn: version.PROCESADO_EN ?? null,
+        },
+      };
     }
   );
 }

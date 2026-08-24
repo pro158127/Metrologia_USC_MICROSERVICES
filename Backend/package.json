@@ -8,6 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "worker:snapshot": "tsx src/workers/snapshot.worker.ts",
     "worker:stamp": "tsx src/workers/pdfStampingWorker.ts",
+    "worker:plantillas": "tsx src/workers/plantillas.worker.ts",
     "build": "tsc",
     "db:deploy": "prisma migrate deploy && prisma db seed",
     "db:seed": "tsx prisma/seed.ts"

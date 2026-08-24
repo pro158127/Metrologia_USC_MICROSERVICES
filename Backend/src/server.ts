@@ -21,6 +21,7 @@ import sellosRoutes from './routes/sellos.routes.js';
 import parametrosSistemaRoutes from './routes/parametros_sistema.routes.js';
 import facturasRoutes from './routes/facturas.routes.js';
 import certificadosRoutes from './routes/certificados.routes.js';
+import certificateGeneratorRoutes from './routes/certificate-generator.routes.js';
 import reportesRoutes from './routes/recepciones.routes.js';
 import plantillasRoutes from './routes/plantillas.routes.js';
 import ordenesRoutes from './routes/audit.routes.js';
@@ -65,6 +66,7 @@ async function bootstrap() {
   await fastify.register(parametrosSistemaRoutes);
   await fastify.register(facturasRoutes);
   await fastify.register(certificadosRoutes);
+  await fastify.register(certificateGeneratorRoutes);
   await fastify.register(reportesRoutes);
   await fastify.register(plantillasRoutes);
   await fastify.register(ordenesRoutes);

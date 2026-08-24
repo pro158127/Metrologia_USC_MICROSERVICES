@@ -288,3 +288,45 @@ export const respuestaNuevaVersionSchema = z.object({
   data: nuevaVersionDtoSchema,
 });
 export type RespuestaNuevaVersion = z.infer<typeof respuestaNuevaVersionSchema>;
+
+export const mapeoConfigTarifasSchema = z.object({
+  filaInicialDatos: z.number().int().nonnegative(),
+  columnas: z.object({
+    magnitud: z.number().int().nullable().optional(),
+    instrumento: z.number().int().nullable().optional(),
+    norma: z.number().int().nullable().optional(),
+    tipoServicio: z.number().int().nullable().optional(),
+  }),
+  anios: z.record(z.string(), z.coerce.number().int()),
+});
+export type MapeoConfigTarifas = z.infer<typeof mapeoConfigTarifasSchema>;
+
+export const consolidarTarifasBodySchema = z.object({
+  mapeoConfig: mapeoConfigTarifasSchema,
+});
+export type ConsolidarTarifasBody = z.infer<typeof consolidarTarifasBodySchema>;
+
+export const consolidarTarifasDtoSchema = z.object({
+  estado: z.string(),
+  jobId: z.string().nullish(),
+});
+export type ConsolidarTarifasDto = z.infer<typeof consolidarTarifasDtoSchema>;
+
+export const respuestaConsolidarTarifasSchema = z.object({
+  success: z.literal(true),
+  data: consolidarTarifasDtoSchema,
+});
+export type RespuestaConsolidarTarifas = z.infer<typeof respuestaConsolidarTarifasSchema>;
+
+export const estadoJobTarifasDtoSchema = z.object({
+  estado: z.string(),
+  errorLog: z.string().nullable(),
+  procesadoEn: z.coerce.date().nullable(),
+});
+export type EstadoJobTarifasDto = z.infer<typeof estadoJobTarifasDtoSchema>;
+
+export const respuestaEstadoJobTarifasSchema = z.object({
+  success: z.literal(true),
+  data: estadoJobTarifasDtoSchema,
+});
+export type RespuestaEstadoJobTarifas = z.infer<typeof respuestaEstadoJobTarifasSchema>;
