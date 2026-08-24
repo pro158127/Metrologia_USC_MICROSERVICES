@@ -1,32 +1,33 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import auth from './plugins/auth';
+import auth from './plugins/auth.js';
 import fastifyJwt from '@fastify/jwt';
 // Importación de plugins
-import { socketPlugin } from './plugins/socket';
-import { postgresListenerPlugin } from './plugins/postgrest-listener';
-import prismaPlugin from './plugins/prisma';
-import auditRoutes from './routes/audit';
-import { excelFileRoutes } from './routes/excel-univer-parser';
-import { documentosRoutes } from './routes/documentos';
-import clientesRoutes from './routes/clientes';
-import notificacionesRoutes from './routes/notificaciones';
-import authRoutes from './routes/auth';
-import usuariosRoutes from './routes/usuarios';
-import cotizacionesRoutes from './routes/cotizaciones';
-import tarifasRoutes from './routes/tarifas';
-import sellosRoutes from './routes/sellos';
-import parametrosSistemaRoutes from './routes/parametros_sistema';
-import facturasRoutes from './routes/facturas';
-import certificadosRoutes from './routes/certificados';
-import reportesRoutes from './routes/reportes';
-import plantillasRoutes from './routes/plantillas';
-import ordenesRoutes from './routes/ordenes';
-import recepcionesRoutes from './routes/recepciones';
-import consecutivosRoutes from './routes/consecutivos';
+import { socketPlugin } from './plugins/socket.js';
+import { postgresListenerPlugin } from './plugins/postgrest-listener.js';
+import prismaPlugin from './plugins/prisma.js';
+import auditRoutes from './routes/audit.routes.js';
+import  excelFileRoutes  from './routes/excel-univer-parser.routes.js';
+import  documentosRoutes  from './routes/documentos.routes.js';
+import clientesRoutes from './routes/clientes.routes.js';
+import notificacionesRoutes from './routes/notificaciones.routes.js';
+import authRoutes from './routes/audit.routes.js';
+import usuariosRoutes from './routes/usuarios.routes.js';
+import cotizacionesRoutes from './routes/cotizaciones.routes.js';
+import errorHandlerPlugin from './plugins/error-handler.js';
+import tarifasRoutes from './routes/tarifas.routes.js';
+import sellosRoutes from './routes/sellos.routes.js';
+import parametrosSistemaRoutes from './routes/parametros_sistema.routes.js';
+import facturasRoutes from './routes/facturas.routes.js';
+import certificadosRoutes from './routes/certificados.routes.js';
+import reportesRoutes from './routes/recepciones.routes.js';
+import plantillasRoutes from './routes/plantillas.routes.js';
+import ordenesRoutes from './routes/audit.routes.js';
+import recepcionesRoutes from './routes/recepciones.routes.js';
+import consecutivosRoutes from './routes/consecutivos.routes.js';
 import fastifyMultipart from '@fastify/multipart';
-import { pdfRoutes } from './routes/pdfRoutes';
+import pdfRoutes from './routes/pdfRoutes.routes.js';
 async function bootstrap() {
   const fastify = Fastify({ logger: true });
 
@@ -47,6 +48,7 @@ async function bootstrap() {
   await fastify.register(postgresListenerPlugin);
   await fastify.register(prismaPlugin);
   await fastify.register(auth);
+  await fastify.register(errorHandlerPlugin);
 
   // 3. Registro de Rutas
   await fastify.register(auditRoutes);
