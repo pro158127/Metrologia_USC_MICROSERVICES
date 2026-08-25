@@ -45,7 +45,6 @@ import type {
 // ============================================================
 
 const generarIdUnico = () => Math.random().toString(36).substring(2, 9);
-
 const crearFilaInstrumentoVacia = (): FilaInstrumento => ({
   id: generarIdUnico(),
   instrumento: "",
@@ -54,10 +53,9 @@ const crearFilaInstrumentoVacia = (): FilaInstrumento => ({
   serie: "",
   codigoInterno: "",
   resolucion: "",
-  ibcE: false,
-  ibcT: false,
-  ibcD: false,
-  ibcA: false,
+  // 🟢 Separamos IBC en Entrada (_in) y Salida (_out) con estado inicial null (gris)
+  ibcE_in: null, ibcT_in: null, ibcD_in: null, ibcA_in: null,
+  ibcE_out: null, ibcT_out: null, ibcD_out: null, ibcA_out: null,
   sensorInt: false,
   sensorExt: false,
   estampilla: "",
@@ -272,8 +270,9 @@ const DatosGeneralesSection = ({
   cotizaciones,
   ordenesTrabajo,
   // Función de actualización
+  isNew, // 🟢 Nueva propiedad
   onUpdateGeneral,
-}: DatosGeneralesSectionProps) => {
+}: DatosGeneralesSectionProps& { isNew: boolean }) => {
   // Listas para datalist
   const clientesList = useMemo(
     () => clientes.map((c) => c.razonSocial).filter(Boolean),
@@ -326,11 +325,11 @@ const DatosGeneralesSection = ({
             Cotización (código)
           </label>
           <input
-            list="cotizaciones-datalist"
-            value={cotizacionCodigo}
+            list={!isNew ? "cotizaciones-datalist" : undefined}
+            value={isNew ? "Automático (Al guardar)" : cotizacionCodigo}
+            disabled={isNew}
             onChange={(e) => onUpdateGeneral("cotizacionCodigo", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            placeholder="Ej: COT-045"
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${isNew ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
           <datalist id="cotizaciones-datalist">
             {cotizacionesList.map((c) => (
@@ -339,16 +338,16 @@ const DatosGeneralesSection = ({
           </datalist>
         </div>
 
-        <div className="md:col-span-2">
+       <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Orden de Trabajo (código)
           </label>
           <input
-            list="ordenes-datalist"
-            value={ordenTrabajoCodigo}
+            list={!isNew ? "ordenes-datalist" : undefined}
+            value={isNew ? "Automático (Al guardar)" : ordenTrabajoCodigo}
+            disabled={isNew}
             onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            placeholder="Ej: OT-2026-090"
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${isNew ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
           <datalist id="ordenes-datalist">
             {ordenesList.map((o) => (
@@ -472,7 +471,7 @@ const TablaInstrumentos = ({
         <table className="w-full text-left border-collapse min-w-[1550px]">
           <thead>
             <tr className="bg-slate-900 text-[10px] font-bold uppercase tracking-wider text-white border-b border-slate-800 sticky top-0 z-10">
-              <th className="p-3 text-center w-10 bg-blue-600">V.</th>
+          
               <th className="p-3 w-48">Instrumento</th>
               <th className="p-3 w-32">Marca</th>
               <th className="p-3 w-32">Modelo</th>
@@ -500,18 +499,7 @@ const TablaInstrumentos = ({
                   !inst.verificadoExcel ? "bg-red-50/20" : ""
                 }`}
               >
-                <td className="p-3 text-center bg-blue-50/10">
-                  <input
-                    type="checkbox"
-                    checked={inst.verificadoExcel}
-                    onChange={(e) => {
-                      onFilaChange(i, "verificadoExcel", e.target.checked);
-                      if (e.target.checked)
-                        onFilaChange(i, "observacionesSecretaria", "");
-                    }}
-                    className="w-4 h-4 rounded border-slate-300 text-blue-600"
-                  />
-                </td>
+             
 
                 <td className="p-3 font-bold text-slate-700">
                   <div className="relative">
@@ -604,22 +592,51 @@ const TablaInstrumentos = ({
                   />
                 </td>
 
-                <td className="p-2 bg-indigo-50/5 text-center">
-                  <div className="flex gap-1 justify-center">
-                    {(["ibcE", "ibcT", "ibcD", "ibcA"] as const).map((k) => (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => onFilaChange(i, k, !inst[k])}
-                        className={`w-6 h-6 rounded font-black border text-[9px] flex items-center justify-center transition-all cursor-pointer ${
-                          inst[k]
-                            ? "bg-blue-600 border-blue-600 text-white"
-                            : "bg-white border-slate-300 text-slate-300"
-                        }`}
-                      >
-                        {k.replace("ibc", "")}
-                      </button>
-                    ))}
+              <td className="p-2 bg-indigo-50/5 text-center">
+                  <div className="flex flex-col gap-1.5 items-center justify-center">
+                    {/* FILA 1: ENTRADA */}
+                    <div className="flex gap-1" title="Estado de Entrada">
+                      {(["E", "T", "D", "A"] as const).map((k) => {
+                        const key = `ibc${k}_in` as keyof FilaInstrumento;
+                        const val = inst[key] as boolean | null;
+                        
+                        // Lógica de ciclo: Null -> True(Verde) -> False(Rojo) -> Null
+                        const nextVal = val === null ? true : val === true ? false : null;
+                        const colorClass = val === true ? "bg-emerald-500 border-emerald-600 text-white shadow-inner" : val === false ? "bg-red-500 border-red-600 text-white shadow-inner" : "bg-slate-100 border-slate-300 text-slate-400";
+                        
+                        return (
+                          <button
+                            key={`in-${k}`}
+                            type="button"
+                            onClick={() => onFilaChange(i, key, nextVal)}
+                            className={`w-5 h-5 rounded-[4px] font-black border text-[9px] flex items-center justify-center transition-all cursor-pointer ${colorClass}`}
+                          >
+                            {k}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* FILA 2: SALIDA */}
+                    <div className="flex gap-1" title="Estado de Salida">
+                      {(["E", "T", "D", "A"] as const).map((k) => {
+                        const key = `ibc${k}_out` as keyof FilaInstrumento;
+                        const val = inst[key] as boolean | null;
+                        
+                        const nextVal = val === null ? true : val === true ? false : null;
+                        const colorClass = val === true ? "bg-emerald-500 border-emerald-600 text-white shadow-inner" : val === false ? "bg-red-500 border-red-600 text-white shadow-inner" : "bg-slate-100 border-slate-300 text-slate-400";
+                        
+                        return (
+                          <button
+                            key={`out-${k}`}
+                            type="button"
+                            onClick={() => onFilaChange(i, key, nextVal)}
+                            className={`w-5 h-5 rounded-[4px] font-black border text-[9px] flex items-center justify-center transition-all cursor-pointer ${colorClass}`}
+                          >
+                            {k}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </td>
 
@@ -987,8 +1004,11 @@ useEffect(() => {
       const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
       const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
       // Instrumentos
-      const instrumentos = (recepcion.instrumentos || []).map((det) => {
-        const estadoIBC = det.estadoIBC as Record<string, boolean> | null | undefined;
+     const instrumentos = (recepcion.instrumentos || []).map((det) => {
+        // Parseamos el JSON asumiendo que tiene la nueva estructura { entrada: {}, salida: {} }
+        // Se usa 'as any' o una interfaz específica si la tienes definida para det.estadoIBC
+        const estadoIBC = det.estadoIBC as any; 
+        
         return {
           id: generarIdUnico(),
           instrumento: det.instrumento || "",
@@ -997,11 +1017,19 @@ useEffect(() => {
           serie: det.serie || "",
           codigoInterno: det.codigoInventario || "",
           resolucion: det.resolucion || "",
-          ibcE: estadoIBC?.E || false,
-          ibcT: estadoIBC?.T || false,
-          ibcD: estadoIBC?.D || false,
-          ibcA: estadoIBC?.A || false,
-          sensorInt: false, // No existe en schema, se deja false por defecto
+          
+          // 🟢 ASIGNACIÓN CORREGIDA: Mapeamos hacia _in y _out
+          ibcE_in: estadoIBC?.entrada?.E ?? null,
+          ibcT_in: estadoIBC?.entrada?.T ?? null,
+          ibcD_in: estadoIBC?.entrada?.D ?? null,
+          ibcA_in: estadoIBC?.entrada?.A ?? null,
+          
+          ibcE_out: estadoIBC?.salida?.E ?? null,
+          ibcT_out: estadoIBC?.salida?.T ?? null,
+          ibcD_out: estadoIBC?.salida?.D ?? null,
+          ibcA_out: estadoIBC?.salida?.A ?? null,
+          
+          sensorInt: false,
           sensorExt: false,
           estampilla: det.estampilla || "",
           observaciones: det.observaciones || "",
@@ -1087,10 +1115,36 @@ useEffect(() => {
   }, []);
 
   // --- Mutación: Guardar recepción ---
-  const handleGenerarActa = useCallback(async () => {
+const handleGenerarActa = useCallback(async () => {
+    // 🟢 1. EVALUACIÓN NO BLOQUEANTE (Soft Validation)
+    // Verificamos si la cabecera tiene lo mínimo
+    const cabeceraLista = !!(formulario.nombreQuienEntrega && formulario.fechaRecepcion);
+
+    // Verificamos si TODOS los instrumentos cumplen las reglas
+    const instrumentosValidos = formulario.instrumentos.length > 0 && formulario.instrumentos.every((inst) => {
+      const basicosLlenos = !!(inst.instrumento && inst.marca && inst.modelo && inst.serie && inst.codigoInterno && inst.resolucion);
+      const entradaDiligenciada = inst.ibcE_in !== null && inst.ibcT_in !== null && inst.ibcD_in !== null && inst.ibcA_in !== null;
+      
+      return basicosLlenos && entradaDiligenciada;
+    });
+
+    const cumpleRequisitosCompletos = cabeceraLista && instrumentosValidos;
+    const estadoCalculado = cumpleRequisitosCompletos ? "RECIBIDO" : "BORRADOR";
+
+    // Feedback visual para el usuario
+    if (cumpleRequisitosCompletos) {
+      showToast("✅ Requisitos completos. La recepción se procesará como definitiva.");
+    } else {
+      showToast("⚠️ Faltan datos (ETDA o básicos). Se guardará el avance como BORRADOR.");
+    }
+
     try {
-      // Construir payload
+      // 🟢 2. CONSTRUCCIÓN DEL PAYLOAD
       const payload = {
+        // Indicador dinámico para tu Backend
+        estado: estadoCalculado, 
+        isNueva: selectedRecepcionId === "NUEVA",
+        
         // Cabecera
         solicitante: formulario.solicitante,
         nombreEntrega: formulario.nombreQuienEntrega || undefined,
@@ -1106,44 +1160,57 @@ useEffect(() => {
         observacionesPruebas: formulario.observacionesPruebas || undefined,
         nombreCalibra: formulario.nombreQuienCalibra || undefined,
         nombreRecibeServicio: formulario.nombreQuienRecibeServicio || undefined,
-        // Instrumentos
+        
+        // Instrumentos con mapeo exacto de Entrada y Salida
         instrumentos: formulario.instrumentos.map((inst) => ({
+          idLocal: inst.id,
           instrumento: inst.instrumento,
           marca: inst.marca || undefined,
           modelo: inst.modelo || undefined,
           serie: inst.serie || undefined,
           codigoInventario: inst.codigoInterno || undefined,
           resolucion: inst.resolucion || undefined,
-          observaciones: inst.observaciones || undefined,
+          sensorInt: inst.sensorInt ?? false,
+          sensorExt: inst.sensorExt ?? false,
           estampilla: inst.estampilla || undefined,
-          sensorInt: inst.sensorInt,
-          sensorExt: inst.sensorExt,
-          ibcE: inst.ibcE,
-          ibcT: inst.ibcT,
-          ibcD: inst.ibcD,
-          ibcA: inst.ibcA,
+          observaciones: inst.observaciones || undefined,
+          
+          // Estructura JSON para la columna ESTADO_IBC en tu BD
+          estadoIBC: {
+            entrada: {
+              E: inst.ibcE_in,
+              T: inst.ibcT_in,
+              D: inst.ibcD_in,
+              A: inst.ibcA_in
+            },
+            salida: {
+              E: inst.ibcE_out,
+              T: inst.ibcT_out,
+              D: inst.ibcD_out,
+              A: inst.ibcA_out
+            }
+          }
         })),
       };
 
-      // Llamada a la API (simulada)
-      // Reemplazar con fetch real cuando el backend esté listo
-      console.log("📤 Enviando mutación:", payload);
+      console.log("📤 Payload a enviar al backend:", payload);
+
+      // 🟢 3. LLAMADA AL SERVER ACTION
+      // const response = await tuServerAction(payload);
+      // if(!response.success) throw new Error("Fallo en BD");
 
       setActaGuardada(true);
-      showToast(`✅ Recepción guardada correctamente.`);
-
-      // Opcional: si es nueva, actualizar la lista (el contexto se actualizará vía socket)
-      // Forzar recarga de la lista
+      
+      // Si era nueva, lo sacamos a la lista después de guardar
       if (selectedRecepcionId === "NUEVA") {
-        // En producción, el socket actualizará dbState automáticamente.
-        // Por ahora, solo volvemos a la lista después de unos segundos.
         setTimeout(() => {
           volverALista();
         }, 2000);
       }
+
     } catch (error) {
       console.error("Error al guardar recepción:", error);
-      showToast("❌ Error al guardar la recepción.");
+      showToast("❌ Error al persistir los datos en el servidor.");
     }
   }, [formulario, selectedRecepcionId, showToast, volverALista]);
 
@@ -1203,6 +1270,7 @@ useEffect(() => {
         // --- VISTA DE FORMULARIO ---
         <div className="flex flex-col gap-5">
           <DatosGeneralesSection
+             isNew={selectedRecepcionId === "NUEVA"}
             solicitante={formulario.solicitante}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}

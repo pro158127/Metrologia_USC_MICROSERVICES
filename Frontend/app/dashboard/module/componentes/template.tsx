@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { toast } from 'sonner';
 import {
   History,
   Edit3,
@@ -19,6 +20,7 @@ import {
   MapPin,
   FileUp,
   Sparkles,
+  FileCheck,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import type {
@@ -36,8 +38,11 @@ import {
   pollSnapshotJob,
   saveMappingConfig,
   crearNuevaVersion,
+  getQuoteStatus,generarExcelPlantilla
 } from '@/app/action_module/template';
-
+import { firmador } from '@/app/action_module/template';
+import type {responseQuote,url} from 'backend/src/routes/schema-checkStatus'
+import downloadFromPresignedUrl from '@/app/lib/downlowad';
 // ============================================================================
 // 1. COMPONENTE UNIVER (CARGA DINÁMICA)
 // ============================================================================
@@ -53,6 +58,10 @@ const UniverSheet = dynamic(
     ),
   }
 );
+function mensajeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error ?? 'Error desconocido');
+}
 
 // ============================================================================
 // 2. HELPERS DE MAPEO
@@ -79,6 +88,7 @@ interface DraftScalar {
   dataType: string;
   cell: string | null;
   sheet: string | null;
+  required: boolean; // <-- Propiedad agregada
 }
 
 interface DraftColumn {
@@ -86,12 +96,17 @@ interface DraftColumn {
   label: string;
   dataType?: string;
   column: string | null;
+  columnsList?: string[]; // <-- Nuevo: Arreglo para múltiples columnas
+  required: boolean; // <-- Propiedad agregada
 }
 
 interface DraftTable {
   key: string;
   label: string;
+  star_header:number|null;
   startRow: number | null;
+  endRow: number | null; // <-- Añadir al draft
+  sheet: string | null;
   columns: DraftColumn[];
 }
 
@@ -99,11 +114,12 @@ interface DraftMapping {
   scalars: DraftScalar[];
   tables: DraftTable[];
 }
-
 type ActiveTarget =
   | { kind: 'scalar'; key: string }
   | { kind: 'column'; tableKey: string; key: string }
   | { kind: 'startRow'; tableKey: string }
+  | { kind: 'endRow'; tableKey: string } // <-- Añadido aquí
+  | { kind: 'star_header'; tableKey: string }
   | null;
 
 function buildDraft(schema: InputSchema): DraftMapping {
@@ -114,16 +130,21 @@ function buildDraft(schema: InputSchema): DraftMapping {
       dataType: s.dataType,
       cell: null,
       sheet: null,
+      required: s.required ?? false,
     })),
     tables: (schema.fields?.tables ?? []).map((t) => ({
       key: t.key,
       label: t.label,
+      star_header:null,
       startRow: null,
+      endRow: null, // <-- Inicializar como null
+      sheet: null,
       columns: t.columns.map((c) => ({
         key: c.key,
         label: c.label,
         dataType: c.type === 'OBJECT' ? 'OBJECT' : c.dataType,
         column: null,
+        required: c.required ?? false,
       })),
     })),
   };
@@ -145,9 +166,18 @@ function hydrateDraft(schema: InputSchema | null, mc: MappingConfig | null): Dra
     const dt = draft.tables.find((x) => x.key === t.key);
     if (dt) {
       if (typeof t.startRow === 'number') dt.startRow = t.startRow;
-      for (const c of t.columns ?? []) {
+      if (typeof t.endRow === 'number') dt.endRow = t.endRow; // <-- ¡FALTA ESTO!
+      if (typeof t.star_header === 'number') dt.star_header = t.star_header;
+      dt.sheet = t.sheet ?? null;
+     for (const c of t.columns ?? []) {
         const dc = dt.columns.find((x) => x.key === c.key);
-        if (dc) dc.column = c.column ?? null;
+        if (dc) {
+          // ✅ CORRECCIÓN: Hidratar tanto la columna única como la lista
+          dc.column = c.column ?? null;
+          if (c.columnsList && c.columnsList.length > 0) {
+            dc.columnsList = [...c.columnsList];
+          }
+        }
       }
     }
   }
@@ -226,7 +256,10 @@ export default function TemplatesMappingPage() {
       }, {});
 
       const formateo: PlantillaWithVersionResponse[] = load.data.map((p) => {
-        const ultimaVersion = p.versiones[p.versiones.length - 1];
+        console.log(p.idPlantilla)
+        console.log(p.versiones)
+        const ultimaVersion = p.versiones[0];
+        console.log(ultimaVersion,p.idPlantilla)
         return {
           success: true,
           data: {
@@ -257,7 +290,7 @@ export default function TemplatesMappingPage() {
           error: '',
         };
       });
-
+      console.log(formateo,"esto esssss")
       setTemplates(formateo);
       setSelectedTemplateForHistory(formateo_history);
 
@@ -275,7 +308,7 @@ export default function TemplatesMappingPage() {
     const id = setTimeout(() => reload(), 0);
     return () => clearTimeout(id);
   }, [reload]);
-
+const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
   return (
     <div className="w-full px-2 md:px-0 py-4">
       <div
@@ -355,6 +388,87 @@ export default function TemplatesMappingPage() {
                 <span>Editar Plantilla</span>
               </button>
 
+<button
+  onClick={async () => {
+    const id_plantilla = tpl?.data?.idPlantilla ?? 0;
+    try {
+      toast.loading('Iniciando encolamiento y procesando...');
+      
+      const res = await generarExcelPlantilla({
+        tipo: id_plantilla,
+        tipo_entry: 'test',
+  
+      });
+
+      if (!res.ok || !res.id_job) {
+        toast.dismiss();
+        toast.error(res.mensaje  || 'Error al encolar.');
+        return;
+      }
+
+      const jobId = res.id_job;
+      let completado = false;
+
+      // Bucle de polling síncrono dentro del mismo evento del botón
+      while (!completado) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        
+        const statusRes = await getQuoteStatus(jobId);
+        console.log(statusRes,"AQUI")
+        if (statusRes.ok && statusRes.urls) {
+          const { ok, urls,estado } = statusRes;
+
+          if (estado === 'COMPLETED') {     
+            console.log(statusRes.urls.excel,statusRes.urls.url_pdf)
+            completado = true;
+            toast.dismiss();
+            toast.success('¡Generación de Excel completada con éxito!');
+            const resul1=await firmador(statusRes.urls.url_pdf??"")
+            const rsesult2= await firmador(statusRes.urls.excel??"")
+
+            if(resul1.succes && rsesult2.succes){
+              
+              const dowload1=await downloadFromPresignedUrl(resul1.url??"","test")
+              const dowload2=await downloadFromPresignedUrl(resul1.url??"","test")
+              if(dowload1&&dowload2){
+                toast.success("Se ha descargado con exito")
+
+              }
+              else{
+                toast.error("Ocurrio erro al descargar")
+              }
+            }
+            else{
+              toast.error("Error al devolver archivo certificado")
+            }
+
+            
+          
+            return true; // Devuelve true al completar
+          }
+
+          if (estado === 'ERROR' || estado === 'FAILED') {
+            completado = true;
+            toast.dismiss();
+            toast.error('El proceso de generación falló en el servidor.');
+            return false; // Devuelve false si falla
+          }
+        }
+      }
+    } catch (error) {
+      toast.dismiss();
+      console.error('Error:', error);
+      toast.error(`Error: ${mensajeError(error)}`);
+      return false;
+    }
+  }}
+  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg font-medium text-xs text-white bg-emerald-600 hover:bg-emerald-700"
+>
+  <FileCheck size={14} />
+  <span>Review</span>
+</button>
+              {/* Botón secundario: Historial */}
+           
               <button
                 onClick={() => {
                   const id_plantlla = tpl?.data?.idPlantilla;
@@ -402,6 +516,8 @@ export function EditorModal({
   onClose: () => void;
   onReload: () => void;
 }) {
+  const [consolidando, setConsolidando] = useState(false);
+const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputSchema = template?.data?.versionActual?.inputSchema ?? null;
   const versionActual = template?.data?.versionActual ?? null;
 
@@ -425,22 +541,45 @@ export function EditorModal({
   const univerRef = useRef<UniverSheetHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const buildRanges = useCallback((): HighlightRange[] => {
-    const ranges: HighlightRange[] = [];
-    for (const s of draft.scalars) {
-      if (s.cell) ranges.push({ sheetName: s.sheet ?? '', a1: s.cell, color: COLOR_SCALAR });
+const buildRanges = useCallback((): HighlightRange[] => {
+  const ranges: HighlightRange[] = [];
+  
+  for (const s of draft.scalars) {
+    if (s.cell) ranges.push({ sheetName: s.sheet ?? '', a1: s.cell, color: COLOR_SCALAR });
+  }
+
+  for (const t of draft.tables) {
+    // 1. Pinta la cabecera PRIMERO (es independiente de la fila de inicio)
+   if (t.star_header) {
+    ranges.push({ 
+      sheetName: t.sheet ?? '', 
+      a1: `A${t.star_header}`, // <-- Inyectamos la columna 'A' antes del número
+      color: '#FCA5A5'
+    });
+  }
+  if (t.endRow) {
+      ranges.push({ sheetName: t.sheet ?? '', a1: `A${t.endRow}`, color: '#C7D2FE' });
     }
-    for (const t of draft.tables) {
-      if (!t.startRow) continue;
-      for (const c of t.columns) {
-        if (c.column) {
-          ranges.push({ sheetName: '', a1: `${c.column}${t.startRow}`, color: COLOR_COLUMN, isColumn: true });
-        }
+    // 2. AHORA SÍ, el punto de control: si no hay fila de inicio, saltamos las columnas
+    if (!t.startRow) continue;
+
+    for (const c of t.columns) {
+      if (c.column) {
+        ranges.push({ sheetName: t.sheet ?? '', a1: `${c.column}${t.startRow}`, color: COLOR_COLUMN, isColumn: true });
       }
-      ranges.push({ sheetName: '', a1: `A${t.startRow}`, color: COLOR_STARTROW });
+      // ✅ NUEVO: Soporte para pintar múltiples columnas (Arrays/Lists)
+  if (c.columnsList && c.columnsList.length > 0) {
+    for (const col of c.columnsList) {
+      ranges.push({ sheetName: t.sheet ?? '', a1: `${col}${t.startRow}`, color: COLOR_COLUMN, isColumn: true });
     }
-    return ranges;
-  }, [draft]);
+  }
+    }
+    
+    ranges.push({ sheetName: t.sheet ?? '', a1: `A${t.startRow}`, color: COLOR_STARTROW });
+  }
+  
+  return ranges;
+}, [draft]);
 
   const applyHighlights = useCallback(() => {
     univerRef.current?.highlightRanges(buildRanges());
@@ -465,6 +604,8 @@ export function EditorModal({
     const pId: number = idPlantilla;
 
     async function load() {
+      console.log("Entro_captor",versionActual,versionId)
+      
       setSnapshotLoading(true);
       setSnapshotError(null);
       const first = await getSnapshot(pId, vId);
@@ -522,18 +663,49 @@ export function EditorModal({
           d.sheet = sel.sheetName;
         }
       } else if (activeTarget.kind === 'column') {
-        const t = next.tables.find((x) => x.key === activeTarget.tableKey);
-        if (t) {
-          const c = t.columns.find((x) => x.key === activeTarget.key);
-          if (c) {
-            c.column = columnToLetter(sel.col);
-            if (!t.startRow) t.startRow = sel.row + 1;
-          }
+  const t = next.tables.find((x) => x.key === activeTarget.tableKey);
+  if (t) {
+    const c = t.columns.find((x) => x.key === activeTarget.key);
+    if (c) {
+      const colLetter = columnToLetter(sel.col);
+      t.sheet = sel.sheetName || null;
+      if (!t.startRow) t.startRow = sel.row + 1;
+
+      // Lógica de lista vs escalar para columnas
+      if (c.dataType === 'LIST' || c.dataType === 'ARRAY') {
+        if (!c.columnsList) c.columnsList = [];
+        if (!c.columnsList.includes(colLetter)) {
+          c.columnsList.push(colLetter); // Agrega sin duplicar
         }
-      } else if (activeTarget.kind === 'startRow') {
-        const t = next.tables.find((x) => x.key === activeTarget.tableKey);
-        if (t) t.startRow = sel.row + 1;
+      } else {
+        c.column = colLetter; // Comportamiento normal (sobrescribe)
       }
+    }
+  }}
+  else if (activeTarget.kind === 'startRow') {
+  const t = next.tables.find((x) => x.key === activeTarget.tableKey);
+  if (t) {
+    t.startRow = sel.row + 1;
+    t.sheet = sel.sheetName || null;
+  }
+}else if (activeTarget.kind === 'star_header') {
+  const t = next.tables.find((x) => x.key === activeTarget.tableKey);
+  if (t) {
+    t.star_header = sel.row + 1; // ✅ CORREGIDO: sel.row es base 0, se le suma 1
+    t.sheet = sel.sheetName || null;
+  }
+}else if (activeTarget.kind === 'endRow') {
+  const t = next.tables.find((x) => x.key === activeTarget.tableKey);
+  if (t) {
+    t.endRow = sel.row + 1;
+    t.sheet = sel.sheetName || null;
+  }
+}
+
+ 
+      
+
+  
       return next;
     });
   }, [activeTarget]);
@@ -551,19 +723,22 @@ export function EditorModal({
     if (activeTarget?.kind === 'scalar' && activeTarget.key === key) setActiveTarget(null);
   };
 
-  const unmapColumn = (tableKey: string, key: string) => {
+const unmapColumn = (tableKey: string, key: string) => {
     setDraft((prev) => {
       const next = deepClone(prev);
       const t = next.tables.find((x) => x.key === tableKey);
       if (t) {
         const c = t.columns.find((x) => x.key === key);
-        if (c) c.column = null;
+        if (c) {
+          // ✅ CORRECCIÓN: Limpiar ambos campos para reiniciar el estado por completo
+          c.column = null;
+          c.columnsList = []; 
+        }
       }
       return next;
     });
     if (activeTarget?.kind === 'column' && activeTarget.key === key) setActiveTarget(null);
   };
-
   const resetStartRow = (tableKey: string) => {
     setDraft((prev) => {
       const next = deepClone(prev);
@@ -573,6 +748,16 @@ export function EditorModal({
     });
     if (activeTarget?.kind === 'startRow' && activeTarget.tableKey === tableKey) setActiveTarget(null);
   };
+
+  const resetStarHeader = (tableKey: string) => {
+  setDraft((prev) => {
+    const next = deepClone(prev);
+    const t = next.tables.find((x) => x.key === tableKey);
+    if (t) t.star_header = null;
+    return next;
+  });
+  if (activeTarget?.kind === 'star_header' && activeTarget.tableKey === tableKey) setActiveTarget(null);
+};
 
   const draftToMappingConfig = (): MappingConfig => {
     const schema = inputSchema;
@@ -590,9 +775,16 @@ export function EditorModal({
           .map((t) => ({
             key: t.key,
             startRow: t.startRow!,
+            star_header: t.star_header ?? undefined,
+            endRow: t.endRow ?? undefined, // <-- Serializar
+            sheet: t.sheet ?? undefined,
             columns: t.columns
-              .filter((c) => c.column)
-              .map((c) => ({ key: c.key, column: c.column! })),
+              .filter((c) => c.column || (c.columnsList && c.columnsList.length > 0))
+              .map((c) => ({ 
+            key: c.key, 
+            column: c.column || undefined,
+            columnsList: c.columnsList && c.columnsList.length > 0 ? c.columnsList : undefined
+          })),
           })),
       },
     };
@@ -600,6 +792,23 @@ export function EditorModal({
 
   const handleSave = async () => {
     if (!versionActual) return;
+    const faltanEscalares = draft.scalars.some(s => 
+  s.required && !s.cell
+);
+
+// 2. Validación de Tablas y Columnas: Aquí sí evaluamos 'column' y el nuevo 'columnsList'
+const faltanTablas = draft.tables.some(t => {
+  const columnasFaltantes = t.columns.some(c => 
+    c.required && !c.column && (!c.columnsList || c.columnsList.length === 0)
+  );
+  // Añade '!t.endRow' si es obligatorio
+  return columnasFaltantes || !t.startRow || !t.star_header || !t.endRow; 
+});
+
+if (faltanEscalares || faltanTablas) {
+  toast.error('Operación denegada: Faltan variables obligatorias por mapear.');
+  return; 
+}
     setSaving(true);
     setSaveMsg(null);
     setSaveError(null);
@@ -654,6 +863,8 @@ export function EditorModal({
     return draft.tables.find((t) => t.key === activeTarget.tableKey)?.label ?? 'tabla';
   })();
 
+ 
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
       <div className="w-full h-[95vh] max-w-[1400px] rounded-xl flex flex-col overflow-hidden shadow-2xl bg-white border border-slate-300">
@@ -675,22 +886,26 @@ export function EditorModal({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors disabled:opacity-50"
-            >
-              {saving ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />}
-              {saving ? 'Guardando...' : 'Guardar Mapeo'}
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 transition-colors"
-            >
-              <X size={18} />
-            </button>
-          </div>
+        <div className="flex items-center gap-2">
+  {/* Botón original de solo guardar */}
+  <button
+    onClick={handleSave}
+    disabled={saving || consolidando}
+    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold shadow-sm transition-colors disabled:opacity-50"
+  >
+    {saving ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />}
+    Guardar
+  </button>
+
+
+
+  <button
+    onClick={onClose}
+    className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 transition-colors"
+  >
+    <X size={18} />
+  </button>
+</div>
         </div>
 
         {/* Mensajes de estado */}
@@ -864,7 +1079,7 @@ export function EditorModal({
                             {s.dataType}
                             {s.cell && (
                               <StatusBadge tone="mapped">
-                                <MapPin size={9} /> Mapeado en {s.cell}
+                                <MapPin size={9} /> Mapeado en {s.sheet ? `${s.sheet}!` : ''}{s.cell}
                               </StatusBadge>
                             )}
                             {!s.cell && <StatusBadge tone="pending">Pendiente</StatusBadge>}
@@ -946,6 +1161,72 @@ export function EditorModal({
                           )}
                         </span>
                       </div>
+                      <div
+                  onClick={() => setActiveTarget({ kind: 'star_header', tableKey: t.key })}
+                  className={`p-2 rounded-lg border cursor-pointer transition-all flex items-center justify-between mt-2 ${
+                    activeTarget?.kind === 'star_header' && activeTarget.tableKey === t.key
+                      ? 'bg-orange-50/60 border-orange-500 ring-1 ring-orange-500'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <span className="text-[11px] font-medium text-slate-700">Celda de Cabecera (Header)</span>
+                  <span className="flex items-center gap-1.5">
+                    {t.star_header ? (
+                      <>
+                        <StatusBadge tone="info">Fila {t.star_header}</StatusBadge>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            resetStarHeader(t.key); // <-- Necesitarás esta función
+                          }}
+                          className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          title="Quitar cabecera"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </>
+                    ) : (
+                      <StatusBadge tone="pending">Sin definir</StatusBadge>
+                    )}
+                  </span>
+                </div>
+
+                <div
+  onClick={() => setActiveTarget({ kind: 'endRow', tableKey: t.key })}
+  className={`p-2 rounded-lg border cursor-pointer transition-all flex items-center justify-between mt-2 ${
+    activeTarget?.kind === 'endRow' && activeTarget.tableKey === t.key
+      ? 'bg-blue-50/60 border-blue-500 ring-1 ring-blue-500'
+      : 'bg-white border-slate-200 hover:border-slate-300'
+  }`}
+>
+  <span className="text-[11px] font-medium text-slate-700">Fila de fin de registros (endRow)</span>
+  <span className="flex items-center gap-1.5">
+    {t.endRow ? (
+      <>
+        <StatusBadge tone="info">Fila {t.endRow}</StatusBadge>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setDraft(prev => {
+              const next = deepClone(prev);
+              const tbl = next.tables.find(x => x.key === t.key);
+              if (tbl) tbl.endRow = null;
+              return next;
+            });
+          }}
+          className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+          title="Quitar fin de fila"
+        >
+          <Trash2 size={11} />
+        </button>
+      </>
+    ) : (
+      <StatusBadge tone="pending">Sin definir</StatusBadge>
+    )}
+  </span>
+</div>
+
+                      
 
                       {/* Columnas de la tabla */}
                       <div className="flex flex-col gap-1.5 pl-2 border-l-2 border-emerald-100">
@@ -971,30 +1252,42 @@ export function EditorModal({
                                 </span>
                                 <span className="w-3 h-3 rounded-full border border-slate-300 shrink-0 mt-0.5" style={{ background: COLOR_COLUMN }} />
                               </div>
-                              <div className="mt-1.5 pt-1 border-t border-slate-100 flex justify-between items-center text-[10px] gap-2">
-                                <span className="text-slate-500">
-                                  {c.column ? (
-                                    <StatusBadge tone="mapped">
-                                      Columna {c.column}
-                                      {t.startRow ? `, Fila ${t.startRow}` : ''}
-                                    </StatusBadge>
-                                  ) : (
-                                    <StatusBadge tone="pending">Pendiente</StatusBadge>
-                                  )}
-                                </span>
-                                {c.column && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      unmapColumn(t.key, c.key);
-                                    }}
-                                    title="Quitar asignación"
-                                    className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                                  >
-                                    <Trash2 size={11} />
-                                  </button>
-                                )}
-                              </div>
+                        <div className="mt-1.5 pt-1 border-t border-slate-100 flex justify-between items-center text-[10px] gap-2">
+                          <span className="text-slate-500 flex flex-wrap gap-1">
+                        {/* Columna única */}
+                            {c.column && (
+                              <StatusBadge tone="mapped">
+                                {t.sheet ? `${t.sheet}!` : ''}Col. {c.column} {t.startRow ? `(Fila ${t.startRow})` : ''}
+                              </StatusBadge>
+                            )}
+                            
+                            {/* Múltiples columnas */}
+                            {c.columnsList && c.columnsList.length > 0 && c.columnsList.map(col => (
+                              <StatusBadge key={col} tone="mapped">
+                                {t.sheet ? `${t.sheet}!` : ''}Col. {col} {t.startRow ? `(Fila ${t.startRow})` : ''}
+                              </StatusBadge>
+                            ))}
+
+                            {/* Pendiente */}
+                            {!c.column && (!c.columnsList || c.columnsList.length === 0) && (
+                              <StatusBadge tone="pending">Pendiente</StatusBadge>
+                            )}
+                          </span>
+                          
+                          {/* Botón para limpiar (ajusta unmapColumn para que también limpie c.columnsList = []) */}
+                          {(c.column || (c.columnsList && c.columnsList.length > 0)) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                unmapColumn(t.key, c.key);
+                              }}
+                              title="Quitar asignación"
+                              className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          )}
+                        </div>
                             </div>
                           );
                         })}

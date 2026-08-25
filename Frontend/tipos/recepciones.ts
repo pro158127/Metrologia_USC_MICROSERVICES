@@ -28,10 +28,8 @@ export interface FilaInstrumento {
   serie: string;
   codigoInterno: string;
   resolucion: string;
-  ibcE: boolean;
-  ibcT: boolean;
-  ibcD: boolean;
-  ibcA: boolean;
+  ibcE_in: null, ibcT_in: null, ibcD_in: null, ibcA_in: null,
+  ibcE_out: null, ibcT_out: null, ibcD_out: null, ibcA_out: null,
   sensorInt: boolean;
   sensorExt: boolean;
   estampilla: string;

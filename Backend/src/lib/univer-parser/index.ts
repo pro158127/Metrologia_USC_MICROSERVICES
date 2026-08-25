@@ -1,7 +1,7 @@
 // lib/univer-parser/index.ts
 import ExcelJS from 'exceljs';
-import { parseSheet } from './parseWorkbook';
-import { createStyleRegistry } from './styleRegistry';
+import { parseSheet } from './parseWorkbook.js';
+import { createStyleRegistry } from './styleRegistry.js';
 
 export async function excelToUniverSnapshot(
   buffer: Buffer | ArrayBuffer,
@@ -15,8 +15,17 @@ export async function excelToUniverSnapshot(
   const sheetOrder: string[] = [];
 
   workbook.worksheets.forEach((worksheet, index) => {
+    
+    // --- SOLUCIÓN: Intervenir ExcelJS antes del parseo ---
+    worksheet.eachRow({ includeEmpty: true }, (row) => {
+      row.hidden = false; // Desoculta la fila nativamente en la memoria
+    });
+    // ----------------------------------------------------
+
     const sheetId = `sheet-${index + 1}`;
     sheetOrder.push(sheetId);
+    
+    // Ahora parseSheet recibirá la hoja sin filas ocultas
     sheets[sheetId] = parseSheet(worksheet, styleRegistry, index);
   });
 

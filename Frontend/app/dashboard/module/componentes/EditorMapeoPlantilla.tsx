@@ -216,9 +216,7 @@ export function EditorMapeoPlantilla({
             </label>
           ))}
         </div>
-      </div>
-
-      <button
+         <button
         onClick={handleConsolidar}
         disabled={consolidando}
         className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold text-white transition-all active:scale-95 disabled:opacity-50"
@@ -227,6 +225,9 @@ export function EditorMapeoPlantilla({
         {consolidando ? <LoaderCircle size={13} className="animate-spin" /> : <Save size={13} />}
         {consolidando ? 'Consolidando tarifas...' : 'Terminar y Consolidar'}
       </button>
+      </div>
+
+     
     </div>
   );
 }

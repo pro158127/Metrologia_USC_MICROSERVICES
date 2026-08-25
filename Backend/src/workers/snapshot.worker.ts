@@ -3,9 +3,9 @@
 import 'dotenv/config';
 import { Worker } from 'bullmq';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client';
-import { excelToUniverSnapshot } from '../lib/univer-parser';
-import { SNAPSHOT_QUEUE, SNAPSHOT_TTL_SECONDS, getRedisConnection, SnapshotJobData } from '../lib/queue/queue';
+import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client.js';
+import { excelToUniverSnapshot } from '../lib/univer-parser/index.js';
+import { SNAPSHOT_QUEUE, SNAPSHOT_TTL_SECONDS, getRedisConnection, SnapshotJobData } from '../lib/queue/queue.js';
 
 const SNAPSHOT_KEY_PREFIX = 'univer:snapshot:';
 
@@ -36,23 +36,27 @@ async function processSnapshot(jobData: SnapshotJobData): Promise<{ versionId: n
   return { versionId, status: 'completed' };
 }
 
-const worker = new Worker<SnapshotJobData>(SNAPSHOT_QUEUE, async (job) => {
-  return processSnapshot(job.data);
-}, {
-  connection: getRedisConnection(),
-  concurrency: 2,
-});
+export function iniciarSnapshotWorker() {
+  const worker = new Worker<SnapshotJobData>(SNAPSHOT_QUEUE, async (job) => {
+    return processSnapshot(job.data);
+  }, {
+    connection: getRedisConnection(),
+    concurrency: 2,
+  });
 
-worker.on('completed', (job) => {
-  console.log(`[snapshot-worker] Job ${job.id} completado para versión ${job.data.versionId}`);
-});
+  worker.on('completed', (job) => {
+    console.log(`[snapshot-worker] Job ${job.id} completado para versión ${job.data.versionId}`);
+  });
 
-worker.on('failed', (job, err) => {
-  console.error(`[snapshot-worker] Job ${job?.id} falló: ${err.message}`, err);
-});
+  worker.on('failed', (job, err) => {
+    console.error(`[snapshot-worker] Job ${job?.id} falló: ${err.message}`, err);
+  });
 
-worker.on('error', (err) => {
-  console.error('[snapshot-worker] Error del worker:', err);
-});
+  worker.on('error', (err) => {
+    console.error('[snapshot-worker] Error del worker:', err);
+  });
 
-console.log('[snapshot-worker] Worker de snapshots iniciado.');
+  console.log('[snapshot-worker] Worker de snapshots iniciado y protegido.');
+  
+  return worker;
+}

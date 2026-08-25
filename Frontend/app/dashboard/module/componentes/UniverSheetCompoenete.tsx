@@ -35,12 +35,56 @@ function columnToLetter(col: number): string {
 /** Resuelve la hoja por nombre; si no existe o no se provee, usa la activa o la primera. */
 function resolveSheet(workbook: UniverWorkbook, name?: string) {
   if (name) {
-    const byName = workbook.getSheetByName?.(name);
-    if (byName) return byName;
+    const sheets = workbook.getSheets?.() || [];
+    const match = sheets.find(s => 
+      (typeof s.getSheetName === 'function' && s.getSheetName() === name) || 
+      (typeof s.getSheetName === 'function' && s.getSheetName() === name)
+    );
+    if (match) return match;
   }
   const active = workbook.getActiveSheet?.();
   if (active) return active;
   return workbook.getSheets?.()?.[0] ?? null;
+}
+
+interface MergeRect {
+  startRow: number;
+  startColumn: number;
+  endRow: number;
+  endColumn: number;
+}
+
+/**
+ * Construye el mapa de regiones combinadas por hoja a partir del snapshot,
+ * para normalizar cualquier celda seleccionada al ancla (esquina superior
+ * izquierda) del merge al que pertenece.
+ */
+function buildMergeMap(snapshot: unknown): Record<string, MergeRect[]> {
+  const map: Record<string, MergeRect[]> = {};
+  if (!snapshot || typeof snapshot !== 'object') return map;
+  const wb = snapshot as { sheets?: Record<string, { name?: string; mergeData?: MergeRect[] }> };
+  if (!wb.sheets) return map;
+  for (const sheet of Object.values(wb.sheets)) {
+    if (!sheet?.name || !Array.isArray(sheet.mergeData)) continue;
+    // Buscamos startRow en lugar de sr
+    map[sheet.name] = sheet.mergeData.filter((m) => m && typeof m.startRow === 'number');
+  }
+  return map;
+}
+
+function normalizeToMergeAnchor(
+  merges: MergeRect[] | undefined,
+  row: number,
+  col: number
+): { row: number; col: number } {
+  if (!merges?.length) return { row, col };
+  for (const m of merges) {
+    // Usamos las propiedades largas para normalizar
+    if (row >= m.startRow && row <= m.endRow && col >= m.startColumn && col <= m.endColumn) {
+      return { row: m.startRow, col: m.startColumn };
+    }
+  }
+  return { row, col };
 }
 
 export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
@@ -50,6 +94,7 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
     const workbookRef = useRef<UniverWorkbook | null>(null);
     const selectionSubRef = useRef<{ dispose: () => void } | null>(null);
     const highlightedRef = useRef<HighlightRange[]>([]);
+    const mergeMapRef = useRef<Record<string, MergeRect[]>>({});
     const onCellSelectRef = useRef(onCellSelect);
     const onReadyRef = useRef(onReady);
     const [isLoading, setIsLoading] = useState(false);
@@ -83,32 +128,55 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
     }, []);
 
     // 2. Cargar snapshot del backend (payload listo para createWorkbook)
-    useEffect(() => {
+ useEffect(() => {
       if (!snapshot || !univerAPIRef.current) return;
 
       const univerAPI = univerAPIRef.current;
       setIsLoading(true);
       setError(null);
 
+      // Variables locales para asegurar que limpiamos exactamente la instancia de este render
+      let currentWorkbook: UniverWorkbook | null = null;
+      let currentSelectionSub: { dispose: () => void } | null = null;
+
       try {
+        // 💡 1. Intentamos destruirlo preventivamente si el snapshot traía un ID previo que se quedó pegado
+        const snapshotId = (snapshot as any).id || (snapshot as any).unitId;
+        if (snapshotId && typeof univerAPI.disposeUnit === 'function') {
+          try { univerAPI.disposeUnit(snapshotId); } catch (e) {}
+        }
+
         // Crear el workbook a partir del snapshot generado en el backend
-        workbookRef.current = univerAPI.createWorkbook(
+        currentWorkbook = univerAPI.createWorkbook(
           snapshot as Parameters<UniverAPI['createWorkbook']>[0]
         );
+        
+        workbookRef.current = currentWorkbook;
+        mergeMapRef.current = buildMergeMap(snapshot);
 
         // 2a. Escuchar cambios de selección para emitir la celda/columna elegida
-        selectionSubRef.current?.dispose();
-        const workbook = workbookRef.current;
-        const sub = workbook.onSelectionChange((selections) => {
-          if (!onCellSelectRef.current || !selections?.length) return;
+        selectionSubRef.current?.dispose(); // Limpiar global por si acaso
+        
+        const sub = currentWorkbook.onSelectionChange((selections) => {
+        if (!onCellSelectRef.current || !selections?.length) return;
           const first = selections[0];
-          const sheet = workbook.getActiveSheet?.();
-          const sheetName = sheet?.getSheetName?.() ?? '';
+          const sheet = currentWorkbook!.getActiveSheet?.();
+          
+          // ✅ CORRECCIÓN: Extracción híbrida del nombre de la hoja
+          let sheetName = '';
+          if (sheet) {
+            if (typeof sheet.getSheetName() === 'function') sheetName = sheet.getSheetName();
+            else if (typeof sheet.getSheetName === 'function') sheetName = sheet.getSheetName();
+          }
 
-          const row = first?.startRow ?? 0;
-          const col = first?.startColumn ?? 0;
-          const endRow = first?.endRow ?? row;
-          const endColumn = first?.endColumn ?? col;
+          const rawRow = first?.startRow ?? 0;
+          const rawCol = first?.startColumn ?? 0;
+          const endRow = first?.endRow ?? rawRow;
+          const endColumn = first?.endColumn ?? rawCol;
+
+          const anchor = normalizeToMergeAnchor(mergeMapRef.current[sheetName], rawRow, rawCol);
+          const row = anchor.row;
+          const col = anchor.col;
 
           const selection: CellSelection = {
             sheetName,
@@ -120,7 +188,9 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
           };
           onCellSelectRef.current(selection);
         });
-        selectionSubRef.current = sub as { dispose: () => void };
+        
+        currentSelectionSub = sub as { dispose: () => void };
+        selectionSubRef.current = currentSelectionSub;
 
         setIsLoading(false);
         onReadyRef.current?.();
@@ -129,17 +199,39 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
         setError('Error al renderizar el documento');
         setIsLoading(false);
       }
+
+      // 💡 2. Función de limpieza (Cleanup): Destruye el workbook al desmontar
+      return () => {
+        if (currentSelectionSub) {
+          currentSelectionSub.dispose();
+        }
+        if (currentWorkbook) {
+          try {
+            // Buscamos el ID en las propiedades comunes del objeto (sin usar getters inexistentes)
+            const unitId = (currentWorkbook as any).id || (currentWorkbook as any).unitId || (currentWorkbook as any)._id;
+            
+            // Destruimos la unidad usando la API raíz si el ID existe
+            if (unitId && typeof univerAPI.disposeUnit === 'function') {
+              univerAPI.disposeUnit(unitId);
+            }
+          } catch (cleanupError) {
+            console.warn('Fallo silencioso al limpiar el workbook:', cleanupError);
+          }
+        }
+        workbookRef.current = null;
+      };
     }, [snapshot]);
 
+    
     // 3. API imperativa: resaltar / limpiar mapeos en el canvas
     useImperativeHandle(ref, () => ({
       highlightRanges: (ranges: HighlightRange[]) => {
         const workbook = workbookRef.current;
         if (!workbook) return;
 
-        // Limpiar resaltados previos
+        // Limpiar resaltados previos (solo color de fondo, sin tocar otros formatos)
         for (const prev of highlightedRef.current) {
-          resolveSheet(workbook, prev.sheetName)?.getRange(prev.a1)?.clearFormat();
+          resolveSheet(workbook, prev.sheetName)?.getRange(prev.a1)?.setBackground("");
         }
         highlightedRef.current = [];
 
@@ -154,7 +246,7 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
         const workbook = workbookRef.current;
         if (!workbook) return;
         for (const range of highlightedRef.current) {
-          resolveSheet(workbook, range.sheetName)?.getRange(range.a1)?.clearFormat();
+          resolveSheet(workbook, range.sheetName)?.getRange(range.a1)?.setBackground("");
         }
         highlightedRef.current = [];
       },

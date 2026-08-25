@@ -13,11 +13,13 @@ RUN apk add --no-cache \
 
 WORKDIR /
 COPY backup.sh /backup.sh
-RUN chmod +x /backup.sh
+COPY restore.sh /restore.sh
+RUN chmod +x /backup.sh /restore.sh
 
+# 🔥 ÚNICA MODIFICACIÓN: Agregamos /restore.sh || true justo antes de iniciar crond
 ENTRYPOINT ["/sbin/tini", "--", "/bin/sh", "-c", "\
   echo \"$CRON_SCHEDULE /backup.sh >> /var/log/backup.log 2>&1\" > /etc/crontabs/root; \
   touch /var/log/backup.log; \
-  /backup.sh || true; \
+  /restore.sh || true; \
   exec crond -f -l 2 \
 "]

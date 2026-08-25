@@ -40,7 +40,7 @@ import {
   OTasiignemet,
   Tecnico,
 } from "@/tipos/tipo_ordenes_de_trabajo";
-
+import { consolidarOrdenTrabajoAction } from "@/app/action_module/ordenes";
 // ==========================================
 // TIPOS Y DATOS CONSTANTES
 // ==========================================
@@ -198,7 +198,10 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   instrumentosCot,
   technicians,
   onAssignTechnician,
+  estadoActual, // <-- Nuevo prop
 }) => {
+ const puedeAsignar = estadoActual === "En_recepción";
+
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
       <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
@@ -210,14 +213,21 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
             Asignación directa de metrólogos por cada equipo en la orden de trabajo.
           </p>
         </div>
-        <button
-          onClick={() => setEditingTechnician(!editingTechnician)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-700 transition cursor-pointer border-none shadow-sm"
-        >
-          {editingTechnician ? "Ocultar Panel Asignación" : "Asignar Técnico"}
-        </button>
+        
+        {/* Renderizado condicional basado en el estado */}
+        {puedeAsignar ? (
+          <button
+            onClick={() => setEditingTechnician(!editingTechnician)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-700 transition cursor-pointer border-none shadow-sm"
+          >
+            {editingTechnician ? "Ocultar Panel Asignación" : "Asignar Técnico"}
+          </button>
+        ) : (
+          <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+            Asignación bloqueada (la OT no está "En recepción")
+          </span>
+        )}
       </div>
-
       {editingTechnician && (
         <div className="space-y-3 animate-fadeIn">
           {instrumentosCot.map((item) => (
@@ -229,9 +239,10 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
                 {item.instrumento}
               </span>
 
-              <select
+             <select
                 value={item.asignado || ""}
-                onChange={(e) => onAssignTechnician(item.asignado,item.id_instrumento)}
+                // 🟢 CORRECCIÓN: Usar Number(e.target.value) en lugar del viejo item.asignado
+                onChange={(e) => onAssignTechnician(Number(e.target.value), item.id_instrumento)}
                 className="text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">-- Sin Asignar --</option>
@@ -401,12 +412,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
             <span className="text-amber-600 font-bold ml-2">(Excedido)</span>
           )}
         </span>
-        <button
-          onClick={onAddInstrument}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 px-4 rounded-xl transition"
-        >
-          + Agregar instrumento
-        </button>
+   
       </div>
 
       <div className="overflow-x-auto max-w-full shadow-inner">
@@ -431,7 +437,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
               <th className="p-2.5 border-r border-slate-200 min-w-[130px]">EMP(limite de control)</th>
               <th className="p-2.5 border-r border-slate-200 min-w-[150px]">Documento de  Especificación</th>
               <th className="p-2.5 min-w-[150px]">Regla de Decisión</th>
-              <th className="p-2.5 min-w-[60px]">Acción</th>
+  
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-medium bg-white">
@@ -590,15 +596,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                       placeholder="Regla decisión"
                     />
                   </td>
-                  <td className="p-2 text-center">
-                    <button
-                      onClick={() => onRemoveInstrument(inst.id)}
-                      className="text-red-500 hover:text-red-700 font-bold text-lg"
-                      title="Eliminar instrumento"
-                    >
-                      ✕
-                    </button>
-                  </td>
+              
                 </tr>
               );
             })}
@@ -901,18 +899,16 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   value={orderDraft.fechaDiligenciamiento}
                   onChange={(v) => updateOrderDraft('fechaDiligenciamiento', v)}
                 />
-                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider sm:col-span-2">
-                  Estado Interno del Flujo
-                  <select
-                    value={orderDraft.estadoOrden}
-                    onChange={(e) => updateOrderDraft('estadoOrden', e.target.value)}
-                    className="w-full mt-1 border border-slate-200 rounded-xl p-2 text-xs bg-white outline-none focus:border-blue-500 font-bold"
-                  >
-                    {kanbanColumns.map((c) => (
-                      <option key={c.key}>{c.key}</option>
-                    ))}
-                  </select>
-                </label>
+           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider sm:col-span-2">
+  Estado Interno del Flujo
+  {/* Reemplazamos el <select> por un input bloqueado */}
+  <input
+    type="text"
+    value={orderDraft.estadoOrden}
+    disabled
+    className="w-full mt-1 border border-slate-200 rounded-xl p-2 text-xs bg-slate-100 outline-none font-bold text-slate-500 cursor-not-allowed"
+  />
+</label>
                 <label className="flex items-center gap-3 border border-amber-200 bg-amber-50/50 rounded-xl px-3 py-2.5 sm:col-span-2 text-xs font-bold text-slate-700">
                   <select
                     value={orderDraft.requiereAnexo}
@@ -1323,37 +1319,42 @@ export const OrdenesTrabajo = () => {
   /**
    * Obtiene los técnicos con roles específicos desde los datos de usuarios y roles.
    */
-  const technicians:Tecnico[]= useMemo(() => {
-    console.log("entrooooo23")
-    const usuarioss=[...usuarios]
-    console.log(usuarioss,"esto es ss")
-    const tecnicos = usuarioss.filter((u) =>
-      roles.some(
-        (rol) =>
-          rol.nombreRol == "Técnico" ||
-          rol.nombreRol == "Coordinadora" ||
-          rol.nombreRol == "Director Técnico"
-      ) &&
-      (u.elminado === false && u.estado === true)
-    );
-    const parse:Tecnico[]=tecnicos.map((e)=>({idUsuario:e.idUsuario,nombreCompleto:e.nombreCompleto}))
-    return parse
-  }, [...usuarios, ...roles]);
+  const technicians: Tecnico[] = useMemo(() => {
+    // 1. Evita mutaciones innecesarias con el spread, usa filter directamente sobre 'usuarios'
+    const tecnicos = usuarios.filter((u) => {
+      // 2. Buscamos el rol ESPECÍFICO de este usuario
+      const rolDelUsuario = roles.find((rol) => rol.idRol === u.idRol);
+      
+      // 3. Verificamos que el rol exista y sea uno de los permitidos
+      const esRolPermitido = rolDelUsuario && (
+        rolDelUsuario.nombreRol === "Técnico" ||
+        rolDelUsuario.nombreRol === "Coordinadora" ||
+        rolDelUsuario.nombreRol === "Director Técnico"
+      );
+
+      // 4. Retornamos true solo si tiene el rol correcto y está activo
+      return esRolPermitido && u.elminado === false && u.estado === true;
+    });
+
+    return tecnicos.map((e) => ({
+      idUsuario: e.idUsuario,
+      nombreCompleto: e.nombreCompleto
+    }));
+    
+  // 5. Dependencias correctas (las referencias de los arreglos, sin spread)
+  }, [usuarios, roles]);
 
   console.log(technicians,"esto essss")
 
 
-  const instrumentos_cot:OTasiignemet[]= useMemo(()=>{
-   const ot=ordenesTrabajo.find((e)=>e.idOrdenTrabajo==Number(selectedOT?.id))
-   const parse:OTasiignemet[]=(ot?.instrumentos ?? []).map((e):OTasiignemet=>{
-    return({
-      asignado:e.asignado,
-      id_instrumento:e.idDetalle,
-      instrumento:e.instrumento,
-    })
-   })??[]
-   return parse
-  },[selectedOT,ordenesTrabajo])
+const instrumentos_cot = useMemo(() => {
+    return instrumentDrafts.map((inst) => ({
+      asignado: inst.asignado,
+      // Usamos directamente el ID del draft (que es un string seguro)
+      id_instrumento: inst.id, 
+      instrumento: inst.instrumento,
+    }));
+  }, [instrumentDrafts]); // La UI ahora reaccionará a los cambios del Draft
 
   /**
    * Abre una OT desde la vista de lista/tablero: busca los datos completos en dbState,
@@ -1496,23 +1497,75 @@ export const OrdenesTrabajo = () => {
     );
   };
 
-  const saveOrderEdits = () => {
+const saveOrderEdits = async () => {
     if (!selectedOT || !orderDraft) return;
-    const updatedOT: OTType = {
-      ...selectedOT,
-      ...orderDraft,
-      estado: orderDraft.estadoOrden as EstadoOrden,
-      tecnico: orderDraft.responsableUsc,
-      instrumentos: instrumentDrafts,
-    };
-    setSelectedOT(updatedOT);
-    setAssignedTechnicians(
-      orderDraft.responsableUsc ? [orderDraft.responsableUsc] : []
-    );
-    setEditingOrder(false);
-    showToast("✅ Cambios guardados de acuerdo al formato R-CM05.");
-  };
 
+    // 🟢 1. Validaciones
+    const sinTecnico = instrumentDrafts.some(inst => !inst.asignado || inst.asignado === 0);
+    if (sinTecnico) {
+      showToast("⚠️ Faltan técnicos por asignar en los instrumentos.");
+      return;
+    }
+
+    if (!orderDraft.responsableUsc) {
+      showToast("⚠️ Debes seleccionar un Responsable USC para la orden.");
+      return;
+    }
+
+    try {
+      showToast("⏳ Consolidando orden y generando documento...");
+
+      // 🟢 2. Estructuración del Payload
+      const payload = {
+        responsableUsc: orderDraft.responsableUsc,
+        fechaDiligenciamiento: orderDraft.fechaDiligenciamiento,
+        requiereAnexo: orderDraft.requiereAnexo,
+        observacionesGenerales: orderDraft.observacionesGenerales,
+        lugarCalibracion: orderDraft.lugarCalibracion,
+        estadoOrden: orderDraft.estadoOrden as EstadoOrden,
+        instrumentos: instrumentDrafts.map((inst) => ({
+          // Si el ID tiene guiones (UUID de front), lo mandamos como undefined para que Fastify sepa que es nuevo
+          idDetalle: inst.id.includes('-') ? undefined : Number(inst.id),
+          item: inst.item,
+          tipoServicio: inst.tipoServicio,
+          instrumento: inst.instrumento,
+          fabricante: inst.fabricante ?? null,
+          modelo: inst.modelo ?? null,
+          serie: inst.serie ?? null,
+          codigoInventario: inst.codigoInventario ?? null,
+          ubicacion: inst.ubicacion ?? null,
+          puntosCalibrar: inst.puntosCalibrar,
+          asignado: Number(inst.asignado),
+          declaracionConformidad: inst.declaracionConformidad,
+        })),
+      };
+
+      // 🟢 3. Llamada directa al Server Action (sin fetch)
+      const response = await consolidarOrdenTrabajoAction(selectedOT.id, payload);
+
+      if (!response.ok) {
+        throw new Error(response.error || "Fallo en la consolidación del servidor");
+      }
+
+      // 🟢 4. Actualización del Estado Local
+      const updatedOT: OTType = {
+        ...selectedOT,
+        ...orderDraft,
+        estado: orderDraft.estadoOrden as EstadoOrden,
+        tecnico: orderDraft.responsableUsc,
+        instrumentos: instrumentDrafts,
+      };
+      
+      setSelectedOT(updatedOT);
+      setAssignedTechnicians([orderDraft.responsableUsc]);
+      setEditingOrder(false);
+      showToast(`✅ Orden R-CM05 Consolidada. Job documental en curso (${response.id_job})`);
+
+    } catch (error: any) {
+      console.error(error);
+      showToast(`❌ ${error.message}`);
+    }
+  };
   const assignTechnician = () => {
     if (!selectedOT) return;
     setSelectedOT({
@@ -1738,13 +1791,16 @@ const handleRemoveInstrument = (id: string) => {
       {selectedOT && (
         <div className="space-y-6 max-w-7xl mx-auto">
           <OrderAlertsBanner selectedOT={selectedOT} warnings={warnings} />
-
-          <StaffAssignmentSection
-          instrumentosCot={instrumentos_cot}
-          technicians={technicians}
-          editingTechnician={editingTechnician}
-          setEditingTechnician={(u:boolean)=>setEditingTechnician(u)}
-          onAssignTechnician={(idUsuario:number,id_instrumentos:number)=>updateInstrumentDraft(id_instrumentos.toString(),"asignado",idUsuario)}
+<StaffAssignmentSection
+            estadoActual={selectedOT.estado} 
+            instrumentosCot={instrumentos_cot}
+            technicians={technicians}
+            editingTechnician={editingTechnician}
+            setEditingTechnician={(u: boolean) => setEditingTechnician(u)}
+            // 🟢 La firma ahora coincide con el tipo actualizado
+            onAssignTechnician={(idUsuario: number, id_instrumentos: string | number) => 
+              updateInstrumentDraft(id_instrumentos.toString(), "asignado", idUsuario)
+            }
           />
 
           <OrderFormRCM05

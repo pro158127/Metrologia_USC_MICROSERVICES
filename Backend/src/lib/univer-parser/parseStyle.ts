@@ -22,14 +22,17 @@ export function convertStyleToUniver(style: any): any {
     }
   }
 
-  const fill = style.fill as any;
+ const fill = style.fill as any;
   if (fill) {
-    if (fill.type === 'pattern' && fill.fgColor?.argb) {
-      univerStyle.bg = { rgb: argbToRgb(fill.fgColor.argb) };
+    // Buscamos el color tanto en fgColor como en bgColor para mayor seguridad
+    const patternColor = fill.fgColor?.argb || fill.bgColor?.argb;
+    
+    if (fill.type === 'pattern' && patternColor) {
+      univerStyle.bg = { rgb: argbToRgb(patternColor) };
     } else if (fill.type === 'gradient' && fill.stops?.length > 0) {
-      const firstStop = fill.stops[0];
-      if (firstStop?.color?.argb) {
-        univerStyle.bg = { rgb: argbToRgb(firstStop.color.argb) };
+      const firstStopColor = fill.stops[0]?.color?.argb;
+      if (firstStopColor) {
+        univerStyle.bg = { rgb: argbToRgb(firstStopColor) };
       }
     }
   }
@@ -111,7 +114,7 @@ function verticalAlignMap(align: string): number {
 }
 
 function borderStyleMap(style: string): number {
-  const map: Record<string, number> = {
+const map: Record<string, number> = {
     thin: 1,
     hair: 2,
     dotted: 3,
@@ -123,8 +126,8 @@ function borderStyleMap(style: string): number {
     mediumDashed: 9,
     mediumDashDot: 10,
     mediumDashDotDot: 11,
-    thick: 12,
-    slantDashDot: 13,
+    slantDashDot: 12, // <-- Orden corregido (12)
+    thick: 13,        // <-- Orden corregido (13 en Univer es THICK)
   };
   return map[style] || 1;
 }

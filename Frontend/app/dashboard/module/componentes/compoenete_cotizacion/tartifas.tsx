@@ -1,5 +1,5 @@
 'use client';
-
+import { toast, Toaster } from "sonner";
 import React, { useEffect, useState, useMemo } from "react";
 import {
   Plus,
@@ -11,6 +11,7 @@ import {
   History,
   Calendar,
   Filter,
+ Upload
 } from "lucide-react";
 import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 import {
@@ -41,7 +42,10 @@ const formatCurrency = (val: number) => {
 // ----------------------------------------------------------------------
 // Componentes Hijos
 // ----------------------------------------------------------------------
-
+import { consolidarTarifas } from "@/app/action_module/template";
+import { consultar_outputshema } from "@/app/action_module/template";
+import { MapeoConfigTarifas } from "backend/src/routes/plantillas.schemas";
+import { MappingConfig } from "@/tipos/plantillas";
 const CatalogHeaderControls = ({
   searchTerm,
   setSearchTerm,
@@ -53,29 +57,89 @@ const CatalogHeaderControls = ({
   tiposServicioDisponibles,
   onOpenCreate,
 }: CatalogHeaderControlsProps) => {
+
+const handleButton_tarifas = async () => {
+    try {
+      const schema = await consultar_outputshema('cotizacion');
+      if(!schema.response.success || !schema.response.data.MAPPING_CONFIG){
+        console.error("Error: No se encontró la configuración de mapeo para cotización");
+        return;
+      }
+      console.log("esta aqio ")
+      console.log(schema.response.data.MAPPING_CONFIG,"CONFIGURACION DE MAPEOS",schema)
+      const toparse = (schema.response.data.MAPPING_CONFIG || {}) as MappingConfig;
+      
+      const tablaTarifas = toparse.mappings.tables.find((e) => e.key === "tabla_tarifas");
+      
+      const parse: MapeoConfigTarifas = {
+        columnas: {
+          instrumento: tablaTarifas?.columns.find((i) => i.key === "instrumentos")?.column ?? 'sin definir',
+          magnitud: tablaTarifas?.columns.find((i) => i.key === "magnitud")?.column ?? 'sin definir',
+          norma: tablaTarifas?.columns.find((i) => i.key === "norma_guia_tecnica")?.column ?? 'sin definir',
+          tipoServicio: tablaTarifas?.columns.find((i) => i.key === "tipo_servicio")?.column ?? 'sin definir',
+        },
+        filaEncabezados: tablaTarifas?.star_header ?? 0,
+        filaInicialDatos: tablaTarifas?.startRow ?? 0,
+        // CORRECCIÓN AQUÍ: === en lugar de =
+        columnasPrecios: tablaTarifas?.columns.find((e) => e.key === "columnas_precios")?.columnsList
+      };
+      console.log(parse,"aqAUQIIEOW")
+      const action = await consolidarTarifas(1, parse);
+      console.log("Tarifas consolidadas:", action);
+
+    } catch (error) {
+      console.error("Error al importar tarifas:", error);
+      return { success: false, error: error instanceof Error ? error.message : "Error desconocido" };
+    }
+  };
+
+
   return (
     <div className="flex flex-col space-y-4 px-6 py-5 border-b border-slate-100 bg-slate-50/50">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="h-5 w-1 bg-[#5680F9] rounded-full"></span>
-            <h2 className="text-base font-bold text-slate-800">Catálogo de Tarifas Metrológicas</h2>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5 ml-3">
-            Gestión de tarifas e historial de precios sincronizados en tiempo real
-          </p>
-        </div>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
+  
+  {/* Sección de Texto */}
+  <div>
+    <div className="flex items-center gap-2">
+      <span className="h-5 w-1 bg-[#5680F9] rounded-full"></span>
+      <h2 className="text-base font-bold text-slate-800">Catálogo de Tarifas Metrológicas</h2>
+    </div>
+    <p className="text-xs text-slate-500 mt-0.5 ml-3">
+      Gestión de tarifas e historial de precios sincronizados en tiempo real
+    </p>
+  </div>
 
-        <button
-          onClick={() => {
-            onOpenCreate();
-          }}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#5680F9] hover:bg-blue-600 text-white font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap self-end sm:self-auto"
-        >
-          <Plus size={15} />
-          <span>Nuevo Ítem</span>
-        </button>
-      </div>
+  {/* Sección de Acciones: Agrupadas en su propio flex-container */}
+  <div className="flex items-center gap-2 self-end sm:self-auto">
+    
+    {/* Botón Secundario (Importar) */}
+    <button
+      onClick={async ()=>{const  v=handleButton_tarifas();
+        const res=await v
+        if(res && !res.success){
+          toast.error(res.error || "Error desconocido al importar tarifas")
+        }
+        else{
+          toast.success("Importación de tarifas iniciada correctamente. Se notificará al finalizar el proceso.")
+        }
+      }}
+      className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap"
+    >
+      <Upload size={15} />
+      <span>Importar tarifas</span>
+    </button>
+
+    {/* Botón Primario (Nuevo Ítem) */}
+    <button
+      onClick={() => { onOpenCreate(); }}
+      className="flex items-center gap-1.5 px-4 py-2 bg-[#5680F9] hover:bg-blue-600 text-white font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap"
+    >
+      <Plus size={15} />
+      <span>Nuevo Ítem</span>
+    </button>
+    
+  </div>
+</div>
 
       {/* Barra de Búsqueda y Filtros */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">

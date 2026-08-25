@@ -80,16 +80,22 @@ export interface SubfieldMapping {
 
 export interface ColumnMapping {
   key: string;
-  column: string;
+  column?: string;          // ✅ AHORA ES OPCIONAL (puede ser undefined)
+  columnsList?: string[];   // ✅ NUEVO: Soporte para múltiples columnas
   dataType?: string;
   type?: 'OBJECT';
   subfields?: SubfieldMapping[];
+  
 }
 
 export interface TableMapping {
   key: string;
   startRow: number;
+  sheet?: string;
+  star_header?:number;
+  endRow?: number; // <-- Nueva variable
   columns: ColumnMapping[];
+
 }
 
 export interface MappingConfig {
@@ -269,18 +275,18 @@ export interface HistorialModalProps {
 // MAPEO CONFIG TARIFAS (pipeline dinámico de tarifas)
 // ============================================================
 
+
 export interface MapeoConfigTarifas {
   filaInicialDatos: number;
+  filaEncabezados: number;
   columnas: {
-    magnitud: number | null;
-    instrumento: number | null;
-    norma: number | null;
-    tipoServicio: number | null;
+    magnitud: string;
+    instrumento: string;
+    norma: string;
+    tipoServicio: string;
   };
-  /** Mapa año -> índice de columna (ej: { "2025": 5, "2026": 6 }). */
-  anios: Record<string, number>;
+  columnasPrecios?: string[]; 
 }
-
 export type EstadoJobTarifasValue = 'PENDIENTE' | 'PROCESANDO' | 'COMPLETADO' | 'ERROR' | string;
 
 export interface EstadoJobTarifas {
@@ -318,5 +324,21 @@ export interface SnapshotJobStatus {
 export interface SnapshotResponse {
   success: boolean;
   data?: SnapshotJobStatus;
+  error?: string;
+}
+
+export interface GeneracionPlantillaPayload {
+  tipoPlantilla: string; // Ej: 'COTIZACION', 'RECEPCION'
+  idRegistro: number;    // ID del registro en tu base de datos
+}
+
+export interface GeneracionPlantillatest {
+  tipoPlantilla: string; // Ej: 'COTIZACION', 'RECEPCION'
+
+}
+
+export interface GeneracionPlantillaResponse {
+  success: boolean;
+  data?: any; // Ajusta esto según lo que retorne tu Fastify (ej. { url: string, jobId: string })
   error?: string;
 }

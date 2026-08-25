@@ -10,9 +10,11 @@ export default function SocketDebugger() {
     console.log("🚀 [SocketDebugger] Componente cliente montado en el navegador.");
 
     // Cambia el puerto si tu Fastify corre en otro puerto (ej. 4000 o 3001)
-    const socket = io( "http://localhost:3001", {
-      transports: ["websocket", "polling"],
-    });
+const socket = io({
+  path: "/socket.io",
+  autoConnect: true
+});
+
 
     socket.on("connect", () => {
       const msg = `✅ Conectado con ID: ${socket.id}`;

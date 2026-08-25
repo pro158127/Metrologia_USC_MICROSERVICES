@@ -66,6 +66,16 @@ export interface AuditLogModel {
   ip: string;
   id: number;
 }
+export interface PlantillaSelloModel {
+  idPlantillaSello: number;
+  nombre: string;
+  descripcion: string | null;
+  templatePdfKey: string | null;
+  documentArea: unknown | null;
+  watermarkAreas: unknown | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
 
 export interface VersionPlantillaModel {
   idVersionPlantilla: number;

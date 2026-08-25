@@ -250,16 +250,15 @@ export interface ComboboxInstrumentoProps {
   onChange: (value: string) => void;
   placeholder?: string;
 }
-
 export interface StaffAssignmentSectionProps {
   editingTechnician: boolean;
   setEditingTechnician: (val: boolean) => void;
+  instrumentosCot: OTasiignemet[];
   technicians: Tecnico[];
-  instrumentosCot:OTasiignemet[]
-  onAssignTechnician:( idUsuario: number,id_instrumento:number) => void;
-
+  estadoActual: EstadoOrden;
+  // 🟢 Actualizar la firma de la función aquí también
+  onAssignTechnician: (idUsuario: number, id_instrumento: string | number) => void;
 }
-
 export interface InstrumentosTableProps {
   instrumentDrafts: Instrument[];
   updateInstrumentDraft: <K extends keyof Instrument>(
@@ -344,11 +343,11 @@ export const kanbanColumns: { key: EstadoOrden; label: string; color: string }[]
   { key: "Certificado_enviado", label: "Certificado enviado", color: "#4C36D0" },
 ];
 
-export interface OTasiignemet{
-  id_instrumento:number;
-  asignado:number;
-  instrumento:string;
-
+export interface OTasiignemet {
+  asignado: number;
+  // 🟢 Permitir string (para los UUIDs) o number (para la BD)
+  id_instrumento: string | number; 
+  instrumento: string;
 }
 export interface Tecnico {
   idUsuario: number;

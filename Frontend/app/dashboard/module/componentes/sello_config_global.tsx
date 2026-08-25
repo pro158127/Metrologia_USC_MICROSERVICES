@@ -1,6 +1,6 @@
 'use client';
-
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { generarPrevisualizacionSello } from '@/app/action_module/sellos';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   X,
   Upload,
@@ -17,6 +17,7 @@ import {
   Award,
   Loader2,
   AlertTriangle,
+  Download,
 } from 'lucide-react';
 import type { SealConfig, BoundingBox, WatermarkArea, SelloConfigModalProps } from '@/tipos/sellos';
 import {
@@ -24,19 +25,148 @@ import {
   crearPlantillaSello,
   actualizarPlantillaSello,
   eliminarPlantillaSello,
+  obtenerArchivoSelloSeguro
 } from '@/app/action_module/sellos';
+
+// ============================================================================
+// 1. VISOR DE PLANTILLA CON PDF.JS (object-fit: contain + matriz normalizada)
+// ============================================================================
+
+const VIEWPORT_MAX_WIDTH = 520;
+const VIEWPORT_MAX_HEIGHT = 700;
+
+interface PageSize {
+  width: number;
+  height: number;
+}
+
+export interface ViewportTransform {
+  scaleX: number;
+  scaleY: number;
+  translateX: number;
+  translateY: number;
+}
+
+function computeContainBox(
+  pageWidth: number,
+  pageHeight: number,
+  maxWidth: number = VIEWPORT_MAX_WIDTH,
+  maxHeight: number = VIEWPORT_MAX_HEIGHT
+): { width: number; height: number } {
+  const ratio = pageWidth / pageHeight;
+  let width = maxHeight * ratio;
+  let height = maxHeight;
+  if (width > maxWidth) {
+    width = maxWidth;
+    height = maxWidth / ratio;
+  }
+  return { width, height };
+}
+
+function buildTransform(page: PageSize, box: { width: number; height: number }): ViewportTransform {
+  return {
+    scaleX: box.width / page.width,
+    scaleY: box.height / page.height,
+    translateX: 0,
+    translateY: 0,
+  };
+}
+
+/** Codifica una key de MinIO preservando las "/" como separadores de ruta. */
+function encodeObjectKey(key: string): string {
+  return key.split('/').map(encodeURIComponent).join('/');
+}
+
+function isImageSource(source: File | string | null): boolean {
+  if (!source) return false;
+  if (source instanceof File) return source.type.startsWith('image/');
+  return /\.(jpg|jpeg|png|webp)(\?.*)?$/i.test(source) || source.startsWith('data:image/');
+}
+
+async function configurePdfWorker(): Promise<typeof import('pdfjs-dist')> {
+  const pdfjs = await import('pdfjs-dist');
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    const v = pdfjs.version || '4.0.379';
+    pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${v}/build/pdf.worker.min.mjs`;
+  }
+  return pdfjs;
+}
+
+/**
+ * Renderiza la página 1 del PDF de plantilla sobre un <canvas> con escala "contain" exacta.
+ */
+function PdfTemplateCanvas({
+  source,
+  onSize,
+}: {
+  source: File | string;
+  onSize: (size: PageSize) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    (async () => {
+      let data: ArrayBuffer;
+      try {
+        if (source instanceof File) {
+          data = await source.arrayBuffer();
+        } else {
+          const res = await fetch(source);
+          if (!res.ok) return;
+          data = await res.arrayBuffer();
+        }
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+
+      try {
+        const pdfjs = await configurePdfWorker();
+        const loadingTask = pdfjs.getDocument({ data: new Uint8Array(data) });
+        const doc = await loadingTask.promise;
+        if (cancelled) return;
+
+        const page = await doc.getPage(1);
+        const base = page.getViewport({ scale: 1 });
+        const size: PageSize = { width: base.width, height: base.height };
+        const box = computeContainBox(size.width, size.height);
+        if (cancelled) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const viewport = page.getViewport({ scale: (box.width / size.width) * dpr });
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        canvas.style.width = `${box.width}px`;
+        canvas.style.height = `${box.height}px`;
+
+        await page.render({ canvas, viewport }).promise;
+        if (!cancelled) onSize(size);
+      } catch (err) {
+        console.error('[PdfTemplateCanvas] Error renderizando PDF:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [source, onSize]);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />;
+}
 
 // ============================================================================
 // 2. COMPONENTE PADRE: GESTOR Y GALERÍA DE SELLOS
 // ============================================================================
 
-function SelloManagementDashboard() {
-  // Estado local vinculado a la API (sin sincronizadoRef / doble source of truth).
+export function SelloManagementDashboard() {
   const [seals, setSeals] = useState<SealConfig[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Estado para controlar qué sello se está editando en el modal (null = cerrado)
   const [editingSeal, setEditingSeal] = useState<SealConfig | null>(null);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 
@@ -64,7 +194,6 @@ function SelloManagementDashboard() {
     };
   }, [applySellosResult]);
 
-  // Abrir modal para CREAR un nuevo sello
   const handleCreateNew = () => {
     setEditingSeal({
       id: -Date.now(),
@@ -78,13 +207,11 @@ function SelloManagementDashboard() {
     setIsModalOpen(true);
   };
 
-  // Abrir modal para EDITAR un sello existente
   const handleEdit = (seal: SealConfig) => {
     setEditingSeal(seal);
     setIsModalOpen(true);
   };
 
-  // Eliminar un sello del catálogo (llamada real a la API)
   const handleDelete = async (id: number) => {
     if (!confirm('¿Estás seguro de eliminar este sello de la base de datos?')) return;
     const res = await eliminarPlantillaSello(id);
@@ -95,7 +222,6 @@ function SelloManagementDashboard() {
     }
   };
 
-  // Guardar/Actualizar la configuración procesada por el Modal (llamada real a la API)
   const handleSaveSeal = async (updatedConfig: SealConfig, templateFile?: File | null) => {
     const res =
       updatedConfig.id < 0
@@ -114,8 +240,6 @@ function SelloManagementDashboard() {
   return (
     <div className="w-full min-h-screen bg-slate-100 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
-        
-        {/* Cabecera del Módulo */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <div>
             <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
@@ -134,7 +258,6 @@ function SelloManagementDashboard() {
           </button>
         </div>
 
-        {/* Estados de carga / error / vacío / grid */}
         {loading ? (
           <div className="bg-white border border-slate-200 rounded-xl p-12 flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-10 h-10 text-slate-300 animate-spin" />
@@ -174,17 +297,28 @@ function SelloManagementDashboard() {
                 key={seal.id}
                 className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col"
               >
-                {/* Visualizador Miniatura de Coordenadas Bounding Box */}
                 <div className="h-48 bg-slate-800 relative flex items-center justify-center overflow-hidden border-b border-slate-200">
-                  {seal.templatePdfUrl ? (
-                    <div className="w-full h-full relative">
-                      <iframe
-                        src={seal.templatePdfUrl}
-                        title={seal.nombre}
-                        loading="lazy"
-                        className="absolute inset-0 w-full h-full border-none pointer-events-none"
-                      />
-                      {/* Render de BoundingBox: Document Area */}
+                 {seal.templatePdfKey ? (
+                    <div className="w-full h-full relative bg-slate-100">
+                      
+                      {/* LÓGICA DE RENDERIZADO CONDICIONAL (IMAGEN VS PDF) */}
+                      {seal.templatePdfKey.toLowerCase().match(/\.(jpg|jpeg|png)$/) ? (
+                        <img
+                          src={`/api/v1/sellos/ver/${encodeURIComponent(seal.templatePdfKey)}`}
+                          alt={seal.nombre}
+                          loading="lazy"
+                          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                        />
+                      ) : (
+                        <iframe
+                          src={`/api/v1/sellos/ver/${encodeURIComponent(seal.templatePdfKey)}#toolbar=0&navpanes=0`}
+                          title={seal.nombre}
+                          loading="lazy"
+                          className="absolute inset-0 w-full h-full border-none pointer-events-none"
+                        />
+                      )}
+
+                      {/* CAJA: ÁREA DEL DOCUMENTO */}
                       {seal.documentArea && (
                         <div
                           className="absolute border border-blue-400 bg-blue-500/30 flex items-center justify-center"
@@ -195,17 +329,17 @@ function SelloManagementDashboard() {
                             height: `${seal.documentArea.height}%`,
                           }}
                         >
-                          <span className="text-[9px] bg-blue-900/90 text-white px-1 rounded font-mono">
+                          <span className="text-[9px] bg-blue-900/90 text-white px-1 rounded font-mono shadow-sm">
                             Documento
                           </span>
                         </div>
                       )}
 
-                      {/* Render de BoundingBox: Sellos / Watermarks */}
+                      {/* CAJAS: MARCAS DE AGUA / SELLOS */}
                       {seal.watermarkAreas.map((wm) => (
                         <div
                           key={wm.id}
-                          className="absolute border border-amber-400"
+                          className="absolute border border-amber-400 shadow-sm"
                           style={{
                             left: `${wm.box.x}%`,
                             top: `${wm.box.y}%`,
@@ -224,7 +358,6 @@ function SelloManagementDashboard() {
                   )}
                 </div>
 
-                {/* Info Card */}
                 <div className="p-4 flex-1 flex flex-col justify-between">
                   <div>
                     <h3 className="text-sm font-bold text-slate-800">{seal.nombre}</h3>
@@ -247,7 +380,6 @@ function SelloManagementDashboard() {
                     </div>
                   </div>
 
-                  {/* Acciones de Tarjeta */}
                   <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
                     <span className="text-[10px] text-slate-400 font-mono">
                       Editado: {seal.updatedAt || 'Reciente'}
@@ -275,10 +407,8 @@ function SelloManagementDashboard() {
             ))}
           </div>
         )}
-
       </div>
 
-      {/* Renderizado Condicional del Modal Editor */}
       {isModalOpen && editingSeal && (
         <SelloConfigModal
           sealData={editingSeal}
@@ -296,31 +426,87 @@ function SelloManagementDashboard() {
 
 export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModalProps) {
   const [activeTab, setActiveTab] = useState<'MAPPER' | 'PREVIEW'>('MAPPER');
-
-  // Estado local para la edición activa
   const [config, setConfig] = useState<SealConfig>(sealData);
-
-  // Modo de dibujo: 'DOC_AREA' (Zona de documento) o 'WATERMARK' (Sello u opacidad)
   const [drawMode, setDrawMode] = useState<'DOC_AREA' | 'WATERMARK'>('DOC_AREA');
   const [selectedWatermarkId, setSelectedWatermarkId] = useState<string | null>(null);
 
-  // Estados para simulación de arrastre/dibujo
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentBox, setCurrentBox] = useState<BoundingBox | null>(null);
 
-  // Documento cliente de prueba (preview)
   const [sampleDocUrl, setSampleDocUrl] = useState<string | null>(null);
-  // Archivo de plantilla seleccionado para enviar al backend en el guardado
+  const [sampleDocFile, setSampleDocFile] = useState<File | null>(null);
   const [templateFile, setTemplateFile] = useState<File | null>(null);
-  const canvasRef = useRef<HTMLDivElement>(null);
+  const [isDownloadingPreview, setIsDownloadingPreview] = useState(false);
 
-  // Refs espejo para los listeners globales de arrastre (sin closures obsoletos)
+  const canvasRef = useRef<HTMLDivElement>(null);
+console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
+  const [pageSize, setPageSize] = useState<PageSize | null>(null);
+  const renderBox = useMemo(() => {
+    if (pageSize) return computeContainBox(pageSize.width, pageSize.height);
+    return { width: VIEWPORT_MAX_WIDTH, height: VIEWPORT_MAX_HEIGHT };
+  }, [pageSize]);
+
+  const viewportTransform = useMemo<ViewportTransform | null>(() => {
+    if (!pageSize) return null;
+    return buildTransform(pageSize, renderBox);
+  }, [pageSize, renderBox]);
+
+  const handlePageSize = useCallback((size: PageSize) => {
+    setPageSize(size);
+  }, []);
+// 1. Estado para guardar el Base64 que viene del Server Action
+  const [secureRenderSource, setSecureRenderSource] = useState<File | string | null>(null);
+
+  // 2. Ejecutamos el Server Action
+  useEffect(() => {
+    if (templateFile) {
+      setSecureRenderSource(templateFile);
+      return;
+    }
+
+    if (config.templatePdfKey) {
+      let isMounted = true;
+
+      const fetchSecureFile = async () => {
+        try {
+          const res = await obtenerArchivoSelloSeguro(config.templatePdfKey!);
+          
+          if (res.success && res.data && isMounted) {
+            const dataUri = `data:${res.data.mime};base64,${res.data.base64}`;
+            setSecureRenderSource(dataUri);
+          }
+        } catch (error) {
+          console.error('Error al descargar el archivo protegido:', error);
+        }
+      };
+
+      fetchSecureFile();
+
+      return () => { isMounted = false; };
+    } else {
+      setSecureRenderSource(null);
+    }
+  }, [templateFile, config.templatePdfKey]);
+
+  // 3. Adaptamos la validación
+  const isImage = useMemo(() => {
+    if (!secureRenderSource) return false;
+    if (secureRenderSource instanceof File) return secureRenderSource.type.startsWith('image/');
+    
+    if (config.templatePdfKey) {
+      const keyStr = config.templatePdfKey.toLowerCase();
+      return keyStr.endsWith('.png') || keyStr.endsWith('.jpg') || keyStr.endsWith('.jpeg');
+    }
+    return false;
+  }, [secureRenderSource, config.templatePdfKey]);
+
+  const hasTemplate = !!config.templatePdfUrl || !!templateFile || !!config.templatePdfKey;
+
   const isDrawingRef = useRef(false);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
   const currentBoxRef = useRef<BoundingBox | null>(null);
   const drawModeRef = useRef<'DOC_AREA' | 'WATERMARK'>('DOC_AREA');
   const configRef = useRef<SealConfig>(sealData);
-  // Registro de URLs blob para revocarlas al reemplazar/desmontar (evita memory leaks)
   const blobUrlsRef = useRef<string[]>([]);
 
   useEffect(() => {
@@ -359,6 +545,7 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
   const handleSampleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setSampleDocFile(file);
     revokeBlobUrl(sampleDocUrl);
     const url = createBlobUrl(file);
     setSampleDocUrl(url);
@@ -374,7 +561,6 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
     };
   }, []);
 
-  // Listeners GLOBALES de arrastre: no se pierde el trazo si el ratón sale del canvas
   const onMouseMove = useCallback(
     (e: globalThis.MouseEvent) => {
       if (!isDrawingRef.current || !startPosRef.current) return;
@@ -424,7 +610,7 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
   }, []);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!config.templatePdfUrl) return;
+    if (!hasTemplate) return;
     const coords = getCanvasCoordinates(e.clientX, e.clientY);
     if (!coords) return;
 
@@ -436,8 +622,6 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
     setCurrentBox(box);
   };
 
-  // Adjunta listeners globales de arrastre mientras isDrawing esté activo;
-  // se limpian automáticamente al soltar (mouseup) o al desmontar.
   useEffect(() => {
     if (!isDrawing) return;
     window.addEventListener('mousemove', onMouseMove);
@@ -448,7 +632,6 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
     };
   }, [isDrawing, onMouseMove, onMouseUp]);
 
-  // Limpieza al desmontar: URLs blob (evita memory leaks)
   useEffect(() => {
     return () => {
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -472,6 +655,70 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
     }));
     if (selectedWatermarkId === id) setSelectedWatermarkId(null);
   };
+
+  // Petición al Backend para generar y descargar la prueba estampada
+const handleDownloadBackendPreview = async () => {
+  if (!sampleDocFile) {
+    alert('Debes seleccionar un archivo PDF de prueba.');
+    return;
+  }
+
+  try {
+    setIsDownloadingPreview(true);
+    const formData = new FormData();
+
+    // 1. Adjuntar archivo de muestra del documento
+    formData.append('documentFile', sampleDocFile);
+
+    // 2. Extraer los bytes de la plantilla base garantizando binarios válidos
+    let finalTemplateFile: File | null = templateFile;
+
+  if (!finalTemplateFile && secureRenderSource) {
+      if (secureRenderSource instanceof File) {
+        finalTemplateFile = secureRenderSource;
+      } else if (typeof secureRenderSource === 'string') {
+        
+        // CAMBIO 2: Al ser un Data URI (Base64), 'fetch' lo convierte a Blob en memoria sin usar la red
+        const res = await fetch(secureRenderSource);
+        const blob = await res.blob();
+        
+        if (blob.size === 0) throw new Error('La plantilla base en memoria tiene 0 bytes.');
+
+        // CAMBIO 3: Asignamos la extensión correcta según el tipo MIME que nos dio el backend
+        const ext = blob.type.includes('image') ? 'jpg' : 'pdf';
+
+        finalTemplateFile = new File([blob], `template_base.${ext}`, {
+          type: blob.type || 'application/pdf',
+        });
+      }
+    }
+
+    if (finalTemplateFile) {
+      // Importante: especificar explícitamente el nombre del archivo para multipart
+      formData.append('templateFile', finalTemplateFile, finalTemplateFile.name);
+    }
+
+    // 3. Serializar parámetros
+    formData.append('selloId', String(config.id));
+    formData.append('documentArea', JSON.stringify(config.documentArea));
+    formData.append('watermarkAreas', JSON.stringify(config.watermarkAreas));
+
+    // 4. Invocar Server Action
+    const arrayBuffer = await generarPrevisualizacionSello(formData);
+
+    const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Prueba_Estampada_${config.nombre.replace(/\s+/g, '_')}.pdf`;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (err: any) {
+    alert(err.message ?? 'Error al generar la previsualización');
+  } finally {
+    setIsDownloadingPreview(false);
+  }
+};
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
@@ -523,17 +770,28 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
             <>
               {/* Canvas Izquierda */}
               <div className="flex-1 p-4 bg-slate-100 flex items-center justify-center relative overflow-auto select-none">
-                {config.templatePdfUrl ? (
+                {hasTemplate ? (
                   <div
                     ref={canvasRef}
                     onMouseDown={handleMouseDown}
-                    className="relative w-[500px] h-[700px] bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
+                    className="relative bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
+                    style={{ width: renderBox.width, height: renderBox.height }}
                   >
-                    <iframe
-                      src={config.templatePdfUrl}
-                      title="Plantilla base"
-                      className="absolute inset-0 w-full h-full border-none pointer-events-none"
-                    />
+                   {secureRenderSource &&
+                      (isImage ? (
+                        <img
+                          src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+                          alt="Plantilla base"
+                          className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+                          onLoad={(e) => {
+                            const img = e.currentTarget;
+                            handlePageSize({ width: img.naturalWidth, height: img.naturalHeight });
+                          }}
+                        />
+                      ) : (
+                        <PdfTemplateCanvas source={secureRenderSource} onSize={handlePageSize} />
+                      ))}
+
                     {/* Render Area Documento */}
                     {config.documentArea && (
                       <div
@@ -649,7 +907,6 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
                   </div>
                 </div>
 
-                {/* Info Estado Documento */}
                 <div className="p-3 bg-white border border-slate-200 rounded-lg flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-800">Área de Inserción</span>
@@ -663,9 +920,13 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
                       </span>
                     )}
                   </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {viewportTransform
+                      ? `Escala ${viewportTransform.scaleX.toFixed(2)}x / ${viewportTransform.scaleY.toFixed(2)}x · página ${pageSize?.width.toFixed(0)}×${pageSize?.height.toFixed(0)} pt`
+                      : 'Normalizando viewport...'}
+                  </span>
                 </div>
 
-                {/* Lista de Sellos Mapeados */}
                 <div className="flex flex-col gap-2 flex-1 overflow-y-auto">
                   <span className="text-xs font-bold text-slate-800">Sellos y Opacidades ({config.watermarkAreas.length})</span>
                   {config.watermarkAreas.map((wm) => (
@@ -713,70 +974,108 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
             </>
           )}
 
-          {/* TAB 2: PREVIEW */}
-          {activeTab === 'PREVIEW' && (
-            <div className="flex-1 flex bg-slate-100 overflow-hidden">
-              <div className="flex-1 p-4 flex items-center justify-center">
-                {config.templatePdfUrl ? (
-                  <div className="relative w-[500px] h-[700px] bg-white shadow-2xl rounded border border-slate-300 overflow-hidden">
-                    <iframe
-                      src={config.templatePdfUrl}
-                      title="Vista previa plantilla"
-                      className="absolute inset-0 w-full h-full border-none pointer-events-none"
-                    />
-                    {config.documentArea && (
-                      <div
-                        className="absolute overflow-hidden bg-slate-200 border border-slate-400/50 shadow-inner"
-                        style={{
-                          left: `${config.documentArea.x}%`,
-                          top: `${config.documentArea.y}%`,
-                          width: `${config.documentArea.width}%`,
-                          height: `${config.documentArea.height}%`,
-                        }}
-                      >
-                        {sampleDocUrl ? (
-                          <iframe src={sampleDocUrl} className="w-full h-full border-none" title="Documento de Prueba" />
-                        ) : (
-                          <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 p-4 text-center">
-                            <FileText size={24} className="mb-1" />
-                            <span className="text-[11px]">Sube un certificado de prueba para validar en el canvas</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
+ {/* TAB 2: PREVIEW */}
+{activeTab === 'PREVIEW' && (
+  <div className="flex-1 flex bg-slate-100 overflow-hidden">
+    <div className="flex-1 p-4 flex items-center justify-center overflow-auto">
+      {hasTemplate ? (
+        <div
+          className="relative bg-white shadow-2xl rounded border border-slate-300 overflow-hidden shrink-0"
+          style={{ width: renderBox.width, height: renderBox.height }}
+        >
+          {/* CAPA 1 (z-0): Plantilla Base / Logo de la USC al fondo */}
+         <div className="absolute inset-0 z-0 pointer-events-none">
+            {secureRenderSource &&
+              (isImage ? (
+                <img
+                  src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+                  alt="Plantilla base"
+                  className="w-full h-full object-contain select-none"
+                />
+              ) : (
+                <PdfTemplateCanvas source={secureRenderSource} onSize={handlePageSize} />
+              ))}
+          </div>
 
-                    {config.watermarkAreas.map((wm) => (
-                      <div
-                        key={wm.id}
-                        className="absolute pointer-events-none backdrop-blur-[1px]"
-                        style={{
-                          left: `${wm.box.x}%`,
-                          top: `${wm.box.y}%`,
-                          width: `${wm.box.width}%`,
-                          height: `${wm.box.height}%`,
-                          backgroundColor: `rgba(255, 255, 255, ${1 - wm.opacity})`,
-                        }}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">Primero sube una plantilla base en el mapeador.</p>
-                )}
-              </div>
+          {/* CAPA 2 (z-10 INTERMEDIA): Velo Blanco de Opacidad sobre las zonas del fondo */}
+          {config.watermarkAreas.map((wm) => (
+            <div
+              key={wm.id}
+              className="absolute z-10 pointer-events-none transition-opacity duration-150"
+              style={{
+                left: `${wm.box.x}%`,
+                top: `${wm.box.y}%`,
+                width: `${wm.box.width}%`,
+                height: `${wm.box.height}%`,
+                // El velo blanco atenúa el logo del fondo según la opacidad elegida
+                backgroundColor: `rgba(255, 255, 255, ${1 - wm.opacity})`,
+              }}
+            />
+          ))}
 
-              <div className="w-80 border-l border-slate-200 p-4 bg-slate-50 flex flex-col gap-4">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-800 border-b pb-2">
-                  Prueba de Integración
-                </span>
-                <label className="cursor-pointer bg-white border border-slate-300 hover:border-slate-400 p-3 rounded-lg flex flex-col items-center justify-center gap-1.5 text-center">
-                  <Upload size={18} className="text-slate-500" />
-                  <span className="text-xs font-semibold text-slate-700">Subir Certificado Muestra</span>
-                  <input type="file" accept="image/*,.pdf" onChange={handleSampleDocUpload} className="hidden" />
-                </label>
-              </div>
+          {/* CAPA 3 (z-20 SUPERIOR): Documento de Prueba (Siempre legible por encima) */}
+          {config.documentArea && (
+            <div
+              className="absolute z-20 overflow-hidden border border-blue-400/30 shadow-xs"
+              style={{
+                left: `${config.documentArea.x}%`,
+                top: `${config.documentArea.y}%`,
+                width: `${config.documentArea.width}%`,
+                height: `${config.documentArea.height}%`,
+                mixBlendMode: 'multiply', // Permite que la tinta negra se mantenga y el blanco del PDF fusione con el fondo
+              }}
+            >
+              {sampleDocUrl ? (
+                <iframe
+                  src={`${sampleDocUrl}#toolbar=0&navpanes=0`}
+                  className="w-full h-full border-none pointer-events-auto"
+                  title="Documento de Prueba"
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/20 text-blue-500 p-4 text-center">
+                  <FileText size={24} className="mb-1" />
+                  <span className="text-[11px] font-medium">Sube un certificado de prueba</span>
+                </div>
+              )}
             </div>
           )}
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500">Primero sube una plantilla base en el mapeador.</p>
+      )}
+    </div>
 
+    {/* PANEL LATERAL DE CONTROLES */}
+    <div className="w-80 border-l border-slate-200 p-4 bg-slate-50 flex flex-col gap-4 shrink-0">
+      <span className="text-xs font-bold uppercase tracking-wider text-slate-800 border-b pb-2">
+        Prueba de Integración
+      </span>
+
+      <label className="cursor-pointer bg-white border border-slate-300 hover:border-slate-400 p-3 rounded-lg flex flex-col items-center justify-center gap-1.5 text-center transition-colors shadow-xs">
+        <Upload size={18} className="text-slate-500" />
+        <span className="text-xs font-semibold text-slate-700 truncate max-w-[200px]">
+          {sampleDocFile ? sampleDocFile.name : 'Subir Certificado Muestra'}
+        </span>
+        <input type="file" accept="image/*,.pdf" onChange={handleSampleDocUpload} className="hidden" />
+      </label>
+
+      {sampleDocFile && (
+        <button
+          onClick={handleDownloadBackendPreview}
+          disabled={isDownloadingPreview}
+          className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+        >
+          {isDownloadingPreview ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <Download size={16} />
+          )}
+          Descargar Prueba Backend
+        </button>
+      )}
+    </div>
+  </div>
+)}
         </div>
       </div>
     </div>

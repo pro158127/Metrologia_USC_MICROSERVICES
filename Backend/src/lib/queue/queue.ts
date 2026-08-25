@@ -13,10 +13,15 @@ export const STAMP_JOB_PREFIX = 'stamp:job:';
 
 export const TARIFAS_QUEUE = 'tarifas-queue';
 
+export const  GENERATION_EXCEL='generation-excel-queue';
+const EMAIL_QUEUE_NAME = 'email_queue_jobs';
+
+let emailQueue: Queue;
 let connection: IORedis | null = null;
 let snapshotQueue: Queue | null = null;
 let stampPdfQueue: Queue | null = null;
 let tarifasQueue: Queue | null = null;
+let generationExcelQueue: Queue | null = null;
 
 /**
  * Conexión Redis compartida (singleton) para colas y worker.
@@ -96,3 +101,97 @@ export function getTarifasQueue(): Queue {
   }
   return tarifasQueue;
 }
+
+export interface GenerationExcelJobData {
+  tipo:number;
+  id_registro?: number;
+  codigo_actual?: string;
+  tipo_entry: 'test' | 'prod';
+  id_job?: string;
+  action?:string;
+}
+
+
+export function getGenerationExcelQueue(): Queue {
+  if (!generationExcelQueue) {
+    generationExcelQueue = new Queue(GENERATION_EXCEL, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 60 * 60 * 24 },
+        removeOnFail: { age: 60 * 60 * 24 },
+      },
+    });
+  }
+  return generationExcelQueue;
+}
+
+export  interface payload_emails{
+to:string,
+subject:string,
+html:string,
+attachemnet:string[]
+}
+
+export type EmailTemplateType = 
+  | 'crear_cotizacion' 
+  | 'actualizar_cotizacion' 
+  | 'enviar_orden_trabajo'
+  | 'bienvenida_cliente'|'crear_ot'; // Agrega los que necesites
+
+// 2. Interfaz estricta para el trabajo de BullMQ
+export interface EmailJobData {
+  to: string | string[];           // Correo(s) de destino
+  subject: string;                 // Asunto del correo
+  template_type: EmailTemplateType;// Tipo de HTML a renderizar
+  context_data: Record<string, any>; // Variables para inyectar en el HTML (ej: { nombre: "Juan", total: 1500 })
+  minio_links?: string[];          // URLs prefirmadas de S3/MinIO (Opcional)
+  id_registro?: number;            // Para trazabilidad en tu BD
+  tipo_entry?: 'test' | 'prod';    // Útil si quieres omitir envíos reales en dev
+}
+export interface ImportarOTEPayload {
+  s3KeyTemp: string;        // La ruta temporal del archivo subido por el cliente
+  mappingConfig: any;       // El JSON con la configuración de celdas
+  id_cotizacion?: number;   // Opcional: Define si es flujo normal o anormal
+  idUsuario: number;
+  id_job: string;           // ID de la tabla Quote para hacer polling
+}
+
+// 3. Singleton para la cola de correos
+export function getEmailQueue(): Queue {
+  if (!emailQueue) {
+    emailQueue = new Queue<EmailJobData>(EMAIL_QUEUE_NAME, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 3, // Reintenta 3 veces si Nodemailer o Outlook fallan
+        backoff: { 
+          type: 'exponential', 
+          delay: 2000 // Espera 2s, luego 4s, luego 8s...
+        },
+        removeOnComplete: { age: 60 * 60 * 24 }, // Limpia jobs exitosos en 24h
+        removeOnFail: { age: 60 * 60 * 24 * 7 }, // Guarda fallos por 7 días para auditoría
+      },
+    });
+  }
+  return emailQueue;
+}
+export const IMPORTAR_QUEUE="prefix_imOT"
+export function getimportOT(): Queue {
+  if (!emailQueue) {
+    emailQueue = new Queue<ImportarOTEPayload>(IMPORTAR_QUEUE, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 3, // Reintenta 3 veces si Nodemailer o Outlook fallan
+        backoff: { 
+          type: 'exponential', 
+          delay: 2000 // Espera 2s, luego 4s, luego 8s...
+        },
+        removeOnComplete: { age: 60 * 60 * 24 }, // Limpia jobs exitosos en 24h
+        removeOnFail: { age: 60 * 60 * 24 * 7 }, // Guarda fallos por 7 días para auditoría
+      },
+    });
+  }
+  return emailQueue;
+}
+

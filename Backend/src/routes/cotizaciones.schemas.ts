@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { optional, z } from 'zod';
 import { metaListaSchema } from '../schemas/comunes.js';
 
 // ============================================================
@@ -11,6 +11,7 @@ export type EstadosZod = z.infer<typeof estadosEnum>;
 // INPUTS (body / params / query)
 // ============================================================
 export const detalleInputSchema = z.object({
+  idDetalle: z.number().optional(), // Si no viene, significa que es un ítem nuevo agregado en la edición
   equipoDescripcion: z.string(),
   tipoServicio: z.string(),
   magnitud: z.string(),
@@ -21,7 +22,7 @@ export const detalleInputSchema = z.object({
 export type DetalleInput = z.infer<typeof detalleInputSchema>;
 
 export const crearCotizacionBodySchema = z.object({
-  codigo: z.string(),
+  codigo: z.string().optional(),
   idCliente: z.number(),
   viaticos: z.number().optional(),
   descuento: z.number().optional(),
@@ -30,16 +31,7 @@ export const crearCotizacionBodySchema = z.object({
 });
 export type CrearCotizacionBody = z.infer<typeof crearCotizacionBodySchema>;
 
-export const actualizarCotizacionBodySchema = z.object({
-  idCotizacion: z.number(),
-  codigo: z.string().optional(),
-  idCliente: z.number().optional(),
-  estado: estadosEnum.optional(),
-  viaticos: z.number().optional(),
-  descuento: z.number().optional(),
-  detalles: z.array(detalleInputSchema).optional(),
-});
-export type ActualizarCotizacionBody = z.infer<typeof actualizarCotizacionBodySchema>;
+
 
 export const cambiarEstadoBodySchema = z.object({
   nuevoEstado: estadosEnum,
@@ -110,7 +102,6 @@ export const historialCambioDtoSchema = z.object({
   numeroVersion: z.string(),
   fechaCambio: z.coerce.date(),
   descripcion: z.string(),
-  requiereValidacionHoja: z.boolean(),
   observaciones: z.string().nullable(),
   aprobo: z.string(),
   idCotizacion: z.number(),
@@ -325,14 +316,32 @@ export const historialCambioRawToDtoSchema = z
     numeroVersion: raw.numero_version,
     fechaCambio: raw.fecha_cambio,
     descripcion: raw.descripcion,
-    requiereValidacionHoja: raw.requiere_validacion_hoja,
     observaciones: raw.observaciones ?? null,
     aprobo: raw.aprobo,
     idCotizacion: raw.id_cotizacion,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   }));
+export const historialCambioInputSchema = z.object({
+  descripcion: z.string().min(1, "La descripción es requerida"),
+  observaciones: z.string().nullish(),
+  aprobo: z.string().min(1, "Se requiere el aprobador"),
+  
+});
 
+// 2. Tu payload corregido usando el esquema de Input
+export const actualizarCotizacionBodySchema = z.object({
+  idCotizacion: z.number(),
+  codigo: z.string().optional(),
+  idCliente: z.number().optional(),
+  estado: estadosEnum.optional(),
+  viaticos: z.number().optional(),
+  descuento: z.number().optional(),
+  detalles: z.array(detalleInputSchema).optional(),
+  cambios: historialCambioInputSchema // 🔥 Usamos el Input, no el DTO
+});
+
+export type ActualizarCotizacionBody = z.infer<typeof actualizarCotizacionBodySchema>;
 export const documentoRawToDtoSchema = z
   .object({
     ID_DOCUMENTO: z.number(),
@@ -543,6 +552,8 @@ export const cotizacionRawToDtoSchema = z
 export const respuestaCotizacionSchema = z.object({
   ok: z.literal(true),
   data: cotizacionDtoSchema,
+  // CORRECCIÓN: BullMQ devuelve un string, no un number
+  id_job: z.string().optional() 
 });
 export type RespuestaCotizacion = z.infer<typeof respuestaCotizacionSchema>;
 

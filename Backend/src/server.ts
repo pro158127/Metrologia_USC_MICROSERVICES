@@ -12,7 +12,7 @@ import  excelFileRoutes  from './routes/excel-univer-parser.routes.js';
 import  documentosRoutes  from './routes/documentos.routes.js';
 import clientesRoutes from './routes/clientes.routes.js';
 import notificacionesRoutes from './routes/notificaciones.routes.js';
-import authRoutes from './routes/audit.routes.js';
+import authRoutes from './routes/auth.routes.js';
 import usuariosRoutes from './routes/usuarios.routes.js';
 import cotizacionesRoutes from './routes/cotizaciones.routes.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
@@ -22,13 +22,17 @@ import parametrosSistemaRoutes from './routes/parametros_sistema.routes.js';
 import facturasRoutes from './routes/facturas.routes.js';
 import certificadosRoutes from './routes/certificados.routes.js';
 import certificateGeneratorRoutes from './routes/certificate-generator.routes.js';
-import reportesRoutes from './routes/recepciones.routes.js';
+import reportesRoutes from './routes/reportes.routes.js';
 import plantillasRoutes from './routes/plantillas.routes.js';
-import ordenesRoutes from './routes/audit.routes.js';
+import ordenesRoutes from './routes/ordenes.routes.js';
 import recepcionesRoutes from './routes/recepciones.routes.js';
-import consecutivosRoutes from './routes/consecutivos.routes.js';
+import plantillasGeneracionRoutes from './routes/plantillas-generacion.routes.js';
+import jobsRoutes from './routes/job.js';
 import fastifyMultipart from '@fastify/multipart';
 import pdfRoutes from './routes/pdfRoutes.routes.js';
+import internalRoutes from './routes/internal.route.js';
+import quoteStatusRoutes from './routes/quote.route.js';
+import archivosRoutes from './routes/archivos.routes.js';
 async function bootstrap() {
   const fastify = Fastify({ logger: true });
 
@@ -52,6 +56,8 @@ async function bootstrap() {
   await fastify.register(errorHandlerPlugin);
 
   // 3. Registro de Rutas
+  await fastify.register(jobsRoutes)
+  await fastify.register(internalRoutes); // 🔥 Rutas internas para comunicación con Workers
   await fastify.register(auditRoutes);
   await fastify.register(pdfRoutes);
   await fastify.register(excelFileRoutes);
@@ -59,6 +65,7 @@ async function bootstrap() {
   await fastify.register(clientesRoutes);
   await fastify.register(notificacionesRoutes);
   await fastify.register(authRoutes);
+  await fastify.register(archivosRoutes);
   await fastify.register(usuariosRoutes);
   await fastify.register(cotizacionesRoutes);
   await fastify.register(tarifasRoutes);
@@ -69,9 +76,11 @@ async function bootstrap() {
   await fastify.register(certificateGeneratorRoutes);
   await fastify.register(reportesRoutes);
   await fastify.register(plantillasRoutes);
+  await fastify.register(plantillasGeneracionRoutes);
   await fastify.register(ordenesRoutes);
+  await fastify.register(quoteStatusRoutes);
   await fastify.register(recepcionesRoutes);
-  await fastify.register(consecutivosRoutes);
+
 
   // 4. Health Check
   fastify.get('/health', async () => {

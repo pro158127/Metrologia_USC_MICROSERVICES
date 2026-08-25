@@ -12,23 +12,28 @@ import {
 import {
   actualizarMappingBodySchema,
   consolidarTarifasBodySchema,
+  crearPlantillaBodySchema,
   detallePlantillaQuerySchema,
   documentoRawToDtoSchema,
   idParamSchema,
   jobIdParamSchema,
   plantillaCompletaRawToDtoSchema,
   plantillaConDocumentoRawToDtoSchema,
+  plantillaRawToDtoSchema,
   respuestaConsolidarTarifasSchema,
   respuestaEstadoJobTarifasSchema,
   respuestaListaPlantillasSchema,
   respuestaMappingSchema,
   respuestaNuevaVersionSchema,
+  respuestaPlantillaCreadaSchema,
   respuestaPlantillaSchema,
   respuestaSnapshotJobStatusSchema,
   respuestaSnapshotSchema,
   snapshotParamsSchema,
   versionIdParamSchema,
-} from './plantillas.schemas.js';
+  PlantillaIdParam,respuestaVersionSchema,
+  plantillaIdParamSchema
+} from '../routes/plantillas.schemas.js';
 
 const SNAPSHOT_CACHE_PREFIX = 'univer:snapshot:';
 const SNAPSHOT_JOB_PREFIX = 'univer:job:';
@@ -37,6 +42,30 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.post(
+    '/api/v1/plantillas',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        body: crearPlantillaBodySchema,
+        response: { 201: respuestaPlantillaCreadaSchema },
+      },
+    },
+    async (request, reply) => {
+      const created = await fastify.prisma.plantillas.create({
+        data: {
+          MODULO: request.body.modulo,
+          NOMBRE: request.body.nombre,
+          ACTIVA: request.body.activa,
+        },
+      });
+      return reply.code(201).send({
+        success: true as const,
+        data: plantillaRawToDtoSchema.parse(created),
+      });
+    }
+  );
 
   app.get(
     '/api/v1/plantillas/:id',
@@ -100,7 +129,7 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
           },
         },
       });
-
+      console.log(plantillas.flatMap((e)=>e.version_plantillas))
       return {
         success: true as const,
         data: plantillas.map((p) => plantillaCompletaRawToDtoSchema.parse(p)),
@@ -274,7 +303,7 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
     }
   );
 
-  app.post(
+app.post(
     '/api/v1/plantillas/:id/version',
     {
       preHandler: [fastify.authenticate],
@@ -299,6 +328,12 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
       const templateType = (data.fields?.templateType as any)?.value || null;
       const inputSchemaRaw = (data.fields?.inputSchema as any)?.value || null;
 
+      // 💡 1. Sanitización: Limpiamos el nombre del archivo para MinIO/S3
+      const safeFileName = fileName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9.-]/g, "_");
+
       const plantilla = await fastify.prisma.plantillas.findUnique({
         where: { ID_PLANTILLA: idPlantilla },
         include: {
@@ -310,8 +345,11 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
         throw new AppError(404, 'Plantilla no encontrada.');
       }
 
-      const lastVersion = plantilla.version_plantillas[0]?.VERSION ?? 0;
-      const newVersion = lastVersion + 1;
+      const latestVersionRecord = plantilla.version_plantillas[0];
+      const lastVersionNum = latestVersionRecord?.VERSION ?? 0;
+      
+      const isOrphan = latestVersionRecord && latestVersionRecord.ID_DOCUMENTOS_FK === null;
+      const targetVersionNum = isOrphan ? lastVersionNum : lastVersionNum + 1;
 
       let inputSchema: unknown = null;
       if (inputSchemaRaw) {
@@ -321,28 +359,31 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
           throw new AppError(400, 'inputSchema inválido: debe ser un JSON válido.');
         }
       } else {
-        inputSchema = plantilla.version_plantillas[0]?.INPUT_SCHEMA ?? null;
+        inputSchema = latestVersionRecord?.INPUT_SCHEMA ?? null;
       }
 
       if (templateType && typeof inputSchema === 'object' && inputSchema !== null) {
         (inputSchema as any).templateType = templateType;
       }
 
-      const s3Key = `documentos/templates/${Date.now()}_${fileName}`;
-      const uploadCommand = new PutObjectCommand({
+      // 💡 2. Usamos safeFileName en lugar de fileName para la ruta de S3
+      const s3Key = `documentos/templates/${Date.now()}_${safeFileName}`;
+      
+    const uploadCommand = new PutObjectCommand({
         Bucket: BUCKET_NAME,
         Key: s3Key,
         Body: buffer,
         ContentType:
           data.mimetype || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        Metadata: { originalName: fileName },
+        // 💡 AQUÍ ESTÁ EL CAMBIO: Codificamos el nombre para que HTTP no explote con la "ó" y los espacios
+        Metadata: { originalName: encodeURIComponent(fileName) },
       });
       await s3Client.send(uploadCommand);
 
-      const created = await fastify.prisma.$transaction(async (tx) => {
+      const createdOrUpdated = await fastify.prisma.$transaction(async (tx) => {
         const doc = await tx.documentos.create({
           data: {
-            NOMBRE: fileName,
+            NOMBRE: fileName, // 💡 3. Aquí mantenemos el nombre original con tildes para la BD
             RUTA_URL: s3Key,
             PROVEEDOR: 'LOCAL',
             MIME_TYPE:
@@ -351,43 +392,63 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
           },
         });
 
-        return tx.version_plantillas.create({
+        await tx.version_documentos.create({
           data: {
-            ID_PLANTILLA_FK: idPlantilla,
-            VERSION: newVersion,
-            INPUT_SCHEMA: (inputSchema as any) ?? Prisma.DbNull,
-            MAPPING_CONFIG: Prisma.DbNull,
-            ID_USUARIO_CREADOR_FK: Number(request.user?.sub ?? 0),
-            ID_DOCUMENTOS_FK: doc.ID_DOCUMENTO,
+            ID_DOCUMENTO_FK: doc.ID_DOCUMENTO,
+            VERSION: targetVersionNum,
+            RUTA_URL: s3Key,
+            usuario_fk: Number(request.user?.sub ?? 0),
           },
         });
+
+        if (isOrphan) {
+          return tx.version_plantillas.update({
+            where: { ID_VERSION_PLANTILLA: latestVersionRecord.ID_VERSION_PLANTILLA },
+            data: {
+              ID_DOCUMENTOS_FK: doc.ID_DOCUMENTO,
+              INPUT_SCHEMA: (inputSchema as any) ?? latestVersionRecord.INPUT_SCHEMA,
+              ID_USUARIO_CREADOR_FK: Number(request.user?.sub ?? 0),
+            },
+          });
+        } else {
+          return tx.version_plantillas.create({
+            data: {
+              ID_PLANTILLA_FK: idPlantilla,
+              VERSION: targetVersionNum,
+              INPUT_SCHEMA: (inputSchema as any) ?? Prisma.DbNull,
+              MAPPING_CONFIG: Prisma.DbNull,
+              ID_USUARIO_CREADOR_FK: Number(request.user?.sub ?? 0),
+              ID_DOCUMENTOS_FK: doc.ID_DOCUMENTO,
+            },
+          });
+        }
       });
 
       try {
         const queue = getSnapshotQueue();
         await queue.add('generate-snapshot', {
-          versionId: created.ID_VERSION_PLANTILLA,
+          versionId: createdOrUpdated.ID_VERSION_PLANTILLA,
           rutaUrl: s3Key,
-          fileName,
+          fileName, // Enviamos el nombre original al worker
         });
       } catch (e) {
         request.log.error(e, 'No se pudo encolar el snapshot de la nueva versión');
       }
 
       const versionConDocumento = await fastify.prisma.version_plantillas.findUnique({
-        where: { ID_VERSION_PLANTILLA: created.ID_VERSION_PLANTILLA },
+        where: { ID_VERSION_PLANTILLA: createdOrUpdated.ID_VERSION_PLANTILLA },
         include: { documentos: true },
       });
 
       return reply.code(201).send({
         success: true as const,
         data: {
-          idVersionPlantilla: created.ID_VERSION_PLANTILLA,
-          idPlantilla: created.ID_PLANTILLA_FK,
-          version: created.VERSION,
-          inputSchema: created.INPUT_SCHEMA ?? null,
-          mappingConfig: created.MAPPING_CONFIG ?? null,
-          createdAt: created.CREATED_AT,
+          idVersionPlantilla: createdOrUpdated.ID_VERSION_PLANTILLA,
+          idPlantilla: createdOrUpdated.ID_PLANTILLA_FK,
+          version: createdOrUpdated.VERSION,
+          inputSchema: createdOrUpdated.INPUT_SCHEMA ?? null,
+          mappingConfig: createdOrUpdated.MAPPING_CONFIG ?? null,
+          createdAt: createdOrUpdated.CREATED_AT,
           documento: versionConDocumento?.documentos
             ? documentoRawToDtoSchema.parse(versionConDocumento.documentos)
             : null,
@@ -414,9 +475,15 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
         throw new AppError(400, 'versionId inválido.');
       }
 
-      const version = await fastify.prisma.version_plantillas.findUnique({
-        where: { ID_VERSION_PLANTILLA: versionId },
-        include: { documentos: true },
+      const version = await fastify.prisma.version_plantillas.findFirst({
+        where: { ID_VERSION_PLANTILLA: versionId  },
+        include: { documentos: true ,
+        },
+        orderBy:{
+          VERSION:'desc'
+        }
+
+        
       });
 
       if (!version) {
@@ -426,17 +493,22 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
         throw new AppError(400, 'La versión no tiene un documento Excel asociado.');
       }
 
-      const tieneColumnaBase =
-        typeof mapeoConfig.columnas.magnitud === 'number' ||
-        typeof mapeoConfig.columnas.instrumento === 'number';
+     const tieneColumnaBase =
+        (typeof mapeoConfig.columnas.magnitud === 'string' && mapeoConfig.columnas.magnitud.trim() !== '') ||
+        (typeof mapeoConfig.columnas.instrumento === 'string' && mapeoConfig.columnas.instrumento.trim() !== '');
+
       if (!tieneColumnaBase) {
         throw new AppError(
           400,
           'Debe mapearse al menos la columna de magnitud o de instrumento.'
         );
       }
-      if (Object.keys(mapeoConfig.anios).length === 0) {
-        throw new AppError(400, 'Debe mapearse al menos un año de precios.');
+
+      // 2. Ajuste para los precios (recuerda que antes lo cambiamos a un array llamado columnasPrecios)
+      const tienePrecios = mapeoConfig.columnasPrecios && mapeoConfig.columnasPrecios.length > 0;
+
+      if (!tienePrecios) {
+        throw new AppError(400, 'Debe mapearse al menos una columna de precios.'); 
       }
 
       await fastify.prisma.version_plantillas.update({
@@ -450,16 +522,37 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
       });
 
       const queue = getTarifasQueue();
-      const job = await queue.add('consolidar-tarifas', {
-        versionId,
-        rutaUrl: version.documentos.RUTA_URL,
-        fileName: version.documentos.NOMBRE,
-        mapeoConfig,
-      });
+      let job;
+      try {
+        job = await queue.add('consolidar-tarifas', {
+          versionId,
+          rutaUrl: version.documentos.RUTA_URL,
+          fileName: version.documentos.NOMBRE,
+          mapeoConfig,
+        });
+console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la versión ${versionId}`);
+   return reply.code(202).send({
+          success: true,
+          data: {
+            estado: 'PROCESANDO',
+            jobId: job.id ?? null
+          }
+        });
+        
 
-      return reply
-        .code(202)
-        .send({ success: true as const, data: { estado: 'PROCESANDO', jobId: job.id ?? undefined } });
+      } catch (error) {
+        await fastify.prisma.version_plantillas.update({
+          where: { ID_VERSION_PLANTILLA: versionId },
+          data: {
+            ESTADO: 'ERROR',
+            ERROR_LOG: 'No se pudo encolar el job de consolidación de tarifas.',
+          },
+        });
+        request.log.error(error, 'Fallo al encolar consolidar-tarifas');
+        throw new AppError(500, 'No se pudo encolar el job de consolidación de tarifas.');
+      }
+
+
     }
   );
 
@@ -487,6 +580,32 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
         throw new AppError(404, 'Versión de plantilla no encontrada.');
       }
 
+      if (version.ESTADO === 'PROCESANDO') {
+        const queue = getTarifasQueue();
+        const activos = await queue.getJobs(['waiting', 'active', 'delayed']);
+        const tieneJob = activos.some(
+          (job) => (job.data as any)?.versionId === versionId && (job.data as any)?.mapeoConfig
+        );
+        if (!tieneJob) {
+          const stale = await fastify.prisma.version_plantillas.update({
+            where: { ID_VERSION_PLANTILLA: versionId },
+            data: {
+              ESTADO: 'ERROR',
+              ERROR_LOG: 'Job huérfano: no hay un proceso activo en la cola de tarifas.',
+            },
+            select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true },
+          });
+          return {
+            success: true as const,
+            data: {
+              estado: stale.ESTADO,
+              errorLog: stale.ERROR_LOG ?? null,
+              procesadoEn: stale.PROCESADO_EN ?? null,
+            },
+          };
+        }
+      }
+
       return {
         success: true as const,
         data: {
@@ -497,4 +616,49 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
       };
     }
   );
+
+
+  app.get(
+  '/api/v1/plantillas/:plantillaId/version',
+  {
+    preHandler: [fastify.authenticate],
+    schema: {
+      params: plantillaIdParamSchema, 
+      response: { 200: respuestaVersionSchema },
+    },
+  },
+     async (request) => {
+    // 1. Captura y validación del parámetro
+    const plantillaId = Number(request.params.plantillaId);
+    
+    if (plantillaId <= 0 || isNaN(plantillaId)) {
+      throw new AppError(400, 'plantillaId inválido.');
+    }
+
+    // 2. Consulta a la base de datos
+    const version = await fastify.prisma.version_plantillas.findFirst({
+      where: { ID_PLANTILLA_FK: plantillaId },
+      orderBy: { VERSION: 'desc' }, 
+    });
+    
+    // 3. Manejo de caso donde no existe ninguna versión
+    if (!version) {
+      throw new AppError(404, 'No se encontraron versiones para esta plantilla.');
+    }
+
+    // AGREGADO: Validar que el campo MAPPING_CONFIG no sea null en la base de datos
+    if (!version.MAPPING_CONFIG) {
+      throw new AppError(400, 'La versión no tiene un MAPPING_CONFIG asociado.');
+    }
+    
+    // 4. Retorno exitoso
+    return {
+      success: true as const,
+      // Devolvemos el objeto version completo para que coincida con lo que espera tu frontend
+      data: version, 
+    };
+  }
+);
+
 }
+

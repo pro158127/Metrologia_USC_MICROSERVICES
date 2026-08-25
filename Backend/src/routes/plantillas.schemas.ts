@@ -186,6 +186,43 @@ export const idParamSchema = z.object({
 });
 export type IdParam = z.infer<typeof idParamSchema>;
 
+export const crearPlantillaBodySchema = z.object({
+  modulo: z.string().min(1).default('COTIZACIONES'),
+  nombre: z.string().min(1),
+  activa: z.boolean().optional().default(true),
+});
+export type CrearPlantillaBody = z.infer<typeof crearPlantillaBodySchema>;
+
+export const plantillaDtoSchema = z.object({
+  idPlantilla: z.number(),
+  nombre: z.string(),
+  modulo: z.string(),
+  activa: z.boolean(),
+});
+export type PlantillaDto = z.infer<typeof plantillaDtoSchema>;
+
+export const plantillaRawToDtoSchema = z
+  .object({
+    ID_PLANTILLA: z.number(),
+    NOMBRE: z.string(),
+    MODULO: z.string(),
+    ACTIVA: z.boolean(),
+  })
+  .transform(
+    (raw): PlantillaDto => ({
+      idPlantilla: raw.ID_PLANTILLA,
+      nombre: raw.NOMBRE,
+      modulo: raw.MODULO,
+      activa: raw.ACTIVA,
+    })
+  );
+
+export const respuestaPlantillaCreadaSchema = z.object({
+  success: z.literal(true),
+  data: plantillaDtoSchema,
+});
+export type RespuestaPlantillaCreada = z.infer<typeof respuestaPlantillaCreadaSchema>;
+
 export const snapshotParamsSchema = z.object({
   id: z.coerce.number(),
   versionId: z.coerce.number(),
@@ -214,13 +251,46 @@ export const actualizarMappingBodySchema = z.object({
 });
 export type ActualizarMappingBody = z.infer<typeof actualizarMappingBodySchema>;
 
+// 1. Esquema para los parámetros de la URL (params)
+export const plantillaIdParamSchema = z.object({
+  // z.coerce fuerza la conversión de string (URL) a number
+  plantillaId: z.coerce.number().int().positive('El ID debe ser un número entero positivo'),
+});
+export type PlantillaIdParam = z.infer<typeof plantillaIdParamSchema>;
+
+// 2. Esquema para la respuesta exitosa (response 200)
+export const respuestaVersionSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    ID_VERSION_PLANTILLA: z.number(),
+    VERSION: z.number(),
+    // Agregados para que coincidan con la salida de Prisma
+    MAPEO_EXCEL_JSON: z.any().optional(),
+    INPUT_SCHEMA: z.unknown().nullable(),
+    MAPPING_CONFIG: z.unknown().nullable(),
+    CREATED_AT: z.date(),
+    ESTADO: z.string(),
+    ID_PLANTILLA_FK: z.number(),
+    ID_DOCUMENTOS_FK: z.number().nullable(), 
+    MAPEO_CONFIG: z.unknown().nullable(),
+    PROCESADO_EN: z.date().nullable(),
+    ERROR_LOG: z.string().nullable(),
+    ID_USUARIO_CREADOR_FK: z.number(),
+    // Hacemos JOB_ID opcional por si no viene en la consulta de Prisma
+    JOB_ID: z.string().nullable().optional(), 
+  })
+});
+export type RespuestaVersion = z.infer<typeof respuestaVersionSchema>;
+
+
+
 export const versionPlantillaRawSchema = z.object({
   ID_VERSION_PLANTILLA: z.number(),
   ID_PLANTILLA_FK: z.number(),
   VERSION: z.number(),
-  MAPEO_EXCEL_JSON: z.unknown().nullable(),
   INPUT_SCHEMA: z.unknown().nullable(),
   MAPPING_CONFIG: z.unknown().nullable(),
+  MAPEO_EXCEL_JSON: z.any().optional(),
   ID_USUARIO_CREADOR_FK: z.number(),
   CREATED_AT: z.coerce.date(),
   ID_DOCUMENTOS_FK: z.number().nullable(),
@@ -288,18 +358,17 @@ export const respuestaNuevaVersionSchema = z.object({
   data: nuevaVersionDtoSchema,
 });
 export type RespuestaNuevaVersion = z.infer<typeof respuestaNuevaVersionSchema>;
-
 export const mapeoConfigTarifasSchema = z.object({
-  filaInicialDatos: z.number().int().nonnegative(),
+  filaInicialDatos: z.number().int().positive(),
+  filaEncabezados: z.number().int().positive(), // <-- Faltaba esta llave requerida por Python
   columnas: z.object({
-    magnitud: z.number().int().nullable().optional(),
-    instrumento: z.number().int().nullable().optional(),
-    norma: z.number().int().nullable().optional(),
-    tipoServicio: z.number().int().nullable().optional(),
+    magnitud: z.string().min(1),      // <-- Python espera letras (strings)
+    instrumento: z.string().min(1),
+    norma: z.string().min(1),
+    tipoServicio: z.string().min(1),
   }),
-  anios: z.record(z.string(), z.coerce.number().int()),
-});
-export type MapeoConfigTarifas = z.infer<typeof mapeoConfigTarifasSchema>;
+  columnasPrecios: z.array(z.string()).optional(), // <-- Python itera sobre esta lista de letras
+});export type MapeoConfigTarifas = z.infer<typeof mapeoConfigTarifasSchema>;
 
 export const consolidarTarifasBodySchema = z.object({
   mapeoConfig: mapeoConfigTarifasSchema,

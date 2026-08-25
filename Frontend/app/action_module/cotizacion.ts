@@ -86,8 +86,9 @@ export async function obtenerCotizacionPorId(
 // ==========================================
 // ACTUALIZAR COTIZACIÓN (sin cambios)
 // ==========================================
+import {ActualizarCotizacionBody} from "backend/src/routes/cotizaciones.schemas"
 export async function actualizarCotizacion(
-  data: ActualizarCotizacionInput
+  data: ActualizarCotizacionBody
 ): Promise<ActionResponse<CotizacionConDetalles>> {
   const perm = await validarPermiso('crear_editar');
   if (!perm.autorizado) return { ok: false, error: perm.error };

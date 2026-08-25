@@ -18,7 +18,7 @@ model audit_logs {
   USER_ID   Int
   createdAt DateTime @default(now())
   details   Json
-  ip        String
+  ip        String 
   ID_AUDIT  Int      @id @default(autoincrement())
   usuarios  usuarios @relation(fields: [USER_ID], references: [ID_USUARIO_AUTO_INCREMENT])
 }
@@ -86,6 +86,7 @@ model cotizacion_detalles {
   VALOR_UNITARIO     Decimal      @db.Decimal(12, 2)
   VALOR_TOTAL        Decimal      @db.Decimal(12, 2)
   sitio              String?
+  activacion            Boolean            @default(true)
   cotizaciones       cotizaciones @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
 }
 
@@ -191,58 +192,90 @@ model orden_trabajo_detalles {
   LIMITE_CONTROL_EMC      String?
   DOC_ESPECIFICACION      String?
   REGLA_DECISION          String?
+    activacion      Boolean?
   ordenes_trabajo         ordenes_trabajo @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO], onDelete: Cascade)
   usuarios                usuarios        @relation(fields: [asignado], references: [ID_USUARIO_AUTO_INCREMENT], onDelete: Cascade)
 }
-
 model ordenes_trabajo {
+  // ---------------------------------------------------------
+  // METADATOS DEL SISTEMA Y LLAVES PRIMARIAS
+  // ---------------------------------------------------------
   ID_ORDEN_TRABAJO                                   Int                      @id @default(autoincrement())
   CODIGO_OT                                          String                   @unique
-  ID_COTIZACION_FK                                   Int?
-  ID_CLIENTE_FK                                      Int?
+  CREATED_AT                                         DateTime?                @default(now())
+  hora                                               DateTime?                @default(now())
+  estado                                             EstadoOT?                @default(Creada)
+  estado_pago                                        estadopay?               @default(PAGADO)
+  ESTADO_REVISION                                    String?                  @default("PENDIENTE_REVISION")
+  MOTIVO_RECHAZO                                     String?
+  alertamessag                                       String?                  @default("sin novedades")
+
+  // ---------------------------------------------------------
+  // ÁREA 1: DATOS PARA CERTIFICADO (Cliente)
+  // ---------------------------------------------------------
+  Razon_social                                       String?                  @default("sin razon_social")
+  NIT                                                String?                  @default("sin nit")
+  dirrecion                                          String?                  @default("sin dirreccion")
+  ciudad                                             String?                  @default("sin ciudad")
   CORREO_CERTIFICADO                                 String?
   CORREO_FACTURA                                     String?
   FECHA_LIMITE_FACTURACION                           DateTime?
+
+  // ---------------------------------------------------------
+  // ÁREA 3: INFORMACIÓN DE CALIBRACIÓN (USC)
+  // ---------------------------------------------------------
   ES_INTERNO_USC                                     Boolean?                 @default(false)
   ES_EN_SITIO                                        Boolean?                 @default(false)
   ES_LAB_PERMANENTE                                  Boolean?                 @default(true)
+  PERSONA_CONTACTO                                   String?
   TELEFONO_CONTACTO                                  String?
   FECHA_CALIBRACION                                  DateTime?
-  RESPONSABLE                                        String?
-  OBSERVACIONES                                      String?
-  REQUIERE_ANEXO                                     Boolean?                 @default(false)
-  ESTADO_REVISION                                    String?                  @default("PENDIENTE_REVISION")
-  MOTIVO_RECHAZO                                     String?
-  CREATED_AT                                         DateTime?                @default(now())
-  estado                                             EstadoOT?                @default(Creada)
-  estado_pago                                        estadopay?               @default(PAGADO)
-  alertamessag                                       String?                  @default("sin novedades")
-  PERSONA_CONTACTO                                   String?
-  hora                                               DateTime?                @default(now())
-  FECHA_CALIBRACION_DILIGENCIAMENTO                  DateTime?
-  NIT                                                String?                  @default("sin nit")
+  HORA_CALIBRACION                                   DateTime? 
+
+  // ---------------------------------------------------------
+  // ÁREA 4: INFORMACIÓN DEL SOLICITANTE Y CONSECUTIVOS (USC)
+  // ---------------------------------------------------------
+  // * CAMPO NUEVO SUGERIDO: Faltaba la razón social exclusiva del solicitante
+  razon_social_solicitante                           String?                  @default("sin razon_social") 
   NIT_solicitante                                    String?                  @default("sin nit")
-  PERSONA_CONTACT_SOLCITANTE                         String?
-  Razon_social                                       String?                  @default("sin razon_social")
-  TELEFONO_CONTACTO_SOLICITANTE                      String?
-  ciudad                                             String?                  @default("sin ciudad")
-  ciudad_solcitante                                  String?                  @default("sin ciudad")
-  dirrecion                                          String?                  @default("sin dirreccion")
   dirrecion_solcitante                               String?                  @default("sin dirreccion")
-  no_cotizacion                                      String?                  @default("n/a")
+  ciudad_solcitante                                  String?                  @default("sin ciudad")
+  PERSONA_CONTACT_SOLCITANTE                         String?
+  TELEFONO_CONTACTO_SOLICITANTE                      String?
   no_orden_trabajo                                   String?                  @default("n/a")
+  no_cotizacion                                      String?                  @default("n/a")
+  RESPONSABLE                                        String?
+  FECHA_CALIBRACION_DILIGENCIAMENTO                  DateTime?
+  REQUIERE_ANEXO                                     Boolean?                 @default(false)
+
+  // ---------------------------------------------------------
+  // ÁREA 5: OBSERVACIONES
+  // ---------------------------------------------------------
+  OBSERVACIONES                                      String?
+
+  // ---------------------------------------------------------
+  // RELACIONES (Llaves Foráneas y Tablas Hijas)
+  // ---------------------------------------------------------
+  ID_COTIZACION_FK                                   Int?
+  ID_CLIENTE_FK                                      Int?
+  
+  clientes                                           clientes?                @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
+  cotizaciones                                       cotizaciones?            @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
+  
+  // ÁREA 2: Los instrumentos van aquí
+  orden_trabajo_detalles                             orden_trabajo_detalles[] 
+  
   documentos                                         documentos[]
   documentos_documentos_ordenPagoIdToordenes_trabajo documentos[]             @relation("documentos_ordenPagoIdToordenes_trabajo")
   facturas                                           facturas[]
-  orden_trabajo_detalles                             orden_trabajo_detalles[]
-  clientes                                           clientes?                @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
-  cotizaciones                                       cotizaciones?            @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
   recepciones_equipo                                 recepciones_equipo[]
 
+  // ---------------------------------------------------------
+  // ÍNDICES
+  // ---------------------------------------------------------
   @@index([CODIGO_OT])
   @@index([FECHA_CALIBRACION])
 }
-
 model parametros_sistema {
   ID_PARAMETRO      Int                 @id @default(autoincrement())
   CLAVE             String              @unique
@@ -283,12 +316,19 @@ model recepcion_equipo_detalles {
   SERIE              String?
   CODIGO_INVENTARIO  String?
   RESOLUCION         String?
-  TIPO_SENSOR_TEMP   String?
+  TIPO_SENSOR_TEMP_init  Boolean?
+  TIPO_SENSOR_TEMP_ext  Boolean?
   ESTADO_IBC         Json?
-  ESTAMPILLA         String?
+  ESTAMPILLA         String? @unique
   OBSERVACIONES      String?
   calibraciones      calibraciones?
+  activacion      Boolean?
   recepciones_equipo recepciones_equipo @relation(fields: [ID_RECEPCION_FK], references: [ID_RECEPCION], onDelete: Cascade)
+}
+
+enum sitio_calibracion {
+LABORATORIO
+CLIENTE
 }
 
 model recepciones_equipo {
@@ -298,7 +338,7 @@ model recepciones_equipo {
   ID_ORDEN_TRABAJO_FK       Int?
   SOLICITANTE               String
   NOMBRE_ENTREGA            String?
-  SITIO_CALIBRACION         String
+  SITIO_CALIBRACION         sitio_calibracion?
   FECHA_RECEPCION           DateTime                    @default(now())
   FECHA_SALIDA              DateTime?
   NOMBRE_RECIBE             String?
@@ -314,7 +354,7 @@ model recepciones_equipo {
   recepcion_equipo_detalles recepcion_equipo_detalles[]
   cotizaciones              cotizaciones?               @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
   ordenes_trabajo           ordenes_trabajo?            @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO])
-
+  activacion            Boolean            @default(true)
   @@index([CREATED_AT])
 }
 
@@ -325,6 +365,20 @@ model roles {
   JUSTIFICACION      String
   DIRECTRIZ_DIRECTOR Boolean
   usuarios           usuarios[]
+}
+model Quote {
+  id        String       @id @default(uuid())
+  status    QuoteStatus  @default(PENDING) // PENDING, PROCESSING, COMPLETED, FAILED
+  fileUrl   String?
+  data      Json?
+  createdAt DateTime     @default(now())
+}
+
+enum QuoteStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
 }
 
 model sellos {
@@ -385,13 +439,13 @@ model version_plantillas {
   ID_VERSION_PLANTILLA  Int         @id @default(autoincrement())
   ID_PLANTILLA_FK       Int
   VERSION               Int         @default(1)
-  MAPEO_EXCEL_JSON      Json?
   INPUT_SCHEMA          Json?
   MAPPING_CONFIG        Json?
   MAPEO_CONFIG          Json?
   ESTADO                String      @default("PENDIENTE")
   PROCESADO_EN          DateTime?
   ERROR_LOG             String?
+  JOB_ID                String?     // <--- AGREGAR ESTE CAMPO (String opcional para el ID del Job de BullMQ)
   ID_USUARIO_CREADOR_FK Int
   CREATED_AT            DateTime    @default(now())
   ID_DOCUMENTOS_FK      Int?

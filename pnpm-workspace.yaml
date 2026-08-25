@@ -1,11 +1,18 @@
-
 packages:
   - '.'
-  - 'frontend'
-  - 'backend'
+  - 'Frontend' # Cambiado a mayúscula
+  - 'Backend' # Cambiado a mayúscula
 
 allowBuilds:
+  '@prisma/client': false
+  '@prisma/engines': false
+  argon2: false
+  esbuild: false
+  msgpackr-extract: false
+  prisma: false
   protobufjs: false
+  sharp: false
+  unrs-resolver: false
 
 onlyBuiltDependencies:
   - '@prisma/client'

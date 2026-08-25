@@ -24,6 +24,8 @@ export interface PlantillaSelloDTO {
   descripcion: string | null;
   templatePdfKey: string | null;
   templatePdfUrl: string | null;
+  templatePdfWidth: number | null;
+  templatePdfHeight: number | null;
   documentArea: BoundingBox | null;
   watermarkAreas: WatermarkArea[];
   createdAt: string;
@@ -37,6 +39,8 @@ export interface SealConfig {
   descripcion?: string;
   templatePdfKey: string | null;
   templatePdfUrl: string | null;
+  templatePdfWidth?: number | null;
+  templatePdfHeight?: number | null;
   documentArea: BoundingBox | null;
   watermarkAreas: WatermarkArea[];
   updatedAt?: string;

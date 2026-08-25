@@ -9,10 +9,9 @@ import { obtenerClientes } from '@/app/action_module/modulo_cliente';
 import { getInitialData as getRecepcionesData } from '@/app/action_module/recepciones';
 import { obtenerDatosIniciales as getOrdenesData } from '@/app/action_module/ordenes';
 import { obtenerFacturas } from '@/app/action_module/facturas';
-import { obtenerSellos } from '@/app/action_module/sellos';
 import { obtenerParametrosSistema } from '@/app/action_module/parametros_sistema';
 import { obtenerCertificadosConContexto } from '@/app/action_module/certificados';
-
+import { obtenerSellos,obtenerPlantillasSellos } from '@/app/action_module/sellos';
 const initialState: RealtimeTablesState = {
   usuarios: [],
   tarifas: [],
@@ -40,6 +39,8 @@ const initialState: RealtimeTablesState = {
   tramites: [],
   version_plantillas: [],
   facturas: [],
+  plantillas_sellos:[],
+  
 };
 
 export const useDbStore = create<

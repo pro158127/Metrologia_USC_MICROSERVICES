@@ -11,8 +11,11 @@ import type {
   MapeoConfigTarifas,
   ConsolidarTarifasResponse,
   EstadoJobTarifasResponse,
+  GeneracionPlantillaPayload,
+  GeneracionPlantillaResponse,GeneracionPlantillatest
 } from '@/tipos/plantillas';
-
+import type { RespuestaVersion, } from 'backend/src/routes/plantillas.schemas';
+import type {generarUrlResponseSchema} from 'backend/src/routes/schema.sign_document'
 // Tipado estricto para el parámetro de entrada
 interface GetPlantillaParams {
   idPlantilla: number;
@@ -281,7 +284,50 @@ export async function consolidarTarifas(
     return { success: false, error: 'Error interno al consolidar las tarifas.' };
   }
 }
+type tipos = 'cotizacion' | 'recepcion' | 'ordenes';
 
+export async function consultar_outputshema(tipo: tipos): Promise<{response: RespuestaVersion}> {
+  let plantillaId: number;
+
+  // 1. Asignar el ID de plantilla según el tipo requerido
+  switch (tipo) {
+    case 'cotizacion':
+      plantillaId = 1;
+      break;
+    case 'ordenes':
+      plantillaId = 2;
+      break;
+    case 'recepcion':
+      plantillaId = 3;
+      break;
+    default:
+      // Salvaguarda por si TypeScript es ignorado en runtime
+      throw new Error(`Tipo de plantilla no reconocido: ${tipo}`); 
+  }
+
+  // 2. Ejecutar la llamada HTTP al endpoint
+  const session = await auth();
+  
+  // CORRECCIÓN 1: El genérico ahora refleja lo que realmente envía el backend
+  const response = await fastifyRequest<RespuestaVersion>(
+    session,
+    `/api/v1/plantillas/${plantillaId}/version`,
+    { method: 'GET' } 
+  );
+
+  if (!response) {
+    throw new Error(`Fallo al obtener la versión de la plantilla. Status: 400`);
+  }
+
+  // CORRECCIÓN 2: Leemos directamente data y success de la respuesta
+  return {
+    response: {
+      data: response.data,
+      success: response.success
+      
+    }
+  };
+}
 export async function consultarEstadoJob(
   versionId: number
 ): Promise<EstadoJobTarifasResponse> {
@@ -297,5 +343,116 @@ export async function consultarEstadoJob(
       return { success: false, error: error.message };
     }
     return { success: false, error: 'Error interno al consultar el estado del job.' };
+  }
+}
+
+
+
+
+// ============================================================================
+// 1. ENDPOINT DE TEST / REVIEW
+// ============================================================================
+export async function testReviewGeneracionPlantilla(
+  payload: GeneracionPlantillatest
+): Promise<GeneracionPlantillaResponse> {
+  try {
+    const session = await auth();
+    return await fastifyRequest<GeneracionPlantillaResponse>(
+      session,
+      // Define la ruta exacta que tendrá tu controlador en Fastify
+      `/api/v1/plantillas/generacion/test-review`, 
+      { method: 'POST', body: payload }
+    );
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - testReviewGeneracionPlantilla]:', error);
+    if (error instanceof FastifyHttpError) {
+      return { success: false, error: error.message };
+    }
+    return { success: false, error: 'Error interno al generar el review de la plantilla.' };
+  }
+}
+
+// ============================================================================
+// 2. ENDPOINT DE GENERACIÓN REAL (PRODUCCIÓN)
+// ============================================================================
+
+import type { GenerarExcelBody, RespuestaGeneracionEncolada } from 'backend/src/routes/plantillas-generacion.schemas';
+export async function generarExcelPlantilla(
+  payload: GenerarExcelBody
+): Promise<RespuestaGeneracionEncolada> {
+  try {
+    const session = await auth();
+    const response = await fastifyRequest<RespuestaGeneracionEncolada>(
+      session,
+      '/api/v1/plantillas/generar-excel',
+      { method: 'POST', body: payload }
+    );
+    return { 
+      mensaje: response.mensaje, 
+      ok: true, 
+      id_job: response.id_job 
+    };
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - generarExcelPlantilla]:', error);
+    
+    // Capturamos el mensaje exacto que viene de tu backend en data.error
+    const mensajeError = error instanceof FastifyHttpError 
+      ? error.message 
+      : 'Error interno al encolar la generación del Excel.';
+
+    // Retornamos la misma estructura (caja azul) para no romper la UI
+    return { 
+      ok: false, 
+      mensaje: mensajeError 
+    } as RespuestaGeneracionEncolada; 
+  }
+}
+import type {responseQuote} from 'backend/src/routes/schema-checkStatus'
+export async function getQuoteStatus(id: number | string): Promise<responseQuote> {
+  try {
+    const session = await auth();
+    const response = await fastifyRequest<responseQuote>(
+      session,
+      `/api/quotes/${id}/status`,
+      { method: 'GET' }
+    );
+    console.log("DATA",response)
+    return response;
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - getQuoteStatus]:', error);
+    if (error instanceof FastifyHttpError) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: false, error: 'Error interno al consultar el estado de la cotización.' };
+  }
+}
+
+export async function firmador(s3Key: string): Promise<{ succes: boolean; url: string | null; error?: string | unknown }> {
+  try {
+    // 1. Guard clause para evitar solicitudes innecesarias si la clave viene vacía
+    if (!s3Key || typeof s3Key !== 'string' || s3Key.trim() === '') {
+      return { succes: false, url: null, error: 'La clave s3Key no es válida' };
+    }
+
+    const session = await auth();
+
+    // 2. Inyección correcta del body en la petición
+    const response = await fastifyRequest<generarUrlResponseSchema>(
+      session,
+      `/api/v1/archivos/generar-url`,
+      { 
+        method: 'POST',
+        body: { s3Key } // ✅ Ahora sí enviamos el objeto esperado por Zod
+      }
+    );
+
+    console.log("DATA FIRMA:", response);
+    return { succes: true, url: response.url ?? "" };
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - firmador]:', error);
+    if (error instanceof FastifyHttpError) {
+      return { succes: false, error: error.message, url: null };
+    }
+    return { succes: false, error: error, url: null };
   }
 }

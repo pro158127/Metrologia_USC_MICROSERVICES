@@ -35,6 +35,8 @@ function dtoToSealConfig(d: PlantillaSelloDTO): SealConfig {
     descripcion: d.descripcion ?? undefined,
     templatePdfKey: d.templatePdfKey ?? null,
     templatePdfUrl: d.templatePdfUrl ?? null,
+    templatePdfWidth: d.templatePdfWidth ?? null,
+    templatePdfHeight: d.templatePdfHeight ?? null,
     documentArea: d.documentArea ?? null,
     watermarkAreas: Array.isArray(d.watermarkAreas) ? d.watermarkAreas : [],
     updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString().slice(0, 10) : undefined,
@@ -84,7 +86,11 @@ function buildPlantillaFormData(config: SealConfig, file?: File): FormData {
   if (config.descripcion) formData.append('descripcion', config.descripcion);
   formData.append('documentArea', config.documentArea ? JSON.stringify(config.documentArea) : 'null');
   formData.append('watermarkAreas', JSON.stringify(config.watermarkAreas ?? []));
-  if (file) formData.append('file', file);
+  
+  if (file) {
+    // IMPORTANTE: Pasar file.name asegura que el backend reciba el MimeType correcto
+    formData.append('file', file, file.name);
+  }
   return formData;
 }
 
@@ -217,5 +223,94 @@ export async function consultarJobSello(jobId: string): Promise<{ success: boole
     console.error('Error en consultarJobSello:', error);
     if (error instanceof FastifyHttpError) return { success: false, error: error.message };
     return { success: false, error: 'Error interno al consultar el estado del sellado' };
+  }
+}
+
+
+
+export async function generarPrevisualizacionSello(formDataInput: FormData): Promise<ArrayBuffer> {
+  const session = await auth();
+  if (!session?.user) throw new FastifyHttpError(401, 'No autenticado');
+
+  const id = session.user.id_user ?? session.user.id ?? '';
+  const token = await generarTokenBackend({
+    sub: String(id),
+    email: session.user.email ?? '',
+    user: {
+      id: String(id),
+      email: session.user.email ?? '',
+      permissions: { permisos: session.user.permissions?.permisos ?? {} },
+    },
+  });
+
+  const outFormData = new FormData();
+
+  // Preservar el nombre de archivo en la transferencia de Node.js a Fastify
+  for (const [key, value] of formDataInput.entries()) {
+    if (value instanceof File) {
+      outFormData.append(key, value, value.name);
+    } else {
+      outFormData.append(key, value);
+    }
+  }
+
+  const res = await fetch(`${BASE_URL}/api/v1/sellos/preview-stamp`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: outFormData,
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new FastifyHttpError(
+      res.status,
+      errorData.message ?? errorData.error ?? `Error HTTP ${res.status}`
+    );
+  }
+
+  return await res.arrayBuffer();
+}
+export async function obtenerArchivoSelloSeguro(key: string): Promise<{ success: boolean; data?: { mime: string; base64: string }; error?: string }> {
+  try {
+    const session = await auth();
+    if (!session?.user) throw new FastifyHttpError(401, 'No autenticado');
+
+    const id = session.user.id_user ?? session.user.id ?? '';
+    const token = await generarTokenBackend({
+      sub: String(id),
+      email: session.user.email ?? '',
+      user: {
+        id: String(id),
+        email: session.user.email ?? '',
+        permissions: { permisos: session.user.permissions?.permisos ?? {} },
+      },
+    });
+
+    // Codificamos la llave respetando los slashes de las carpetas de MinIO
+    const safeKey = key.split('/').map(encodeURIComponent).join('/');
+
+    const res = await fetch(`${BASE_URL}/api/v1/sellos/ver/${safeKey}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP Error ${res.status}`);
+    }
+
+    const mime = res.headers.get('content-type') || 'application/octet-stream';
+    const arrayBuffer = await res.arrayBuffer();
+    
+    // Convertimos el binario a Base64 para transportarlo limpiamente a React
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+    return { success: true, data: { mime, base64 } };
+  } catch (error) {
+    console.error('Error en obtenerArchivoSelloSeguro:', error);
+    return { success: false, error: 'Error al descargar el archivo seguro' };
   }
 }

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; border-top: 6px solid #0033A0; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+    .header { padding: 30px 20px 10px 20px; text-align: center; }
+    .logo-container { margin: 0 auto; width: 150px; }
+    
+    /* Estado de Actualizado (Tonos informativos azules) */
+    .status-badge { background-color: #e8f0fe; color: #1967d2; padding: 8px 15px; border-radius: 20px; display: inline-block; font-weight: bold; font-size: 14px; margin-top: 15px; border: 1px solid #d2e3fc; }
+    
+    .content { padding: 20px 25px 30px 25px; color: #333333; line-height: 1.6; }
+    .greeting { font-size: 18px; color: #0033A0; margin-bottom: 15px; }
+    
+    .table-details { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    .table-details th { background-color: #f0f4f8; text-align: left; padding: 12px; color: #0033A0; border-bottom: 2px solid #d9e2ec; }
+    .table-details td { padding: 12px; border-bottom: 1px solid #eeeeee; }
+    
+    .footer { background-color: #0033A0; text-align: center; padding: 15px; font-size: 12px; color: #ffffff; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo-container">
+        <div style="border: 2px solid #0033A0; color:#0033A0; padding: 15px; border-radius: 4px; font-size: 12px; font-weight: bold;">LOGO USC</div>
+      </div>
+      <div class="status-badge">🔄 Cotización Actualizada</div>
+    </div>
+    
+    <div class="content">
+      <div class="greeting">Estimado/a {{nombreCliente}},</div>
+      <p>Le informamos que su cotización y los registros asociados han sido actualizados exitosamente en nuestro sistema tras las modificaciones recientes.</p>
+      
+      <table class="table-details">
+        <tr>
+          <th>Cotización Ref.</th>
+          <td>{{numeroCotizacion}}</td>
+        </tr>
+      </table>
+
+      <p style="margin-top: 25px;">Por favor, revise los documentos adjuntos con la información actualizada. Si tiene alguna duda o requiere un ajuste adicional, no dude en comunicarse con nosotros.</p>
+    </div>
+    
+    <div class="footer">
+      MetroSoft USC &copy; 2026 - Universidad Santiago de Cali
+    </div>
+  </div>
+</body>
+</html>

@@ -23,7 +23,7 @@ export interface DetalleInput {
 }
 
 export interface CrearCotizacionInput {
-  codigo: string;
+  codigo?: string;
   idCliente: number;
   viaticos?: number;
   descuento?: number;
@@ -81,7 +81,6 @@ export type ViewCotizacion = "list" | "create" | "catalog";
 export interface cambiospayload {
   descripcion: string;
   aprobo: string;
-  requiereValidacionHoja: boolean;
   observaciones?: string | null;
 }
 
@@ -248,7 +247,7 @@ export interface HistorialCambioItem {
   numeroVersion: string;
   fechaCambio: string | Date;
   descripcion: string;
-  requiereValidacionHoja: boolean;
+
   observaciones?: string | null;
   aprobo: string;
   idCotizacion: number;

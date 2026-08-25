@@ -1,5 +1,24 @@
 version: '3.8'
 
+# 1. Definimos el "Manual Maestro" en la raíz (fuera de 'services')
+x-backend-env: &backend-env
+  CI: "true"
+  PORT: 3001
+  DB_ENV: "local"
+  DATABASE_URL_LOCAL: "postgresql://postgres:password123@postgres_db:5432/metrologia_db"
+  DATABASE_URL_AWS: "postgresql://cristian:Cali1581@metrologiausc.ce3wseuwmnfw.us-east-1.rds.amazonaws.com:5432/metrologia_usc?schema=public"
+  REDIS_URL: "redis://redis_cache:6379"
+  MINIO_ENDPOINT: "http://minio-storage:9000" # Para subir archivos por red interna
+  # 🔥 ACTUALIZADO: El host público para descargas ahora es directo al 9000
+  MINIO_PUBLIC_ENDPOINT: "https://qcwngnfx-9000.use2.devtunnels.ms"
+  MINIO_PORT: 9000
+  MINIO_USE_SSL: "false"
+  MINIO_ACCESS_KEY: "admin_metrologia"
+  MINIO_SECRET_KEY: "PasswordSegura123"
+  MINIO_BUCKET_NAME: "documentos-metrologia"
+  OUTLOOK_USER: "cris271581@gmail.com"
+  OUTLOOK_APP_PASSWORD: "jjrsqofbiykexwgg" # Sin espacios
+
 services:
   postgres_db:
     image: pgvector/pgvector:pg16
@@ -31,6 +50,11 @@ services:
       - redis_data:/data
     networks:
       - metrologia_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   minio:
     image: minio/minio:latest
@@ -42,14 +66,13 @@ services:
     environment:
       MINIO_ROOT_USER: "admin_metrologia"
       MINIO_ROOT_PASSWORD: "PasswordSegura123"
+      # 🔥 CORREGIDO: MinIO ahora sabe que debe responder en sus propios puertos públicos
+      MINIO_SERVER_URL: "https://qcwngnfx-9000.use2.devtunnels.ms"
+      #MINIO_BROWSER_REDIRECT_URL: "https://qcwngnfx-9001.use2.devtunnels.ms"
     command: server /data --console-address ":9001"
     volumes:
       - ./.docker-data/minio_storage:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    # 🔥 ELIMINADO el healthcheck para evitar el ciclo de reinicios
     networks:
       metrologia_net:
         aliases:
@@ -76,8 +99,23 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy
+      # 🔥 CORREGIDO: Como quitamos el healthcheck, dependemos de que inicie
       minio:
-        condition: service_healthy
+        condition: service_started
+    networks:
+      - metrologia_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: metrologia_gateway
+    restart: always
+    ports:
+      - "3000:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
     networks:
       - metrologia_net
 
@@ -85,35 +123,22 @@ services:
     build:
       context: ./Backend
       dockerfile: DockerFile.backend
-    working_dir: /app
+    working_dir: /workspace/Backend
     container_name: metrologia_backend
     restart: always
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     environment:
-      CI: "true"
-      PORT: 3001
-      DB_ENV: "local"
-      DATABASE_URL_LOCAL: "postgresql://postgres:password123@postgres_db:5432/metrologia_db"
-      DATABASE_URL_AWS: "postgresql://cristian:Cali1581@metrologiausc.ce3wseuwmnfw.us-east-1.rds.amazonaws.com:5432/metrologia_usc?schema=public"
-      REDIS_URL: "redis://redis_cache:6379"
-      MINIO_ENDPOINT: "http://minio-storage:9000"
-      MINIO_PORT: 9000
-      MINIO_USE_SSL: "false"
-      MINIO_ACCESS_KEY: "admin_metrologia"
-      MINIO_SECRET_KEY: "PasswordSegura123"
-      MINIO_BUCKET_NAME: "documentos-metrologia"
-      MINIO_PUBLIC_URL: "http://localhost:9000"
+      <<: *backend-env
     command: >
-      sh -c "pnpm exec prisma generate && 
+      sh -c "cd /workspace && pnpm install && cd Backend && 
+             pnpm exec prisma generate && 
              pnpm exec prisma db push --accept-data-loss && 
              pnpm run db:seed && 
-             (pnpm worker:snapshot &) && 
-             (pnpm worker:stamp &) && 
              pnpm dev"
     volumes:
-      - ./Backend:/app
-      - /app/node_modules
+      - ./:/workspace
+      - shared_node_modules:/workspace/Backend/node_modules
     depends_on:
       - postgres_db
       - redis_cache
@@ -121,26 +146,65 @@ services:
     networks:
       - metrologia_net
 
+  worker_documentos:
+    build: { context: ./Backend, dockerfile: DockerFile.backend }
+    working_dir: /workspace/Backend
+    restart: unless-stopped
+    command: sh -c "cd /workspace/Backend && pnpm worker:documentos"
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./:/workspace
+      - shared_node_modules:/workspace/Backend/node_modules
+    depends_on:
+      backend:
+        condition: service_started
+      redis_cache:
+        condition: service_healthy
+    networks:
+      - metrologia_net
+
+  worker_datos:
+    build: { context: ./Backend, dockerfile: DockerFile.backend }
+    working_dir: /workspace/Backend
+    command: sh -c "cd /workspace/Backend && pnpm worker:plantillas"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./:/workspace
+      - shared_node_modules:/workspace/Backend/node_modules
+    depends_on:
+      backend:
+        condition: service_started
+      redis_cache:
+        condition: service_healthy
+    networks:
+      - metrologia_net
+
   frontend:
     build:
       context: ./Frontend
       dockerfile: DockerFile.frontend
-    working_dir: /app
+    working_dir: /workspace/Frontend
     container_name: metrologia_frontend
     restart: always
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     environment:
       CI: "true"
       DATABASE_URL_LOCAL: "postgresql://postgres:password123@postgres_db:5432/metrologia_db"
-      NEXT_PUBLIC_API_URL: "http://localhost:3001"
-      NEXT_PUBLIC_SOCKET_URL: "http://192.168.1.11:3001"
-      NEXT_PUBLIC_MINIO_URL: "http://localhost:9000"
-    command: sh -c "pnpm exec pnpm dev"
+      NEXT_PUBLIC_API_URL: "https://qcwngnfx-3000.use2.devtunnels.ms/"
+      # 🔥 CORREGIDO: Frontend sabe dónde buscar los archivos de MinIO
+      NEXT_PUBLIC_MINIO_URL: "https://qcwngnfx-9000.use2.devtunnels.ms"
+    command: sh -c "cd /workspace && pnpm install --no-frozen-lockfile && cd Frontend && pnpm dev -H 0.0.0.0"
     volumes:
-      - ./Frontend:/app
-      - /app/node_modules
-      - /app/.next
+      - ./:/workspace
+      - /workspace/Frontend/.next
     depends_on:
       - backend
     networks:
@@ -149,6 +213,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  shared_node_modules:
 
 networks:
   metrologia_net:

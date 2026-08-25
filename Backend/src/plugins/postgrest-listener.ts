@@ -29,12 +29,12 @@ if(clientConfig){
     pgClient.on('notification', (msg) => {
       if (msg.channel === 'cambio_tablas' && msg.payload) {
         try {
-          console.log("📥 NOTIFICACIÓN RECIBIDA DE POSTGRESQL:", msg.payload);
+         /// console.log("📥 NOTIFICACIÓN RECIBIDA DE POSTGRESQL:", msg.payload);
           const evento = JSON.parse(msg.payload);
           const { tabla, operacion, data } = evento;
 
           if (!fastify.io) {
-            console.warn('⚠️ Instancia de Socket.io no disponible en Fastify.');
+           // console.warn('⚠️ Instancia de Socket.io no disponible en Fastify.');
             return;
           }
 
@@ -64,7 +64,7 @@ if(clientConfig){
           } else {
             // Emisión global para las demás tablas
             fastify.io.emit('cambio_realtime', { tabla, operacion, data });
-            console.log(`📡 Emisión global enviada vía Socket.io para la tabla: ${tabla}`);
+           // console.log(`📡 Emisión global enviada vía Socket.io para la tabla: ${tabla}`);
           }
         } catch (err) {
           console.error('❌ Error parseando payload de Postgres:', err);

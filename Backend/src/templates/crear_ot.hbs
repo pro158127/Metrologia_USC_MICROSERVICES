@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+    .header { background-color: #0033A0; padding: 30px 20px; text-align: center; color: #ffffff; border-bottom: 4px solid #001f60; }
+    .logo-container { margin: 0 auto 15px auto; width: 180px; height: auto; }
+    .logo-placeholder { display: block; border: 2px dashed #ffffff; background: rgba(255,255,255,0.1); padding: 20px; border-radius: 4px; font-size: 12px; color: #ffffff; }
+    
+    .content { padding: 30px 25px; color: #333333; line-height: 1.6; }
+    .greeting { font-size: 20px; font-weight: bold; color: #0033A0; margin-bottom: 10px; }
+    .quote-card { background-color: #f0f4f8; border-left: 4px solid #0033A0; padding: 15px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }
+    .quote-card strong { color: #0033A0; }
+    
+    .highlight-box { border: 1px solid #0033A0; background-color: #e6f0fa; padding: 15px; border-radius: 4px; margin-top: 20px; text-align: center; }
+    
+    .footer { background-color: #eeeeee; text-align: center; padding: 20px; font-size: 12px; color: #666666; border-top: 1px solid #dddddd; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo-container">
+        <!-- 📌 REEMPLAZA ESTE DIV POR LA ETIQUETA <img> CON EL LOGO DE LA USC -->
+        <div class="logo-placeholder">LOGO USC<br>(MetroSoft)</div>
+      </div>
+      <h2 style="margin: 0;">Registro de Orden de Trabajo (OT)</h2>
+    </div>
+    
+    <div class="content">
+      <div class="greeting">Hola, {{nombreCliente}}</div>
+      <p>Nos complace informarle que su proceso avanza correctamente. Hemos generado la Orden de Trabajo correspondiente a los servicios solicitados.</p>
+      
+      <div class="quote-card">
+        <p style="margin: 5px 0;"><strong>N° de Orden de Trabajo:</strong> {{numeroOT}}</p>
+        <p style="margin: 5px 0;"><strong>N° de Cotización Asociada:</strong> {{numeroCotizacion}}</p>
+      </div>
+
+      <p>Para proceder con la calibración y programación de los servicios, requerimos los datos técnicos de sus equipos.</p>
+      
+      <div class="highlight-box">
+        <h3 style="margin: 0 0 10px 0; color: #0033A0; font-size: 16px;">Acción Requerida</h3>
+        <p style="margin: 0; font-size: 14px;">Por favor, descargue el <strong>formato Excel adjunto</strong> a este correo, complételo con la información de sus instrumentos y <strong>responda a este correo adjuntando el archivo lleno</strong>.</p>
+      </div>
+    </div>
+    
+    <div class="footer">
+      <p><strong>Laboratorio de Calibración y Ensayo - USC</strong></p>
+      <p>Sistema MetroSoft. Puede responder directamente a este correo con el documento diligenciado.</p>
+    </div>
+  </div>
+</body>
+</html>

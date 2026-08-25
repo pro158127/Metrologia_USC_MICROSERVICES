@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+    .header { background-color: #0033A0; padding: 30px 20px; text-align: center; color: #ffffff; border-bottom: 4px solid #001f60; }
+    /* Espacio reservado para el logo de la USC */
+    .logo-container { margin: 0 auto 15px auto; width: 180px; height: auto; }
+    .logo-placeholder { display: block; border: 2px dashed #ffffff; background: rgba(255,255,255,0.1); padding: 20px; border-radius: 4px; font-size: 12px; color: #ffffff; }
+    
+    .content { padding: 30px 25px; color: #333333; line-height: 1.6; }
+    .greeting { font-size: 20px; font-weight: bold; color: #0033A0; margin-bottom: 10px; }
+    .quote-card { background-color: #f0f4f8; border-left: 4px solid #0033A0; padding: 15px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }
+    .quote-card strong { color: #0033A0; }
+    
+    .btn-container { text-align: center; margin: 30px 0 10px 0; }
+    .btn { display: inline-block; padding: 12px 25px; background-color: #0033A0; color: #ffffff; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 15px; }
+    
+    .footer { background-color: #eeeeee; text-align: center; padding: 20px; font-size: 12px; color: #666666; border-top: 1px solid #dddddd; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <!-- 📌 REEMPLAZA ESTE DIV POR LA ETIQUETA <img> CON EL LOGO DE LA USC -->
+      <div class="logo-container">
+        <div class="logo-placeholder">LOGO USC<br>(MetroSoft)</div>
+        <!-- Ejemplo: <img src="URL_DEL_LOGO_USC_EN_MINIO" alt="USC Logo" style="max-width: 100%;"> -->
+      </div>
+      <h2 style="margin: 0;">Propuesta Comercial de Metrología</h2>
+    </div>
+    
+    <div class="content">
+      <div class="greeting">Hola, {{nombreCliente}}</div>
+      <p>Gracias por confiar en el Laboratorio de Metrología de la Universidad Santiago de Cali. Adjunto a este correo encontrará la cotización detallada para los servicios solicitados.</p>
+      
+      <div class="quote-card">
+        <p style="margin: 5px 0;"><strong>N° de Cotización:</strong> {{numeroCotizacion}}</p>
+        <p style="margin: 5px 0;"><strong>Fecha de Emisión:</strong> {{fechaEmision}}</p>
+        <p style="margin: 5px 0;"><strong>Válida hasta:</strong> {{fechaVencimiento}}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Valor Total:</strong> {{valorTotal}}</p>
+      </div>
+
+      <p>Para proceder con la orden de trabajo, por favor revise el documento adjunto y haga clic en el botón inferior para confirmar su aprobación en nuestra plataforma.</p>
+      
+      <div class="btn-container">
+        <a href="{{linkAprobacion}}" class="btn">Revisar y Aprobar Cotización</a>
+      </div>
+    </div>
+    
+    <div class="footer">
+      <p><strong>Laboratorio de Calibración y Ensayo - USC</strong></p>
+      <p>Este es un mensaje automático del sistema MetroSoft. Por favor no responda a este correo.</p>
+    </div>
+  </div>
+</body>
+</html>

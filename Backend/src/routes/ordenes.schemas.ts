@@ -506,3 +506,48 @@ export const datosInicialesResponseSchema = z.object({
   version: z.array(documentoDtoSchema),
 });
 export type DatosInicialesResponse = z.infer<typeof datosInicialesResponseSchema>;
+
+// En ordenes.schemas.ts
+export const importarOtExcelBodySchema = z.object({
+  s3KeyTemp: z.string().min(5, "La llave S3 es obligatoria"),
+  tipoFlujo: z.enum(['estandar', 'inverso']),
+  idCotizacion: z.number().optional(), // Clave: Si no viene, el worker hace la magia del flujo anormal
+});
+export type ImportarOtExcelBody = z.infer<typeof importarOtExcelBodySchema>;
+
+export const importarOtExcelResponseSchema = z.object({
+  ok: z.boolean(),
+  id_job: z.string().optional(),
+  message: z.string().optional()
+});
+
+export const instrumentoConsolidarSchema = z.object({
+  idLocal: z.string().optional(),
+  idDetalle: z.number().optional(), // Si ya existe en BD
+  item: z.number(),
+  tipoServicio: z.string(),
+  instrumento: z.string(),
+  fabricante: z.string().nullable(),
+  modelo: z.string().nullable(),
+  serie: z.string().nullable(),
+  codigoInventario: z.string().nullable(),
+  ubicacion: z.string().nullable(),
+  puntosCalibrar: z.array(z.string()).optional(),
+  asignado: z.coerce.number(), // ID del técnico asignado
+  declaracionConformidad: z.boolean(),
+});
+
+export const consolidarOtBodySchema = z.object({
+  responsableUsc: z.string().nullable(),
+  fechaDiligenciamiento: z.string().nullable(),
+  requiereAnexo: z.string(),
+  observacionesGenerales: z.string().nullable(),
+  lugarCalibracion: z.string(),
+  estadoOrden: z.string(),
+  instrumentos: z.array(instrumentoConsolidarSchema),
+});
+export type ConsolidarOtBody = z.infer<typeof consolidarOtBodySchema>;
+
+export const consolidarOtParamsSchema = z.object({
+  id: z.coerce.number(),
+});

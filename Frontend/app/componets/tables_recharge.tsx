@@ -6,7 +6,7 @@ import processPlantillasRealtime from './recharge_config_platillas';
 import { useDbStore } from '@/app/stores/dbstore'; // ✅ Mayúscula D
 import { useShallow } from 'zustand/react/shallow'; // ✅ Importar useShallow
 import type RealtimeTablesState from '@/tipos/store';
-
+import { toast } from 'sonner';
 // ==========================================
 // TIPOS CENTRALIZADOS (Frontend/tipos/)
 // Se re-exportan para compatibilidad con los consumidores actuales.
@@ -72,7 +72,15 @@ const obtenerLlavePrimaria = (tabla: string, dataMapeada: any): { nombreLlave: s
     case 'tramites':               return { nombreLlave: 'idTramite', idValor: Number(dataMapeada.idTramite) };
     case 'version_plantillas':     return { nombreLlave: 'idVersionPlantilla', idValor: Number(dataMapeada.idVersionPlantilla) };
     case 'facturas':               return { nombreLlave: 'idFactura', idValor: Number(dataMapeada.idFactura) };
+   case 'plantillas_sellos': 
+      return { 
+        // El nombre con el que se guarda en el estado de React/Zustand:
+        nombreLlave: 'idPlantillaSello', 
+        // Buscamos tanto en camelCase (normalizado) como en UPPERCASE (crudo):
+        idValor: Number(dataMapeada.idPlantillaSello ?? dataMapeada.ID_PLANTILLA_SELLO ?? dataMapeada.id) 
+      };
     default:                          return { nombreLlave: 'id', idValor: Number(dataMapeada.id) };
+
   }
 };
 
@@ -92,9 +100,10 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
     rawData.ID_PARAMETRO ?? rawData.idParametro ??
     rawData.ID_SELLO ?? rawData.idSello ??
     rawData.ID_TRAMITE ?? rawData.idTramite ??
+    rawData.ID_PLANTILLA_SELLO ?? rawData.idPlantillaSello ?? // ✅ ¡AGREGAR ESTA LÍNEA!
     rawData.ID_VERSION_PLANTILLA ?? rawData.idVersionPlantilla ??
     rawData.ID_FACTURA ?? rawData.idFactura ??
-    rawData.idOrdenTrabajo
+    rawData.idOrdenTrabajo??rawData.ID_VERSION
   );
 
   switch (tabla) {
@@ -124,7 +133,27 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
         nivelPrioridad: rawData.NIVEL_PRIORIDAD ?? rawData.nivelPrioridad ?? "NORMAL",
         createdAt: rawData.CREATED_AT ?? rawData.createdAt,
       };
-
+      case "plantillas_sellos":
+  return {
+    idPlantillaSello: extractId,
+    nombre: rawData.NOMBRE ?? rawData.nombre ?? "",
+    descripcion: rawData.DESCRIPCION ?? rawData.descripcion ?? null,
+    templatePdfKey: rawData.TEMPLATE_PDF_KEY ?? rawData.templatePdfKey ?? null,
+    documentArea: rawData.DOCUMENT_AREA ?? rawData.documentArea ?? null,
+    watermarkAreas: rawData.WATERMARK_AREAS ?? rawData.watermarkAreas ?? [],
+    createdAt: rawData.CREATED_AT ?? rawData.createdAt,
+    updatedAt: rawData.UPDATED_AT ?? rawData.updatedAt,
+  };
+  case "version_documentos":
+  return {
+    idVersion: extractId,
+    idDocumento: Number(rawData.ID_DOCUMENTO_FK ?? rawData.idDocumento),
+    version: Number(rawData.VERSION ?? rawData.version ?? 1),
+    rutaUrl: rawData.RUTA_URL ?? rawData.rutaUrl ?? "",
+    createdAt: rawData.CREATED_AT ?? rawData.createdAt,
+    usuario_fk: Number(rawData.usuario_fk ?? rawData.USUARIO_FK),
+    content_json: rawData.content_json ?? rawData.CONTENT_JSON ?? null,
+  };
     case "tarifas":
       return {
         idTarifa: extractId,
@@ -352,7 +381,7 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
 
     case "sellos":
       return {
-        idSello: Number(rawData.ID_SELLO ?? rawData.idSello),
+        idSello: Number(rawData.ID_SELLO ?? rawData.idSello??rawData.ID_PLANTILLA_SELLO),
         nombre: rawData.NOMBRE ?? rawData.nombre ?? "",
         idDocumento: Number(rawData.ID_DOCUMENTO_FK ?? rawData.idDocumento),
         estado: Boolean(rawData.ESTADO ?? rawData.estado ?? true),
@@ -416,7 +445,6 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const userIdValido = session?.user?.id_user ?? session?.user?.id;
-  const SOCKET_URL = "http://localhost:3001";
   const TABLAS_PLANTILLAS = ["plantillas"];
 
   const { updateTable, setDbState } = useDbStore(
@@ -430,21 +458,39 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     if (status === "loading" || status !== "authenticated" || !userIdValido) return;
     if (socketRef.current?.connected) return;
 
-    const nuevoSocket = io(SOCKET_URL, {
-      query: { userId: String(userIdValido) },
-      transports: ["websocket", "polling"],
-      reconnectionAttempts: 5,
-    });
+ const nuevoSocket = io({
+        path: "/socket.io",
+        query: { userId: String(userIdValido) },
+        transports: ["websocket", "polling"],
+        reconnectionAttempts: 5,
+      });
     socketRef.current = nuevoSocket;
 
     nuevoSocket.on("connect", () => {
       setSocket(nuevoSocket);
       nuevoSocket.emit("join_room", userIdValido);
     });
+ nuevoSocket.on("job_plantilla_terminado", (payload) => {
+      console.warn("🔔 EVENTO EN NAVEGADOR:", payload);
+      
+      // 🔥 Le damos un alias a 'status' para no chocar con el 'status' de useSession
+      const { idVersion, mensaje, status: jobStatus } = payload;
+
+      if (jobStatus === "COMPLETADO") {
+       // console.log(`Plantilla con ID ${idVersion} procesada correctamente.`);
+        toast.success(mensaje, {
+          description: `La plantilla con ID ${idVersion} ha sido procesada correctamente.`,
+        });
+      } else {
+        toast.error(mensaje, {
+          description: `La plantilla con ID ${idVersion} ha fallado al ser procesada.`,
+        });
+      }
+    });
 
     nuevoSocket.on("cambio_realtime", (payload) => {
       const { tabla, operacion, data: rawData } = payload;
-     console.warn("🔔 EVENTO EN NAVEGADOR:", payload);
+     //console.warn("🔔 EVENTO EN NAVEGADOR:", payload);
       const { updateTable, setDbState } = useDbStore.getState();
       // Caso especial plantillas
       if (TABLAS_PLANTILLAS.includes(tabla)) {
@@ -461,7 +507,7 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       const { nombreLlave, idValor } = obtenerLlavePrimaria(tabla, dataMapeada);
 
       if (idValor === undefined || idValor === null || isNaN(idValor)) {
-        console.error(`❌ ID inválido para [${tabla}]`);
+       // console.error(`❌ ID inválido para [${tabla}]`);
         return;
       }
 
@@ -469,7 +515,7 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         let listaActualizada = [...(listaActual as any[])];
         console.log(listaActualizada,"aqui es la lsita c")
         const existe = listaActualizada.some((item) => Number(item[nombreLlave]) === idValor);
-        console.log(nombreLlave)
+       // console.log(nombreLlave)
         if (operacion === "INSERT" && !existe) {
           console.log("hizo _insert")
           listaActualizada = [dataMapeada, ...listaActualizada];

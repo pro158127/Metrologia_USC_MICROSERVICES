@@ -2,6 +2,224 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+// ==========================================
+// 📦 SCHEMAS JSON PARA LAS PLANTILLAS
+// ==========================================
+const schemaCotizacion = {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "templateType": "COTIZACION",
+  "version": "9.0",
+  "description": "Contrato de entrada para la plantilla de Cotización de Servicios de Calibración (R-CM003 Versión 9)",
+  "fields": {
+    "scalars": [
+      { "key": "no_cotizacion", "label": "No. Cotización", "dataType": "STRING", "required": true },
+      { "key": "fecha_cotizacion", "label": "Fecha de Cotización", "dataType": "DATE", "required": true },
+      { "key": "empresa", "label": "Empresa / Cliente", "dataType": "STRING", "required": true },
+      { "key": "nit", "label": "NIT", "dataType": "STRING", "required": true },
+      { "key": "ciudad", "label": "Ciudad", "dataType": "STRING", "required": true },
+      { "key": "telefono", "label": "Teléfono", "dataType": "STRING", "required": false },
+      { "key": "contacto", "label": "Contacto", "dataType": "STRING", "required": true },
+
+      { "key": "email", "label": "Correo Electrónico", "dataType": "STRING", "required": true },
+      { "key": "descuento", "label": "Descuento", "dataType": "FLOAT", "required": true },
+       { "key": "viaticos", "label": "Viaticos", "dataType": "FLOAT", "required": true },
+      { "key": "total_cantidad_servicios", "label": "Total de Cantidad de Servicios", "dataType": "INTEGER", "required": true },
+      { "key": "total_servicio", "label": "Subtotal / Total de Servicio", "dataType": "FLOAT", "required": true },
+      { "key": "monto_total", "label": "Monto Total", "dataType": "FLOAT", "required": true }
+    ],
+    "tables": [
+      {
+        "key": "tabla_cotizacion_items",
+        "label": "Detalle de Equipos y Servicios de Calibración",
+        "required": true,
+        "columns": [
+          { "key": "equipo_puntos", "label": "Equipo / Número de puntos", "dataType": "STRING", "required": true },
+          { "key": "tipo_servicio", "label": "Tipo de Servicio", "dataType": "STRING", "required": true },
+          { "key": "magnitud", "label": "Magnitud", "dataType": "STRING", "required": true },
+          { "key": "norma_guia_tecnica", "label": "Norma / Guía Técnica", "dataType": "STRING", "required": false },
+          { "key": "cantidad", "label": "Cantidad", "dataType": "INTEGER", "required": true },
+          { "key": "valor_unitario", "label": "Valor Unitario", "dataType": "FLOAT", "required": true },
+          { "key": "valor_total", "label": "Valor Total", "dataType": "FLOAT", "required": true }
+        ]
+      },
+      {
+        "key": "tabla_control_cambios",
+        "label": "Hoja de Control de Cambios del Formato",
+        "required": false,
+        "columns": [
+          { "key": "no_version", "label": "N° Versión", "dataType": "STRING", "required": true },
+          { "key": "fecha_cambio", "label": "Fecha de Cambio", "dataType": "DATE", "required": true },
+          { "key": "descripcion", "label": "Descripción del Cambio", "dataType": "STRING", "required": true },
+          { "key": "validacion_hoja_calculo", "label": "¿Se realiza validación de la hoja de cálculo?", "dataType": "STRING", "required": false },
+          { "key": "observaciones", "label": "Observaciones", "dataType": "STRING", "required": false },
+          { "key": "aprobo", "label": "Aprobó", "dataType": "STRING", "required": true }
+        ]
+      },
+      {
+  "key": "tabla_tarifas",
+  "label": "Catálogo de tarifas",
+  "required": true,
+  "columns": [
+    { "key": "instrumentos", "label": "Equipo / Número de puntos", "dataType": "STRING", "required": true },
+    { "key": "tipo_servicio", "label": "Tipo de Servicio", "dataType": "STRING", "required": true },
+    { "key": "magnitud", "label": "Magnitud", "dataType": "STRING", "required": true },
+    { "key": "norma_guia_tecnica", "label": "Norma / Guía Técnica", "dataType": "STRING", "required": false },    
+    // NUEVO CAMPO: Al ser "LIST", la UI que programamos permitirá clickear múltiples columnas
+    { "key": "columnas_precios", "label": "Columnas de Precios Adicionales", "dataType": "LIST", "required": true }
+  ]
+}
+    ]
+  }
+};
+
+const schemaOrdenTrabajo = {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "templateType": "ORDEN_TRABAJO",
+  "version": "008",
+  "description": "Contrato de entrada para la plantilla de Orden de Trabajo del Laboratorio de Metrología (R-CM005)",
+  "fields": {
+    "scalars": [
+      { "key": "cert_razon_social", "label": "Datos Certificado - Razón Social", "dataType": "STRING", "required": true },
+      { "key": "cert_nit", "label": "Datos Certificado - NIT", "dataType": "STRING", "required": true },
+      { "key": "cert_email_certificados", "label": "Correo para envío de certificados de calibración", "dataType": "STRING", "required": true },
+      { "key": "cert_fecha_limite_facturacion", "label": "Fecha límite para facturación", "dataType": "DATE", "required": false },
+      { "key": "cert_direccion", "label": "Datos Certificado - Dirección", "dataType": "STRING", "required": true },
+      { "key": "cert_ciudad", "label": "Datos Certificado - Ciudad", "dataType": "STRING", "required": true },
+      { "key": "cert_email_factura", "label": "Correo para el envío de Factura", "dataType": "STRING", "required": true },
+      { "key": "calib_interno_usc", "label": "Calibración Interno USC", "dataType": "BOOLEAN", "required": false },
+      { "key": "calib_en_sitio", "label": "Calibración En sitio", "dataType": "BOOLEAN", "required": false },
+      { "key": "calib_persona_contacto", "label": "Información Calibración - Persona a contactar", "dataType": "STRING", "required": false },
+      { "key": "calib_telefono", "label": "Información Calibración - Teléfono", "dataType": "STRING", "required": false },
+      { "key": "calib_fecha", "label": "Información Calibración - Fecha", "dataType": "DATE", "required": false },
+      { "key": "calib_laboratorio_permanente", "label": "Calibración Laboratorio permanente", "dataType": "BOOLEAN", "required": false },
+      { "key": "calib_hora", "label": "Información Calibración - Hora", "dataType": "STRING", "required": false },
+      { "key": "solicitante_razon_social", "label": "Información Solicitante - Razón Social", "dataType": "STRING", "required": true },
+      { "key": "solicitante_nit", "label": "Información Solicitante - NIT", "dataType": "STRING", "required": true },
+      { "key": "no_orden_trabajo", "label": "Consecutivo - No. Orden de Trabajo", "dataType": "STRING", "required": true },
+      { "key": "no_cotizacion", "label": "Consecutivo - No. Cotización", "dataType": "STRING", "required": true },
+      { "key": "solicitante_direccion", "label": "Información Solicitante - Dirección", "dataType": "STRING", "required": true },
+      { "key": "solicitante_ciudad", "label": "Información Solicitante - Ciudad", "dataType": "STRING", "required": true },
+      { "key": "responsable", "label": "Consecutivo - Responsable", "dataType": "STRING", "required": true },
+      { "key": "fecha_diligenciamiento", "label": "Consecutivo - Fecha de Diligenciamiento", "dataType": "DATE", "required": true },
+      { "key": "solicitante_contacto", "label": "Información Solicitante - Contacto", "dataType": "STRING", "required": true },
+      { "key": "solicitante_telefono", "label": "Información Solicitante - Teléfono", "dataType": "STRING", "required": true },
+      { "key": "requiere_anexo_instrumentos", "label": "¿Requiere de un anexo para el ingreso de información de más instrumentos?", "dataType": "BOOLEAN", "required": true, "description": "Bandera booleana (SI/NO). Si es TRUE, activa el renderizado y mapeo de la tabla de anexo adicional." },
+      { "key": "observaciones", "label": "Observaciones generales", "dataType": "STRING", "required": false }
+    ],
+    "tables": [
+      {
+        "key": "tabla_instrumentos_principal",
+        "label": "Información de los Instrumentos (Principal - Ítems 1 al 10)",
+        "required": true,
+        "maxRowsLimit": 10,
+        "columns": [
+          { "key": "item", "label": "Ítem", "dataType": "INTEGER", "required": true },
+          { "key": "tipo_servicio", "label": "Tipo de Servicio", "dataType": "STRING", "required": true },
+          { "key": "instrumento", "label": "Instrumento", "dataType": "STRING", "required": true },
+          { "key": "fabricante", "label": "Fabricante", "dataType": "STRING", "required": false },
+          { "key": "modelo", "label": "Modelo", "dataType": "STRING", "required": false },
+          { "key": "serie", "label": "Serie", "dataType": "STRING", "required": true },
+          { "key": "codigo_interno", "label": "Código Interno / Inventario", "dataType": "STRING", "required": false },
+          { "key": "ubicacion", "label": "Ubicación", "dataType": "STRING", "required": false },
+         {
+            "key": "puntos_calibracion",
+            "label": "Puntos de Calibración (Hasta n)",
+            "dataType": "LIST",
+            "required": false
+          },
+          { "key": "unidad", "label": "Unidad", "dataType": "STRING", "required": false },
+          { "key": "intervalo_medicion", "label": "Intervalo o Medición", "dataType": "STRING", "required": false },
+          { "key": "resolucion_division", "label": "Resolución o División de escala", "dataType": "STRING", "required": false },
+          { "key": "declaracion_conformidad", "label": "Declaración de Conformidad", "dataType": "STRING", "required": false },
+          { "key": "emp_ajuste_control", "label": "EMP (Ajuste de Control)", "dataType": "STRING", "required": false },
+          { "key": "documento_especificacion", "label": "Documento de Especificación", "dataType": "STRING", "required": false },
+          { "key": "regla_decision", "label": "Regla de Decisión", "dataType": "STRING", "required": false }
+        ]
+      },
+      {
+        "key": "tabla_instrumentos_anexo",
+        "label": "Anexo para Información de los Instrumentos Adicionales (Ítems 11 al 30)",
+        "required": false,
+        "dependsOn": { "fieldKey": "requiere_anexo_instrumentos", "value": true },
+        "columns": [
+          { "key": "item", "label": "Ítem", "dataType": "INTEGER", "required": true },
+          { "key": "instrumento", "label": "Instrumento", "dataType": "STRING", "required": true },
+          { "key": "marca", "label": "Marca", "dataType": "STRING", "required": false },
+          { "key": "modelo", "label": "Modelo", "dataType": "STRING", "required": false },
+          { "key": "serie", "label": "Serie", "dataType": "STRING", "required": true },
+          { "key": "codigo_interno", "label": "Código Interno / Inventario", "dataType": "STRING", "required": false },
+          { "key": "ubicacion", "label": "Ubicación", "dataType": "STRING", "required": false },
+           {
+            "key": "puntos_calibracion",
+            "label": "Puntos de Calibración (Hasta n)",
+            "dataType": "LIST",
+            "required": false
+          },
+          { "key": "unidad", "label": "Unidad", "dataType": "STRING", "required": false },
+          { "key": "intervalo_medicion", "label": "Intervalo o Medición", "dataType": "STRING", "required": false },
+          { "key": "resolucion_division", "label": "Resolución o División de escala", "dataType": "STRING", "required": false },
+          { "key": "declaracion_conformidad", "label": "Declaración de Conformidad", "dataType": "STRING", "required": false },
+          { "key": "emp_limite_control", "label": "EMP (Límite de control)", "dataType": "STRING", "required": false },
+          { "key": "documento_especificacion", "label": "Documento de Especificación", "dataType": "STRING", "required": false },
+          { "key": "regla_decision", "label": "Regla de Decisión", "dataType": "STRING", "required": false }
+        ]
+      }
+    ]
+  }
+};
+
+const schemaRecepcion = {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "templateType": "RECEPCION",
+  "version": "004",
+  "description": "Contrato de entrada para la plantilla de Recepción, Reporte y Entrega de Instrumentos del Laboratorio de Metrología (R-CM010 Versión 004)",
+  "fields": {
+    "scalars": [
+      { "key": "nombre_quien_entrega", "label": "Nombre quién entrega", "dataType": "STRING", "required": true },
+      { "key": "no_cotizacion", "label": "No. Cotización de Referencia (Cot)", "dataType": "STRING", "required": false },
+      { "key": "sitio_laboratorio_permanente", "label": "Sitio de calibración - Laboratorio permanente", "dataType": "BOOLEAN", "required": false },
+      { "key": "sitio_instalaciones_cliente", "label": "Sitio de calibración - Instalaciones del cliente", "dataType": "BOOLEAN", "required": false },
+      { "key": "fecha_recepcion", "label": "Fecha de recepción", "dataType": "DATE", "required": true },
+      { "key": "nombre_quien_recibe", "label": "Nombre quién recibe", "dataType": "STRING", "required": true },
+      { "key": "fecha_salida", "label": "Fecha de salida", "dataType": "DATE", "required": false },
+      { "key": "nombre_quien_empaca", "label": "Nombre quién empaca", "dataType": "STRING", "required": false },
+      { "key": "accesorios", "label": "Accesorios", "dataType": "STRING", "required": false },
+      { "key": "estado_bueno", "label": "Estado General - Bueno", "dataType": "BOOLEAN", "required": false },
+      { "key": "estado_malo", "label": "Estado General - Malo", "dataType": "BOOLEAN", "required": false },
+      { "key": "pruebas_pesaje_si", "label": "¿Se realizaron todas las pruebas a los equipos de pesaje? - SI", "dataType": "BOOLEAN", "required": false },
+      { "key": "pruebas_pesaje_no", "label": "¿Se realizaron todas las pruebas a los equipos de pesaje? - NO", "dataType": "BOOLEAN", "required": false },
+      { "key": "pruebas_pesaje_justificacion_no", "label": "Si la respuesta es NO, ¿Por qué?", "dataType": "STRING", "required": false },
+      { "key": "nombre_quien_calibra", "label": "Nombre quién calibra", "dataType": "STRING", "required": false },
+      { "key": "nombre_quien_recibe_servicio", "label": "Nombre quién recibe el servicio", "dataType": "STRING", "required": false }
+    ],
+    "tables": [
+      {
+        "key": "tabla_recepcion_instrumentos",
+        "label": "Instrumentos Recibidos y Estado de Inspección",
+        "required": true,
+        "columns": [
+          { "key": "instrumento", "label": "Instrumento", "dataType": "STRING", "required": true },
+          { "key": "marca", "label": "Marca", "dataType": "STRING", "required": false },
+          { "key": "modelo", "label": "Modelo", "dataType": "STRING", "required": false },
+          { "key": "serie", "label": "Serie", "dataType": "STRING", "required": true },
+          { "key": "codigo_interno", "label": "Código Interno / Inventario", "dataType": "STRING", "required": false },
+          { "key": "resolucion", "label": "Resolución", "dataType": "STRING", "required": false },
+          { "key": "tipo_sensor_int", "label": "Tipo sensor temp - Interno (Int)", "dataType": "BOOLEAN", "required": false },
+          { "key": "tipo_sensor_ext", "label": "Tipo sensor temp - Externo (Ext)", "dataType": "BOOLEAN", "required": false },
+          { "key": "estado_ibc_e", "label": "Estado del IBC - E", "dataType": "BOOLEAN", "required": false },
+          { "key": "estado_ibc_t", "label": "Estado del IBC - T", "dataType": "BOOLEAN", "required": false },
+          { "key": "estado_ibc_d", "label": "Estado del IBC - D", "dataType": "BOOLEAN", "required": false },
+          { "key": "estado_ibc_a", "label": "Estado del IBC - A", "dataType": "BOOLEAN", "required": false },
+          { "key": "estampilla", "label": "Estampilla", "dataType": "STRING", "required": false },
+          { "key": "observaciones", "label": "Observaciones", "dataType": "STRING", "required": false }
+        ]
+      }
+    ]
+  }
+};
+// ==========================================
+
+
 async function main() {
   console.log('🌱 Iniciando Proceso de Seeding...');
 
@@ -91,8 +309,63 @@ async function main() {
     SELECT setval(pg_get_serial_sequence('public.usuarios', 'ID_USUARIO_AUTO_INCREMENT'), COALESCE(MAX("ID_USUARIO_AUTO_INCREMENT"), 1)) FROM public.usuarios;
   `;
 
-  // 4. Creación de la Función Genérica de Notificación
-  console.log('⚡ Configurando función de notificación PL/pgSQL...');
+  // 4. Precarga de Plantillas de Excel e inicialización de versión con INPUT_SCHEMA
+  console.log('🌱 Sembrando plantillas y esquemas JSON...');
+  
+  const plantillasSeed = [
+    { modulo: 'COTIZACIONES', nombre: 'Cotización de Servicios de Calibración (R-CM003)', schema: schemaCotizacion },
+    { modulo: 'ORDEN_TRABAJO', nombre: 'Orden de Trabajo (R-CM005)', schema: schemaOrdenTrabajo },
+    { modulo: 'RECEPCION', nombre: 'Recepción, Reporte y Entrega de Instrumentos (R-CM010)', schema: schemaRecepcion },
+  ];
+
+  for (const p of plantillasSeed) {
+    // Buscar si existe el documento base en "plantillas"
+    let plantilla = await prisma.plantillas.findFirst({
+      where: { MODULO: p.modulo }
+    });
+
+    // Si no existe, lo creamos
+    if (!plantilla) {
+      plantilla = await prisma.plantillas.create({
+        data: {
+          MODULO: p.modulo,
+          NOMBRE: p.nombre,
+          ACTIVA: true
+        }
+      });
+      console.log(`✅ Registro base creado en "plantillas": ${p.nombre}`);
+    }
+
+    // Buscar si ya existe la primera versión de la plantilla con el input schema
+    const versionExistente = await prisma.version_plantillas.findFirst({
+      where: {
+        ID_PLANTILLA_FK: plantilla.ID_PLANTILLA,
+        VERSION: 1
+      }
+    });
+
+    // Si no existe, generamos el primer release de `version_plantillas` vinculando los JSON
+    if (!versionExistente) {
+      await prisma.version_plantillas.create({
+        data: {
+          ID_PLANTILLA_FK: plantilla.ID_PLANTILLA,
+          VERSION: 1,
+          INPUT_SCHEMA: p.schema,
+          ID_USUARIO_CREADOR_FK: 1, // Director Técnico como creador por defecto
+          ESTADO: "PENDIENTE" 
+        }
+      });
+      console.log(`✅ "version_plantillas" (V1) y "INPUT_SCHEMA" inyectados para: ${p.nombre}`);
+    }
+  }
+
+  // Sincronizar secuencia de las plantillas por si acaso
+  await prisma.$executeRaw`
+    SELECT setval(pg_get_serial_sequence('public.plantillas', 'ID_PLANTILLA'), COALESCE(MAX("ID_PLANTILLA"), 1)) FROM public.plantillas;
+  `;
+
+
+  console.log('⚡ Configurando función de notificación PL/pgSQL segura...');
   await prisma.$executeRawUnsafe(`
     CREATE OR REPLACE FUNCTION public.notify_cambio_tablas()
     RETURNS trigger
@@ -101,16 +374,25 @@ async function main() {
     DECLARE
         tabla_nombre TEXT := TG_TABLE_NAME;
         operacion   TEXT := TG_OP;
-        payload     JSON;
-        row_data    JSON;
+        payload     JSONB;
+        row_data    JSONB;
     BEGIN
         IF (TG_OP = 'DELETE') THEN
-            row_data := row_to_json(OLD);
+            row_data := to_jsonb(OLD);
         ELSE
-            row_data := row_to_json(NEW);
+            row_data := to_jsonb(NEW);
         END IF;
 
-        payload := json_build_object(
+        -- 💡 FILTRO DE SEGURIDAD: Remover solo las columnas gigantes para no exceder los 8KB
+        IF (tabla_nombre = 'version_plantillas') THEN
+            row_data := row_data - 'INPUT_SCHEMA' - 'MAPPING_CONFIG' - 'MAPEO_CONFIG' - 'MAPEO_EXCEL_JSON';
+        ELSIF (tabla_nombre = 'calibraciones') THEN
+            row_data := row_data - 'DATOS_TECNICOS_JSON';
+        ELSIF (tabla_nombre = 'roles') THEN
+            row_data := row_data - 'PERMISOS_JSON';
+        END IF;
+
+        payload := jsonb_build_object(
             'tabla', tabla_nombre,
             'operacion', operacion,
             'data', row_data
@@ -123,7 +405,7 @@ async function main() {
     $function$;
   `);
 
-  // 5. Asignación Dinámica de Triggers en todas las tablas
+  // 6. Asignación Dinámica de Triggers en todas las tablas
   console.log('⚡ Asignando triggers dinámicos en las tablas base...');
   await prisma.$executeRawUnsafe(`
     DO $$

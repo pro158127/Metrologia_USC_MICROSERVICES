@@ -1,21 +1,29 @@
 // lib/univer-parser/parseMerges.ts
 
 export function parseMerges(worksheet: any) {
-  let merges: string[] = [];
+ let mergeRefs: string[] = [];
 
-  if (worksheet.model?.merges) {
-    merges = worksheet.model.merges;
-  } else if (worksheet.merges) {
-    merges = worksheet.merges;
+  // 1. Extraer las referencias de forma segura (soportando Arrays y Objetos)
+  if (worksheet.model?.merges && Array.isArray(worksheet.model.merges)) {
+    mergeRefs = worksheet.model.merges;
   } else if (worksheet._merges) {
-    merges = worksheet._merges;
+    // Si es un objeto, extraemos sus llaves (ej. ['A1:C1', 'D2:E2'])
+    mergeRefs = Array.isArray(worksheet._merges) 
+      ? worksheet._merges 
+      : Object.keys(worksheet._merges);
+  } else if (worksheet.merges) {
+    mergeRefs = Array.isArray(worksheet.merges)
+      ? worksheet.merges
+      : Object.keys(worksheet.merges);
   }
 
-  if (!merges || !Array.isArray(merges) || merges.length === 0) {
+  // 2. Si no hay combinaciones, retornamos vacío
+  if (!mergeRefs || mergeRefs.length === 0) {
     return [];
   }
 
-  const validMerges = merges
+  // 3. El resto de tu validación sigue exactamente igual
+  const validMerges = mergeRefs
     .filter((mergeRef: any) => {
       if (typeof mergeRef !== 'string') return false;
       if (!mergeRef.includes(':')) return false;

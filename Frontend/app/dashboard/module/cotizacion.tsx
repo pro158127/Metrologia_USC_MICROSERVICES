@@ -10,7 +10,9 @@ import {
   crearCotizacion,
   actualizarCotizacion,
   cambiarEstadoCotizacion,
+  
 } from "@/app/action_module/cotizacion";
+
 import { Estados } from "@/tipos/enums";
 import type { ClienteModel, CotizacionModel, HistorialEstadoCotizacionModel } from "@/tipos/entidades";
 import type {
@@ -124,6 +126,9 @@ const ItemsTable = ({
     });
     return map;
   }, [tarifasOptions]);
+
+
+
 
   const instrumentosPorTipoMagnitud = useMemo(() => {
     const map = new Map<string, TarifaOption[]>();
@@ -294,7 +299,6 @@ export const VersionModal: React.FC<VersionModalProps> = ({
   const [auditForm, setAuditForm] = useState<cambiospayload>({
     descripcion: '',
     aprobo: usu_rol,
-    requiereValidacionHoja: false,
     observaciones: '',
   });
 
@@ -304,7 +308,7 @@ export const VersionModal: React.FC<VersionModalProps> = ({
 
   const handleClose = () => {
     setStep('EDIT');
-    setAuditForm({ descripcion: '', aprobo: usu_rol, requiereValidacionHoja: false, observaciones: '' });
+    setAuditForm({ descripcion: '', aprobo: usu_rol,  observaciones: '' });
     setFormErrors({});
     onClose();
   };
@@ -440,18 +444,7 @@ export const VersionModal: React.FC<VersionModalProps> = ({
                 {formErrors.aprobo && <span className="text-[10px] text-rose-500 font-medium">{formErrors.aprobo}</span>}
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="requiereValidacionHoja"
-                  checked={auditForm.requiereValidacionHoja}
-                  onChange={(e) => setAuditForm({ ...auditForm, requiereValidacionHoja: e.target.checked })}
-                  className="rounded border-slate-300 text-[#5680F9] focus:ring-[#5680F9] h-4 w-4"
-                />
-                <label htmlFor="requiereValidacionHoja" className="text-xs font-semibold text-slate-700 cursor-pointer">
-                  ¿Requiere validación en hoja técnica/de campo?
-                </label>
-              </div>
+         
 
               <div className="flex flex-col gap-1 pt-1">
                 <label className="text-xs font-bold text-slate-700">Observaciones adicionales</label>
@@ -992,7 +985,6 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
                 <th className="py-3 px-3">Versión</th>
                 <th className="py-3 px-3">Fecha</th>
                 <th className="py-3 px-3">Descripción</th>
-                <th className="py-3 px-3 text-center">Req. H. Life</th>
                 <th className="py-3 px-3">Aprobó</th>
                 <th className="py-3 px-3">Observaciones</th>
               </tr>
@@ -1026,17 +1018,7 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
                     <td className="py-2.5 px-3 text-slate-700 max-w-xs truncate">
                       {registro.descripcion}
                     </td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          registro.requiereValidacionHoja
-                            ? "bg-amber-50 text-amber-700 border border-amber-200"
-                            : "bg-slate-100 text-slate-600"
-                        }`}
-                      >
-                        {registro.requiereValidacionHoja ? "Sí" : "No"}
-                      </span>
-                    </td>
+                  
                     <td className="py-2.5 px-3 font-medium text-slate-700 whitespace-nowrap">
                       {registro.aprobo}
                     </td>
@@ -1243,7 +1225,7 @@ export default function Cotizaciones() {
     setIsSaving(true);
     try {
       const res = await crearCotizacion({
-        codigo: `COT-${Date.now().toString().slice(-5)}`,
+
         idCliente: idClienteSeleccionado,
         viaticos,
         descuento,
@@ -1297,13 +1279,15 @@ export default function Cotizaciones() {
         viaticos: modalViaticos,
         descuento: modalDescuento,
         detalles: modalItems.map((i) => ({
-          equipoDescripcion: i.instrumento,
+          idDetalle:i.id,
+         equipoDescripcion: i.instrumento,
           tipoServicio: i.tipoServicio,
           magnitud: i.magnitud,
           normaTecnica: i.norma,
           cantidad: i.cantidad,
           valorUnitario: i.valorUnitario,
         })),
+        cambios:_auditForm
       });
 
       if (res.ok) {
@@ -1427,11 +1411,9 @@ const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
     });
   }, [selectedQuotation, usuarios]);
   const {data:sesion}=useSession()
-  const nombre_ROL=useMemo(()=>{
-    if(!isVersionModalOpen) return null ;
-    return `${sesion?.user?.name}/${sesion?.user.role}`
-  },[isVersionModalOpen])
-
+  const nombre_ROL = sesion?.user 
+    ? `${sesion.user.name}/${sesion.user?.role}` 
+    : null
   // ==========================================
   // RENDER
   // ==========================================
@@ -1448,7 +1430,6 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
       numeroVersion: item.numeroVersion,
       fechaCambio: item.fechaCambio,
       descripcion: item.descripcion,
-      requiereValidacionHoja: item.requiereValidacionHoja,
       observaciones: item.observaciones ?? null,
       aprobo: item.aprobo,
       idCotizacion: cotizacion.idCotizacion, // O item.idCotizacion si ya viene dentro del item
@@ -1457,6 +1438,11 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
     }));
   });
 }, [isOpenTable, cotizacionesStore]);
+
+
+
+
+
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification toast={toast} />
