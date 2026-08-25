@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   X,
   Upload,
@@ -25,6 +25,131 @@ import {
   actualizarPlantillaSello,
   eliminarPlantillaSello,
 } from '@/app/action_module/sellos';
+
+// ============================================================================
+// 1. VISOR DE PLANTILLA CON PDF.JS (object-fit: contain + matriz normalizada)
+// ============================================================================
+
+const VIEWPORT_MAX_WIDTH = 520;
+const VIEWPORT_MAX_HEIGHT = 700;
+
+interface PageSize {
+  width: number;
+  height: number;
+}
+
+export interface ViewportTransform {
+  scaleX: number;
+  scaleY: number;
+  translateX: number;
+  translateY: number;
+}
+
+function computeContainBox(
+  pageWidth: number,
+  pageHeight: number,
+  maxWidth: number = VIEWPORT_MAX_WIDTH,
+  maxHeight: number = VIEWPORT_MAX_HEIGHT
+): { width: number; height: number } {
+  const ratio = pageWidth / pageHeight;
+  let width = maxHeight * ratio;
+  let height = maxHeight;
+  if (width > maxWidth) {
+    width = maxWidth;
+    height = maxWidth / ratio;
+  }
+  return { width, height };
+}
+
+function buildTransform(page: PageSize, box: { width: number; height: number }): ViewportTransform {
+  return {
+    scaleX: box.width / page.width,
+    scaleY: box.height / page.height,
+    translateX: 0,
+    translateY: 0,
+  };
+}
+
+/** Codifica una key de MinIO preservando las "/" como separadores de ruta. */
+function encodeObjectKey(key: string): string {
+  return key.split('/').map(encodeURIComponent).join('/');
+}
+
+async function configurePdfWorker(): Promise<typeof import('pdfjs-dist')> {
+  const pdfjs = await import('pdfjs-dist');
+  if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+    try {
+      const mod = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
+      pdfjs.GlobalWorkerOptions.workerSrc = mod.default;
+    } catch {
+      // Sin worker: pdf.js cae a main-thread (fake worker).
+    }
+  }
+  return pdfjs;
+}
+
+/**
+ * Renderiza la página 1 del PDF de plantilla sobre un <canvas> con escala
+ * "contain" exacta. Reporta el tamaño real de la página (en puntos) vía onSize.
+ * Usa el proxy del backend (/api/v1/pdf/ver/*) para evitar problemas de CORS.
+ */
+function PdfTemplateCanvas({
+  source,
+  onSize,
+}: {
+  source: File | string;
+  onSize: (size: PageSize) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    (async () => {
+      let data: ArrayBuffer;
+      try {
+        data =
+          source instanceof File
+            ? await source.arrayBuffer()
+            : await (await fetch(source)).arrayBuffer();
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+
+      const pdfjs = await configurePdfWorker();
+      const loadingTask = pdfjs.getDocument({ data });
+      const doc = await loadingTask.promise;
+      try {
+        const page = await doc.getPage(1);
+        const base = page.getViewport({ scale: 1 });
+        const size: PageSize = { width: base.width, height: base.height };
+        const box = computeContainBox(size.width, size.height);
+        if (cancelled) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const viewport = page.getViewport({ scale: (box.width / size.width) * dpr });
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        canvas.style.width = `${box.width}px`;
+        canvas.style.height = `${box.height}px`;
+
+        await page.render({ canvas, viewport }).promise;
+        if (!cancelled) onSize(size);
+      } finally {
+        await loadingTask.destroy();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [source, onSize]);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />;
+}
 
 // ============================================================================
 // 2. COMPONENTE PADRE: GESTOR Y GALERÍA DE SELLOS
@@ -314,6 +439,31 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
   const [templateFile, setTemplateFile] = useState<File | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
+  // Tamaño real de la página de la plantilla (puntos) y viewport "contain".
+  const [pageSize, setPageSize] = useState<PageSize | null>(null);
+  const renderBox = useMemo(() => {
+    if (pageSize) return computeContainBox(pageSize.width, pageSize.height);
+    return { width: VIEWPORT_MAX_WIDTH, height: VIEWPORT_MAX_HEIGHT };
+  }, [pageSize]);
+  const viewportTransform = useMemo<ViewportTransform | null>(() => {
+    if (!pageSize) return null;
+    return buildTransform(pageSize, renderBox);
+  }, [pageSize, renderBox]);
+
+  const handlePageSize = useCallback((size: PageSize) => {
+    setPageSize(size);
+  }, []);
+
+  // Fuente de bytes para el visor: archivo nuevo (blob) o key vía proxy del backend.
+  const renderSource = useMemo<File | string | null>(() => {
+    if (templateFile) return templateFile;
+    if (config.templatePdfKey) return `/api/v1/pdf/ver/${encodeObjectKey(config.templatePdfKey)}`;
+    if (config.templatePdfUrl) return config.templatePdfUrl;
+    return null;
+  }, [templateFile, config.templatePdfKey, config.templatePdfUrl]);
+
+  const hasTemplate = !!config.templatePdfUrl || !!templateFile;
+
   // Refs espejo para los listeners globales de arrastre (sin closures obsoletos)
   const isDrawingRef = useRef(false);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -523,17 +673,16 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
             <>
               {/* Canvas Izquierda */}
               <div className="flex-1 p-4 bg-slate-100 flex items-center justify-center relative overflow-auto select-none">
-                {config.templatePdfUrl ? (
+                {hasTemplate ? (
                   <div
                     ref={canvasRef}
                     onMouseDown={handleMouseDown}
-                    className="relative w-[500px] h-[700px] bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
+                    className="relative bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
+                    style={{ width: renderBox.width, height: renderBox.height }}
                   >
-                    <iframe
-                      src={config.templatePdfUrl}
-                      title="Plantilla base"
-                      className="absolute inset-0 w-full h-full border-none pointer-events-none"
-                    />
+                    {renderSource && (
+                      <PdfTemplateCanvas source={renderSource} onSize={handlePageSize} />
+                    )}
                     {/* Render Area Documento */}
                     {config.documentArea && (
                       <div
@@ -663,6 +812,11 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
                       </span>
                     )}
                   </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {viewportTransform
+                      ? `Escala ${viewportTransform.scaleX.toFixed(2)}x / ${viewportTransform.scaleY.toFixed(2)}x · página ${pageSize?.width.toFixed(0)}×${pageSize?.height.toFixed(0)} pt`
+                      : 'Normalizando viewport...'}
+                  </span>
                 </div>
 
                 {/* Lista de Sellos Mapeados */}
@@ -717,13 +871,14 @@ export function SelloConfigModal({ sealData, onClose, onSave }: SelloConfigModal
           {activeTab === 'PREVIEW' && (
             <div className="flex-1 flex bg-slate-100 overflow-hidden">
               <div className="flex-1 p-4 flex items-center justify-center">
-                {config.templatePdfUrl ? (
-                  <div className="relative w-[500px] h-[700px] bg-white shadow-2xl rounded border border-slate-300 overflow-hidden">
-                    <iframe
-                      src={config.templatePdfUrl}
-                      title="Vista previa plantilla"
-                      className="absolute inset-0 w-full h-full border-none pointer-events-none"
-                    />
+                {hasTemplate ? (
+                  <div
+                    className="relative bg-white shadow-2xl rounded border border-slate-300 overflow-hidden"
+                    style={{ width: renderBox.width, height: renderBox.height }}
+                  >
+                    {renderSource && (
+                      <PdfTemplateCanvas source={renderSource} onSize={handlePageSize} />
+                    )}
                     {config.documentArea && (
                       <div
                         className="absolute overflow-hidden bg-slate-200 border border-slate-400/50 shadow-inner"

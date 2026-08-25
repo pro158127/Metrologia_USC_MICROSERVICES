@@ -1,9 +1,15 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
+import { PDFDocument } from 'pdf-lib';
 import { AppError } from '../lib/errors.js';
-import { deleteObject, getSignedObjectUrl, uploadBuffer } from '../lib/minioClient.js';
-import { getStampPdfQueue } from '../lib/queue/queue.js';
+import {
+  deleteObject,
+  getObjectBuffer,
+  getSignedObjectUrl,
+  uploadBuffer,
+} from '../lib/minioClient.js';
+import { getRedisConnection, getStampPdfQueue } from '../lib/queue/queue.js';
 import {
   idParamSchema,
   jobIdParamSchema,
@@ -21,6 +27,38 @@ import {
 const ALLOWED_MIMETYPES = ['application/pdf'];
 const TEMPLATE_PREFIX = 'plantillas-sellos/';
 const TEMP_INPUT_PREFIX = 'temp-inputs/';
+const PAGE_SIZE_CACHE_PREFIX = 'sello:pagesize:';
+const PAGE_SIZE_CACHE_TTL = 24 * 60 * 60;
+
+async function tamanoPaginaPdf(buffer: Buffer): Promise<{ width: number; height: number } | null> {
+  try {
+    const doc = await PDFDocument.load(buffer, { ignoreEncryption: true, updateMetadata: false });
+    const page = doc.getPage(0);
+    const { width, height } = page.getSize();
+    return { width, height };
+  } catch {
+    return null;
+  }
+}
+
+async function resolverTamanoPagina(
+  selloId: number,
+  templatePdfKey: string | null
+): Promise<{ width: number; height: number } | null> {
+  if (!templatePdfKey) return null;
+  try {
+    const redis = getRedisConnection();
+    const cacheKey = `${PAGE_SIZE_CACHE_PREFIX}${selloId}`;
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as { width: number; height: number };
+    const buffer = await getObjectBuffer(templatePdfKey);
+    const size = await tamanoPaginaPdf(buffer);
+    if (size) await redis.set(cacheKey, JSON.stringify(size), 'EX', PAGE_SIZE_CACHE_TTL);
+    return size;
+  } catch {
+    return null;
+  }
+}
 
 function parseJsonField<T>(value: string | undefined, fallback: T): T {
   if (value === undefined || value === null || value === '') return fallback;
@@ -40,7 +78,8 @@ async function conUrlFirmada(dto: PlantillaSelloDto): Promise<PlantillaSelloDto>
       templatePdfUrl = null;
     }
   }
-  return { ...dto, templatePdfUrl };
+  const size = await resolverTamanoPagina(dto.id, dto.templatePdfKey);
+  return { ...dto, templatePdfUrl, templatePdfWidth: size?.width ?? null, templatePdfHeight: size?.height ?? null };
 }
 
 async function readMultipart(

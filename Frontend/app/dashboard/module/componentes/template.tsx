@@ -92,6 +92,7 @@ interface DraftTable {
   key: string;
   label: string;
   startRow: number | null;
+  sheet: string | null;
   columns: DraftColumn[];
 }
 
@@ -119,6 +120,7 @@ function buildDraft(schema: InputSchema): DraftMapping {
       key: t.key,
       label: t.label,
       startRow: null,
+      sheet: null,
       columns: t.columns.map((c) => ({
         key: c.key,
         label: c.label,
@@ -145,6 +147,7 @@ function hydrateDraft(schema: InputSchema | null, mc: MappingConfig | null): Dra
     const dt = draft.tables.find((x) => x.key === t.key);
     if (dt) {
       if (typeof t.startRow === 'number') dt.startRow = t.startRow;
+      dt.sheet = t.sheet ?? null;
       for (const c of t.columns ?? []) {
         const dc = dt.columns.find((x) => x.key === c.key);
         if (dc) dc.column = c.column ?? null;
@@ -434,10 +437,10 @@ export function EditorModal({
       if (!t.startRow) continue;
       for (const c of t.columns) {
         if (c.column) {
-          ranges.push({ sheetName: '', a1: `${c.column}${t.startRow}`, color: COLOR_COLUMN, isColumn: true });
+          ranges.push({ sheetName: t.sheet ?? '', a1: `${c.column}${t.startRow}`, color: COLOR_COLUMN, isColumn: true });
         }
       }
-      ranges.push({ sheetName: '', a1: `A${t.startRow}`, color: COLOR_STARTROW });
+      ranges.push({ sheetName: t.sheet ?? '', a1: `A${t.startRow}`, color: COLOR_STARTROW });
     }
     return ranges;
   }, [draft]);
@@ -527,12 +530,16 @@ export function EditorModal({
           const c = t.columns.find((x) => x.key === activeTarget.key);
           if (c) {
             c.column = columnToLetter(sel.col);
+            t.sheet = sel.sheetName || null;
             if (!t.startRow) t.startRow = sel.row + 1;
           }
         }
       } else if (activeTarget.kind === 'startRow') {
         const t = next.tables.find((x) => x.key === activeTarget.tableKey);
-        if (t) t.startRow = sel.row + 1;
+        if (t) {
+          t.startRow = sel.row + 1;
+          t.sheet = sel.sheetName || null;
+        }
       }
       return next;
     });
@@ -590,6 +597,7 @@ export function EditorModal({
           .map((t) => ({
             key: t.key,
             startRow: t.startRow!,
+            sheet: t.sheet ?? undefined,
             columns: t.columns
               .filter((c) => c.column)
               .map((c) => ({ key: c.key, column: c.column! })),

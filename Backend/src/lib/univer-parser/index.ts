@@ -1,7 +1,7 @@
 // lib/univer-parser/index.ts
 import ExcelJS from 'exceljs';
-import { parseSheet } from './parseWorkbook';
-import { createStyleRegistry } from './styleRegistry';
+import { parseSheet } from './parseWorkbook.js';
+import { createStyleRegistry } from './styleRegistry.js';
 
 export async function excelToUniverSnapshot(
   buffer: Buffer | ArrayBuffer,

@@ -186,6 +186,43 @@ export const idParamSchema = z.object({
 });
 export type IdParam = z.infer<typeof idParamSchema>;
 
+export const crearPlantillaBodySchema = z.object({
+  modulo: z.string().min(1).default('COTIZACIONES'),
+  nombre: z.string().min(1),
+  activa: z.boolean().optional().default(true),
+});
+export type CrearPlantillaBody = z.infer<typeof crearPlantillaBodySchema>;
+
+export const plantillaDtoSchema = z.object({
+  idPlantilla: z.number(),
+  nombre: z.string(),
+  modulo: z.string(),
+  activa: z.boolean(),
+});
+export type PlantillaDto = z.infer<typeof plantillaDtoSchema>;
+
+export const plantillaRawToDtoSchema = z
+  .object({
+    ID_PLANTILLA: z.number(),
+    NOMBRE: z.string(),
+    MODULO: z.string(),
+    ACTIVA: z.boolean(),
+  })
+  .transform(
+    (raw): PlantillaDto => ({
+      idPlantilla: raw.ID_PLANTILLA,
+      nombre: raw.NOMBRE,
+      modulo: raw.MODULO,
+      activa: raw.ACTIVA,
+    })
+  );
+
+export const respuestaPlantillaCreadaSchema = z.object({
+  success: z.literal(true),
+  data: plantillaDtoSchema,
+});
+export type RespuestaPlantillaCreada = z.infer<typeof respuestaPlantillaCreadaSchema>;
+
 export const snapshotParamsSchema = z.object({
   id: z.coerce.number(),
   versionId: z.coerce.number(),

@@ -89,6 +89,7 @@ export interface ColumnMapping {
 export interface TableMapping {
   key: string;
   startRow: number;
+  sheet?: string;
   columns: ColumnMapping[];
 }
 

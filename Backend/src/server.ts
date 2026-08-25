@@ -24,7 +24,8 @@ import certificadosRoutes from './routes/certificados.routes.js';
 import certificateGeneratorRoutes from './routes/certificate-generator.routes.js';
 import reportesRoutes from './routes/recepciones.routes.js';
 import plantillasRoutes from './routes/plantillas.routes.js';
-import ordenesRoutes from './routes/audit.routes.js';
+import plantillasGeneracionRoutes from './routes/plantillas-generacion.routes.js';
+import ordenesRoutes from './routes/ordenes.routes.js';
 import recepcionesRoutes from './routes/recepciones.routes.js';
 import consecutivosRoutes from './routes/consecutivos.routes.js';
 import fastifyMultipart from '@fastify/multipart';
@@ -69,6 +70,7 @@ async function bootstrap() {
   await fastify.register(certificateGeneratorRoutes);
   await fastify.register(reportesRoutes);
   await fastify.register(plantillasRoutes);
+  await fastify.register(plantillasGeneracionRoutes);
   await fastify.register(ordenesRoutes);
   await fastify.register(recepcionesRoutes);
   await fastify.register(consecutivosRoutes);

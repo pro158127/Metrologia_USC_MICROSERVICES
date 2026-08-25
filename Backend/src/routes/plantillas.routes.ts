@@ -12,17 +12,20 @@ import {
 import {
   actualizarMappingBodySchema,
   consolidarTarifasBodySchema,
+  crearPlantillaBodySchema,
   detallePlantillaQuerySchema,
   documentoRawToDtoSchema,
   idParamSchema,
   jobIdParamSchema,
   plantillaCompletaRawToDtoSchema,
   plantillaConDocumentoRawToDtoSchema,
+  plantillaRawToDtoSchema,
   respuestaConsolidarTarifasSchema,
   respuestaEstadoJobTarifasSchema,
   respuestaListaPlantillasSchema,
   respuestaMappingSchema,
   respuestaNuevaVersionSchema,
+  respuestaPlantillaCreadaSchema,
   respuestaPlantillaSchema,
   respuestaSnapshotJobStatusSchema,
   respuestaSnapshotSchema,
@@ -37,6 +40,30 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.post(
+    '/api/v1/plantillas',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        body: crearPlantillaBodySchema,
+        response: { 201: respuestaPlantillaCreadaSchema },
+      },
+    },
+    async (request, reply) => {
+      const created = await fastify.prisma.plantillas.create({
+        data: {
+          MODULO: request.body.modulo,
+          NOMBRE: request.body.nombre,
+          ACTIVA: request.body.activa,
+        },
+      });
+      return reply.code(201).send({
+        success: true as const,
+        data: plantillaRawToDtoSchema.parse(created),
+      });
+    }
+  );
 
   app.get(
     '/api/v1/plantillas/:id',
@@ -351,6 +378,15 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
           },
         });
 
+        await tx.version_documentos.create({
+          data: {
+            ID_DOCUMENTO_FK: doc.ID_DOCUMENTO,
+            VERSION: newVersion,
+            RUTA_URL: s3Key,
+            usuario_fk: Number(request.user?.sub ?? 0),
+          },
+        });
+
         return tx.version_plantillas.create({
           data: {
             ID_PLANTILLA_FK: idPlantilla,
@@ -450,12 +486,25 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
       });
 
       const queue = getTarifasQueue();
-      const job = await queue.add('consolidar-tarifas', {
-        versionId,
-        rutaUrl: version.documentos.RUTA_URL,
-        fileName: version.documentos.NOMBRE,
-        mapeoConfig,
-      });
+      let job;
+      try {
+        job = await queue.add('consolidar-tarifas', {
+          versionId,
+          rutaUrl: version.documentos.RUTA_URL,
+          fileName: version.documentos.NOMBRE,
+          mapeoConfig,
+        });
+      } catch (error) {
+        await fastify.prisma.version_plantillas.update({
+          where: { ID_VERSION_PLANTILLA: versionId },
+          data: {
+            ESTADO: 'ERROR',
+            ERROR_LOG: 'No se pudo encolar el job de consolidación de tarifas.',
+          },
+        });
+        request.log.error(error, 'Fallo al encolar consolidar-tarifas');
+        throw new AppError(500, 'No se pudo encolar el job de consolidación de tarifas.');
+      }
 
       return reply
         .code(202)
@@ -485,6 +534,32 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
 
       if (!version) {
         throw new AppError(404, 'Versión de plantilla no encontrada.');
+      }
+
+      if (version.ESTADO === 'PROCESANDO') {
+        const queue = getTarifasQueue();
+        const activos = await queue.getJobs(['waiting', 'active', 'delayed']);
+        const tieneJob = activos.some(
+          (job) => (job.data as any)?.versionId === versionId && (job.data as any)?.mapeoConfig
+        );
+        if (!tieneJob) {
+          const stale = await fastify.prisma.version_plantillas.update({
+            where: { ID_VERSION_PLANTILLA: versionId },
+            data: {
+              ESTADO: 'ERROR',
+              ERROR_LOG: 'Job huérfano: no hay un proceso activo en la cola de tarifas.',
+            },
+            select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true },
+          });
+          return {
+            success: true as const,
+            data: {
+              estado: stale.ESTADO,
+              errorLog: stale.ERROR_LOG ?? null,
+              procesadoEn: stale.PROCESADO_EN ?? null,
+            },
+          };
+        }
       }
 
       return {

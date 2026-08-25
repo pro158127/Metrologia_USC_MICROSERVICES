@@ -155,10 +155,12 @@ def parsear_precio_celda(val) -> float:
 
 
 def parsear_excel(ruta_excel: str, config: dict):
-    df = pd.read_excel(ruta_excel, header=None)
+    hoja = config.get("sheetName")
+    df = pd.read_excel(ruta_excel, header=None, sheet_name=hoja or 0)
     fila_inicio = config.get("filaInicialDatos", 1)
     cols = config.get("columnas", {})
     mapa_anios = config.get("anios", {})
+    max_filas = int(config.get("maxRows", 50000))
 
     # Validación mínima del mapeo: sin columnas mapeadas no hay nada que extraer.
     if not cols or not mapa_anios:
@@ -166,7 +168,7 @@ def parsear_excel(ruta_excel: str, config: dict):
 
     resultados = []
 
-    for idx in range(fila_inicio, len(df)):
+    for idx in range(fila_inicio, min(len(df), fila_inicio + max_filas)):
         row = df.iloc[idx]
 
         magnitud = limpiar_string(row.get(cols.get("magnitud")))
@@ -190,7 +192,7 @@ def parsear_excel(ruta_excel: str, config: dict):
         for anio_str, col_idx in mapa_anios.items():
             raw_val = row.get(col_idx)
             precio = parsear_precio_celda(raw_val)
-            if precio is not None and precio >= 0:
+            if precio is not None and 0 <= precio < 1e10:
                 precios_lista.append(
                     {"anio": int(anio_str), "precio": round(precio, 2)}
                 )
@@ -212,11 +214,18 @@ def parsear_excel(ruta_excel: str, config: dict):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True)
-    parser.add_argument("--mapeo", required=True)
+    parser.add_argument("--mapeo", required=False)
+    parser.add_argument("--mapeo-file", required=False)
     args = parser.parse_args()
 
     try:
-        config_dict = json.loads(args.mapeo)
+        if args.mapeo:
+            config_dict = json.loads(args.mapeo)
+        elif args.mapeo_file:
+            with open(args.mapeo_file, "r", encoding="utf-8") as f:
+                config_dict = json.load(f)
+        else:
+            raise ValueError("Debe proveerse --mapeo o --mapeo-file.")
         data = parsear_excel(args.file, config_dict)
         print(json.dumps({"success": True, "data": data}))
     except Exception as e:

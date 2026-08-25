@@ -1,9 +1,9 @@
 // lib/univer-parser/parseWorkbook.ts
 import ExcelJS from 'exceljs';
-import { parseCell } from './parseCell';
-import { parseMerges } from './parseMerges';
-import { getActualDimensions } from './parseDimensions';
-import { getOrCreateStyleId } from './styleRegistry';
+import { parseCell } from './parseCell.js';
+import { parseMerges } from './parseMerges.js';
+import { getActualDimensions } from './parseDimensions.js';
+import { getOrCreateStyleId } from './styleRegistry.js';
 
 export function parseSheet(
   worksheet: ExcelJS.Worksheet,
@@ -14,7 +14,7 @@ export function parseSheet(
   const mergeData = parseMerges(worksheet);
 
   const mergedCells = new Set<string>();
-  mergeData.forEach((merge) => {
+  mergeData.forEach((merge: { startRow: number; endRow: number; startColumn: number; endColumn: number }) => {
     for (let row = merge.startRow; row <= merge.endRow; row++) {
       for (let col = merge.startColumn; col <= merge.endColumn; col++) {
         if (row === merge.startRow && col === merge.startColumn) continue;

@@ -1,5 +1,5 @@
 // lib/univer-parser/styleRegistry.ts
-import { convertStyleToUniver } from './parseStyle';
+import { convertStyleToUniver } from './parseStyle.js';
 
 export function createStyleRegistry() {
   const registry: Record<string, any> = {};

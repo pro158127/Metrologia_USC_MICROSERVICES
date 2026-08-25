@@ -35,6 +35,8 @@ function dtoToSealConfig(d: PlantillaSelloDTO): SealConfig {
     descripcion: d.descripcion ?? undefined,
     templatePdfKey: d.templatePdfKey ?? null,
     templatePdfUrl: d.templatePdfUrl ?? null,
+    templatePdfWidth: d.templatePdfWidth ?? null,
+    templatePdfHeight: d.templatePdfHeight ?? null,
     documentArea: d.documentArea ?? null,
     watermarkAreas: Array.isArray(d.watermarkAreas) ? d.watermarkAreas : [],
     updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString().slice(0, 10) : undefined,

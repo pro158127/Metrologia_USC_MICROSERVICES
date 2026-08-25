@@ -110,6 +110,7 @@ services:
              pnpm run db:seed && 
              (pnpm worker:snapshot &) && 
              (pnpm worker:stamp &) && 
+             (pnpm worker:plantillas &) && 
              pnpm dev"
     volumes:
       - ./Backend:/app

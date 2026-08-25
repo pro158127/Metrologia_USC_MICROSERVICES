@@ -91,7 +91,31 @@ async function main() {
     SELECT setval(pg_get_serial_sequence('public.usuarios', 'ID_USUARIO_AUTO_INCREMENT'), COALESCE(MAX("ID_USUARIO_AUTO_INCREMENT"), 1)) FROM public.usuarios;
   `;
 
-  // 4. Creación de la Función Genérica de Notificación
+  // 4. Precarga Idempotente de Plantillas de Excel (sin URL de documento: la
+  //    primera versión/subida se resuelve vía POST /api/v1/plantillas/:id/version)
+  console.log('🌱 Sembrando plantillas de Excel por defecto...');
+  const plantillasSeed = [
+    { modulo: 'COTIZACIONES', nombre: 'Cotización de Servicios de Calibración (R-CM003)' },
+    { modulo: 'ORDEN_TRABAJO', nombre: 'Orden de Trabajo (R-CM005)' },
+    { modulo: 'RECEPCION', nombre: 'Recepción, Reporte y Entrega de Instrumentos (R-CM010)' },
+  ];
+
+  for (const p of plantillasSeed) {
+    const existe = await prisma.$queryRaw<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM public.plantillas WHERE "MODULO" = ${p.modulo}
+    `;
+    if ((existe[0]?.count ?? 0) > 0) continue;
+    await prisma.$executeRaw`
+      INSERT INTO public.plantillas ("MODULO", "ACTIVA", "NOMBRE")
+      VALUES (${p.modulo}, true, ${p.nombre})
+    `;
+  }
+
+  await prisma.$executeRaw`
+    SELECT setval(pg_get_serial_sequence('public.plantillas', 'ID_PLANTILLA'), COALESCE(MAX("ID_PLANTILLA"), 1)) FROM public.plantillas;
+  `;
+
+  // 5. Creación de la Función Genérica de Notificación
   console.log('⚡ Configurando función de notificación PL/pgSQL...');
   await prisma.$executeRawUnsafe(`
     CREATE OR REPLACE FUNCTION public.notify_cambio_tablas()

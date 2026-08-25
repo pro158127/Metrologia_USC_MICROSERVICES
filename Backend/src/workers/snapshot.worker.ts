@@ -3,9 +3,9 @@
 import 'dotenv/config';
 import { Worker } from 'bullmq';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
-import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client';
-import { excelToUniverSnapshot } from '../lib/univer-parser';
-import { SNAPSHOT_QUEUE, SNAPSHOT_TTL_SECONDS, getRedisConnection, SnapshotJobData } from '../lib/queue/queue';
+import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client.js';
+import { excelToUniverSnapshot } from '../lib/univer-parser/index.js';
+import { SNAPSHOT_QUEUE, SNAPSHOT_TTL_SECONDS, getRedisConnection, SnapshotJobData } from '../lib/queue/queue.js';
 
 const SNAPSHOT_KEY_PREFIX = 'univer:snapshot:';
 
