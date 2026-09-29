@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT } from '@prisma/client';
 import { PDFDocument } from 'pdf-lib';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -9,6 +9,17 @@ import { getEmailQueue } from '../lib/queue/queue.js';
 import { transicionarOT } from '../services/ot-fsm.service.js';
 
 const otParamsSchema = z.object({ id: z.coerce.number() });
+
+/** Valida permisos del módulo entrega_y_envio. */
+function assertPermisoEntrega(
+  request: FastifyRequest,
+  accion: 'marcar_ot_pagada' | 'enviar_certificados_lotes'
+): void {
+  const permisos = request.user?.user?.permissions?.permisos?.entrega_y_envio;
+  if (!permisos?.[accion]) {
+    throw new AppError(403, `Sin permisos para ${accion} (entrega y envío).`);
+  }
+}
 
 const respuestaDocumentosEnvioSchema = z.object({
   ok: z.literal(true),
@@ -43,6 +54,7 @@ async function cargarContextoOT(fastify: FastifyInstance, idOT: number) {
       recepciones_equipo: {
         include: {
           recepcion_equipo_detalles: {
+            where: { OR: [{ activacion: true }, { activacion: null }] },
             include: {
               calibraciones: {
                 include: { certificados: { include: { documentos: true } } },
@@ -149,6 +161,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       schema: { params: otParamsSchema },
     },
     async (request) => {
+      assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idOT = request.params.id;
       const { ot, todosAprobados } = await cargarContextoOT(fastify, idOT);
 
@@ -197,6 +210,12 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             },
           });
 
+      // Subir el comprobante marca la OT como pagada.
+      await fastify.prisma.ordenes_trabajo.update({
+        where: { ID_ORDEN_TRABAJO: idOT },
+        data: { estado_pago: 'PAGADO' },
+      });
+
       return {
         ok: true as const,
         data: {
@@ -218,6 +237,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       schema: { params: otParamsSchema },
     },
     async (request) => {
+      assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idOT = request.params.id;
       const { ot, certificados, comprobante, todosAprobados } = await cargarContextoOT(
         fastify,

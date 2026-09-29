@@ -5,7 +5,7 @@
   import { Link, FileText, Unlink, Layers, AlertTriangle, Search, Filter } from "lucide-react";
   import { useDbStore } from "../../stores/dbstore"; 
   import { procesarImportacionOTAction, consultarEstadoJobAction } from "@/app/action_module/ordenes";
-  import { useSession } from "next-auth/react";
+  import { subirArchivoDocumento } from "@/app/action_module/archivos";
 
   // Interfaces y Tipos
   interface GeneratedOT {
@@ -240,7 +240,6 @@
 
   // 3. Componente Padre Principal
   export const MainRenderer2: React.FC = () => {
-    const { data: session } = useSession();
     const [isMounted, setIsMounted] = useState(false);
 
     const { cotizaciones, ordenes_trabajo, loadTable } = useDbStore();
@@ -328,19 +327,12 @@
 
       try {
         let s3KeyTemp = "";
-        
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("nombreArchivo", file.name);
 
-        const uploadRes = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || ''}/api/v1/documentos/upload`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${(session as any)?.user?.token}` },
-          body: formData
-        });
-        
-        if (!uploadRes.ok) throw new Error("Fallo al subir a MinIO.");
-        s3KeyTemp = (await uploadRes.json()).rutaUrl; 
+        const uploadRes = await subirArchivoDocumento(file, file.name);
+        if (!uploadRes.ok || !uploadRes.rutaUrl) {
+          throw new Error(uploadRes.error || "Fallo al subir a MinIO.");
+        }
+        s3KeyTemp = uploadRes.rutaUrl;
 
         const cotizObj = cotizaciones.find((c: any) => c.codigo === cotizacionSeleccionada);
         const idCotizacionReal = cotizObj ? cotizObj.idCotizacion : undefined; 

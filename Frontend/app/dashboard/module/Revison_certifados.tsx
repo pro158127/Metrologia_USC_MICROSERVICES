@@ -8,17 +8,18 @@ import {
   MessageSquare,
   ChevronUp,
   ChevronDown,
-  FileText,
   X,
   Clock,
   ShieldCheck,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 import {
+  obtenerCertificadosRevision,
   aprobarCertificado,
   rechazarCertificado,
+  type CertificadoRevisionItem,
 } from "@/app/action_module/certificados";
+import { generarUrlArchivo } from "@/app/action_module/archivos";
 import type {
   SortField,
   SortDir,
@@ -30,7 +31,7 @@ import type {
   PDFViewerPanelProps,
 } from "@/tipos/calibracion";
 
-// 2. Declaración de Componentes Hijos (Extraídos)
+// 2. Componentes hijos
 
 const ToastNotification = ({ message }: ToastNotificationProps) => {
   if (!message) return null;
@@ -43,6 +44,7 @@ const ToastNotification = ({ message }: ToastNotificationProps) => {
 
 const RejectModal = ({
   showDevolver,
+  label,
   motivo,
   motivoError,
   setMotivo,
@@ -57,7 +59,7 @@ const RejectModal = ({
       <div className="rounded-2xl p-6 w-full max-w-md bg-white border border-slate-100 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-2.5">
-            Rechazar Certificado
+            Rechazar Certificado {label ? `— ${label}` : ""}
           </span>
           <button
             onClick={() => {
@@ -122,6 +124,7 @@ const RejectModal = ({
 
 const ApproveModal = ({
   showAprobar,
+  label,
   setShowAprobar,
   handleAprobar,
 }: ApproveModalProps) => {
@@ -138,7 +141,7 @@ const ApproveModal = ({
         </div>
         <p className="text-xs text-slate-500 leading-relaxed mb-5">
           ¿Estás seguro de aprobar el certificado de la OT{" "}
-          <strong>{showAprobar}</strong>? Pasará a la cola de firma.
+          <strong>{label}</strong>? Pasará a la cola de firma.
         </p>
         <div className="flex justify-end gap-3">
           <button
@@ -167,9 +170,7 @@ const HeaderSection = ({ pendingCount, rol }: { pendingCount: number; rol: strin
       </h1>
       <div className="flex items-center gap-3 mt-3 pl-4">
         <div className="flex items-center gap-3.5 px-4 py-2.5 rounded-2xl bg-rose-500 text-white shadow-sm">
-          <span className="text-3xl font-extrabold leading-none">
-            {pendingCount}
-          </span>
+          <span className="text-3xl font-extrabold leading-none">{pendingCount}</span>
           <span className="text-[10px] font-bold uppercase tracking-wider leading-relaxed max-w-[90px]">
             pendientes de revisión
           </span>
@@ -186,141 +187,47 @@ const InfoBanner = () => (
   <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-2xl mb-4 bg-blue-50 border border-blue-100/50">
     <Info size={14} className="text-[#5680F9] mt-0.5 flex-shrink-0" />
     <p className="text-xs font-medium text-[#2d3748]">
-      Identificación de registros extendida por{" "}
-      <strong className="text-[#5680F9]">Número de Estampilla e Instrumento</strong>
-      . Control de acciones restringido a Directores y Coordinadores.
+      Identificación de registros por{" "}
+      <strong className="text-[#5680F9]">Número de Estampilla e Instrumento</strong>. Control de
+      acciones restringido a Directores y Coordinadoras.
     </p>
   </div>
 );
 
-const FakePDFViewer = ({
-  ot,
-  estampilla,
-  instrumento,
-  datos = {},
+const CenteredMessage = ({ text, isError = false }: { text: string; isError?: boolean }) => (
+  <div className="flex h-full w-full items-center justify-center p-8 text-center">
+    <p className={isError ? "text-rose-600 text-xs" : "text-slate-500 text-xs"}>{text}</p>
+  </div>
+);
+
+/** Visor PDF real: obtiene una URL firmada del documento del certificado. */
+const CertificadoPdfViewer = ({
+  rutaUrl,
+  nombre,
 }: {
-  ot: string;
-  estampilla: string;
-  instrumento: string;
-  datos?: Record<string, string>;
+  rutaUrl?: string | null;
+  nombre: string;
 }) => {
-  const valor = (clave: string) => datos?.[clave] ?? "—";
-  return (
-    <div
-      className="flex flex-col h-full rounded-xl overflow-hidden"
-      style={{ background: "#F5F7FA", border: "1px solid #E6EAF2" }}
-    >
-      <div
-        className="flex items-center gap-2 px-4 py-2.5"
-        style={{ background: "#1F2A44", borderBottom: "1px solid #2D3F63" }}
-      >
-        <FileText size={14} color="#7A9CFA" />
-        <span style={{ color: "#AFC4FD", fontSize: 12, fontWeight: 500 }}>
-          CERT-{ot}.pdf
-        </span>
-        <span
-          className="ml-auto px-2 py-0.5 rounded"
-          style={{
-            background: "rgba(86,128,249,0.2)",
-            color: "#7A9CFA",
-            fontSize: 10,
-          }}
-        >
-          Vista previa
-        </span>
-      </div>
-      <div
-        className="flex-1 flex flex-col items-center justify-start p-6 overflow-y-auto"
-        style={{ background: "#FFFFFF" }}
-      >
-        <div className="w-full max-w-sm">
-          <div
-            className="text-center mb-4 pb-4"
-            style={{ borderBottom: "2px solid #E6EAF2" }}
-          >
-            <div
-              style={{
-                color: "#1F2A44",
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: "1px",
-              }}
-            >
-              LABORATORIO DE METROLOGÍA
-            </div>
-            <div
-              style={{
-                color: "#5680F9",
-                fontSize: 10,
-                letterSpacing: "0.5px",
-              }}
-            >
-              UNIVERSIDAD SANTIAGO DE CALI
-            </div>
-            <div className="flex items-center justify-center gap-2 mt-2">
-              <div
-                className="px-2 py-0.5 rounded"
-                style={{ background: "#F0FDF4", border: "1px solid #BBF7D0" }}
-              >
-                <span style={{ color: "#15803D", fontSize: 9, fontWeight: 700 }}>
-                  ✓ ACREDITADO ONAC
-                </span>
-              </div>
-            </div>
-          </div>
-          <div className="text-center mb-4">
-            <div style={{ color: "#374151", fontSize: 13, fontWeight: 700 }}>
-              CERTIFICADO DE CALIBRACIÓN
-            </div>
-            <div style={{ color: "#94A3B8", fontSize: 10 }}>
-              {ot} · Emisión: {valor("Emisión")}
-            </div>
-          </div>
-          {[
-            ["N° Estampilla", estampilla],
-            ["Instrumento", instrumento],
-            ["Serie", valor("Serie")],
-            ["Magnitud", valor("Magnitud")],
-            ["Rango", valor("Rango")],
-            ["Incertidumbre", valor("Incertidumbre")],
-            ["Patrón utilizado", valor("Patrón utilizado")],
-            ["Temperatura laboratorio", valor("Temperatura laboratorio")],
-            ["Humedad relativa", valor("Humedad relativa")],
-          ].map(([k, v]) => (
-            <div
-              key={k}
-              className="flex justify-between py-1.5"
-              style={{ borderBottom: "1px solid #F1F5F9" }}
-            >
-              <span style={{ color: "#64748b", fontSize: 10 }}>{k}</span>
-              <span style={{ color: "#1F2A44", fontSize: 10, fontWeight: 500 }}>
-                {v}
-              </span>
-            </div>
-          ))}
-          <div
-            className="mt-4 text-center"
-            style={{ borderTop: "1px solid #E6EAF2", paddingTop: 12 }}
-          >
-            <div
-              style={{
-                width: 80,
-                height: 2,
-                background: "#1F2A44",
-                margin: "0 auto 4px",
-              }}
-            />
-            <div style={{ color: "#374151", fontSize: 9, fontWeight: 600 }}>
-              Técnico Calibrador
-            </div>
-            <div style={{ color: "#94A3B8", fontSize: 9 }}>
-              Laboratorio de Metrología USC
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  const [url, setUrl] = useState<string | null>(null);
+  const [cargando, setCargando] = useState<boolean>(!!rutaUrl);
+
+  useEffect(() => {
+    let activo = true;
+    if (!rutaUrl) return;
+    generarUrlArchivo(rutaUrl).then((u) => {
+      if (activo) {
+        setUrl(u);
+        setCargando(false);
+      }
+    });
+    return () => {
+      activo = false;
+    };
+  }, [rutaUrl]);
+
+  if (cargando) return <CenteredMessage text="Generando visor..." />;
+  if (!url) return <CenteredMessage text="No se pudo cargar el certificado." isError />;
+  return <iframe src={url} title={nombre} className="h-full w-full border-0 rounded-xl bg-white" />;
 };
 
 const CertificatesTable = ({
@@ -360,21 +267,20 @@ const CertificatesTable = ({
   return (
     <div className="flex-1 overflow-y-auto rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)]">
       <table className="w-full text-left text-xs">
-        <thead
-          style={{ position: "sticky", top: 0, zIndex: 1 }}
-          className="bg-slate-50 border-b border-slate-100"
-        >
-          <tr>
-            {columns.map((h) => (
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-100">
+            {columns.map((c, i) => (
               <th
-                key={h.label}
-                className="px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px] cursor-pointer select-none"
-                onClick={() => h.field && handleSort(h.field)}
+                key={i}
+                onClick={() => c.field && handleSort(c.field)}
+                className={`px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px] ${
+                  c.field ? "cursor-pointer select-none" : ""
+                }`}
               >
-                <div className="flex items-center gap-1">
-                  {h.label}
-                  {h.field && <SortIcon field={h.field} />}
-                </div>
+                <span className="flex items-center gap-1">
+                  {c.label}
+                  {c.field && <SortIcon field={c.field} />}
+                </span>
               </th>
             ))}
           </tr>
@@ -382,12 +288,13 @@ const CertificatesTable = ({
         <tbody className="divide-y divide-slate-100">
           {sortedCerts.map((c) => (
             <tr
-              key={c.ot}
+              key={c.idCertificado}
               onClick={() =>
-                !c.bloqueado && setSelected(selected === c.ot ? null : c.ot)
+                !c.bloqueado &&
+                setSelected(selected === c.idCertificado ? null : c.idCertificado)
               }
               className={`transition-colors cursor-pointer ${
-                selected === c.ot
+                selected === c.idCertificado
                   ? "bg-blue-50/40"
                   : c.bloqueado
                   ? "bg-rose-50/10 cursor-not-allowed"
@@ -396,10 +303,8 @@ const CertificatesTable = ({
             >
               <td className="px-4 py-3.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-[#5680F9] font-mono">
-                    {c.ot}
-                  </span>
-                  {selected === c.ot && (
+                  <span className="text-xs font-bold text-[#5680F9] font-mono">{c.ot}</span>
+                  {selected === c.idCertificado && (
                     <div className="w-1.5 h-1.5 rounded-full bg-[#5680F9]" />
                   )}
                 </div>
@@ -407,62 +312,43 @@ const CertificatesTable = ({
               <td className="px-4 py-3.5 font-mono text-slate-700 font-semibold">
                 {c.estampilla}
               </td>
-              <td className="px-4 py-3.5 font-medium text-slate-800">
-                {c.instrumento}
-              </td>
-              <td className="px-4 py-3.5 font-bold text-slate-600">
-                {c.cliente}
-              </td>
+              <td className="px-4 py-3.5 font-medium text-slate-800">{c.instrumento}</td>
+              <td className="px-4 py-3.5 font-bold text-slate-600">{c.cliente}</td>
               <td className="px-4 py-3.5 text-slate-500">{c.tecnico}</td>
               <td className="px-4 py-3.5">
-                {c.bloqueado ? (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100 text-[10px] font-bold uppercase tracking-wider">
-                    🔒 Bloqueado
-                  </span>
-                ) : (
-                  <span
-                    className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold border ${
-                      c.tipo === "Acreditado"
-                        ? "bg-blue-50 text-blue-700 border-blue-100/50"
-                        : "bg-violet-50 text-violet-700 border-violet-100/50"
-                    }`}
-                  >
-                    {c.tipo}
-                  </span>
-                )}
+                <span
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                    c.tipo === "Acreditado"
+                      ? "bg-blue-50 text-blue-700 border-blue-100/50"
+                      : "bg-violet-50 text-violet-700 border-violet-100/50"
+                  }`}
+                >
+                  {c.tipo}
+                </span>
               </td>
-              <td className="px-4 py-3.5 text-slate-400 font-mono">
-                {c.fecha}
-              </td>
+              <td className="px-4 py-3.5 text-slate-400 font-mono">{c.fecha}</td>
               <td className="px-4 py-3.5">
                 <span
                   className="flex items-center gap-1 font-mono text-[11px] font-bold"
                   style={{
-                    color:
-                      c.espera > 24
-                        ? "#EF4444"
-                        : c.espera > 8
-                        ? "#D97706"
-                        : "#64748b",
+                    color: c.espera > 24 ? "#EF4444" : c.espera > 8 ? "#D97706" : "#64748b",
                   }}
                 >
                   <Clock size={12} />
-                  {c.espera < 60
-                    ? `${c.espera}h`
-                    : `${Math.round(c.espera / 24)}d`}
+                  {c.espera < 60 ? `${c.espera}h` : `${Math.round(c.espera / 24)}d`}
                 </span>
               </td>
               <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
                 {!c.bloqueado && tienePermisosRevision ? (
                   <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => setShowAprobar(c.ot)}
+                      onClick={() => setShowAprobar(c.idCertificado)}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border-none bg-emerald-50 text-emerald-700 font-bold text-[10px] uppercase tracking-wider cursor-pointer hover:bg-emerald-100 transition-colors"
                     >
                       <CheckCircle size={12} /> Aprobar
                     </button>
                     <button
-                      onClick={() => setShowDevolver(c.ot)}
+                      onClick={() => setShowDevolver(c.idCertificado)}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border-none bg-rose-50 text-rose-700 font-bold text-[10px] uppercase tracking-wider cursor-pointer hover:bg-rose-100 transition-colors"
                     >
                       <MessageSquare size={12} /> Rechazar
@@ -470,9 +356,7 @@ const CertificatesTable = ({
                   </div>
                 ) : (
                   !c.bloqueado && (
-                    <span className="text-[10px] text-slate-400 italic">
-                      Lectura
-                    </span>
+                    <span className="text-[10px] text-slate-400 italic">Lectura</span>
                   )
                 )}
               </td>
@@ -491,10 +375,7 @@ const PDFViewerPanel = ({
   setShowAprobar,
   setShowDevolver,
 }: PDFViewerPanelProps) => (
-  <div
-    className="flex flex-col overflow-hidden"
-    style={{ flex: 1, padding: "32px 32px 32px 0" }}
-  >
+  <div className="flex flex-col overflow-hidden" style={{ flex: 1, padding: "32px 32px 32px 0" }}>
     <div className="flex items-center justify-between mb-4 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
       <div>
         <div className="text-xs font-bold text-[#5680F9] font-mono">
@@ -512,25 +393,24 @@ const PDFViewerPanel = ({
       </button>
     </div>
 
-    <div className="flex-1 overflow-hidden mb-4">
-      <FakePDFViewer
-        ot={selectedCert.ot}
-        estampilla={selectedCert.estampilla}
-        instrumento={selectedCert.instrumento}
-        datos={selectedCert.datosTecnicos}
+    <div className="flex-1 overflow-hidden mb-4 rounded-xl border border-slate-100 bg-slate-100">
+      <CertificadoPdfViewer
+        key={selectedCert.idCertificado}
+        rutaUrl={selectedCert.rutaUrl}
+        nombre={selectedCert.codigo ?? selectedCert.ot}
       />
     </div>
 
     {tienePermisosRevision && (
       <div className="flex gap-3">
         <button
-          onClick={() => setShowAprobar(selectedCert.ot)}
+          onClick={() => setShowAprobar(selectedCert.idCertificado)}
           className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider border-none cursor-pointer shadow-sm transition-colors"
         >
           <CheckCircle size={15} /> Aprobar ✓
         </button>
         <button
-          onClick={() => setShowDevolver(selectedCert.ot)}
+          onClick={() => setShowDevolver(selectedCert.idCertificado)}
           className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold uppercase tracking-wider border border-rose-200 cursor-pointer transition-colors"
         >
           <MessageSquare size={15} /> Rechazar
@@ -540,109 +420,107 @@ const PDFViewerPanel = ({
   </div>
 );
 
-// 3. Declaración del Componente Padre (MainRenderer)
+// 3. Componente padre
+
+/** Mapea la respuesta del backend al DTO de la tabla de revisión. */
+function mapRevision(data: CertificadoRevisionItem[]): CertificadoRevision[] {
+  const now = Date.now();
+  return data.map((c) => {
+    const fecha = c.createdAt ? new Date(c.createdAt) : new Date();
+    const espera = Math.max(0, Math.round((now - fecha.getTime()) / 3600000));
+    const datosTecnicos: Record<string, string> = c.datosTecnicos
+      ? Object.fromEntries(
+          Object.entries(c.datosTecnicos as Record<string, unknown>).map(([k, v]) => [
+            k,
+            String(v),
+          ])
+        )
+      : {};
+    const status: "pendiente" | "aprobado" | "devuelto" =
+      c.estadoRevision === "APROBADO"
+        ? "aprobado"
+        : c.estadoRevision === "RECHAZADO"
+        ? "devuelto"
+        : "pendiente";
+
+    return {
+      idCertificado: c.idCertificado,
+      codigo: c.codigo,
+      ot: c.codigoOT,
+      estampilla: c.estampilla,
+      cliente: c.cliente,
+      instrumento: c.instrumento,
+      tecnico: c.tecnico,
+      tipo: c.tipoServicio ? (c.acreditado ? "Acreditado" : "No acreditado") : "—",
+      fecha: `${fecha.toLocaleDateString("es-CO")} ${fecha.toLocaleTimeString("es-CO", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`,
+      espera,
+      bloqueado: false,
+      status,
+      datosTecnicos,
+      motivoRechazo: c.motivoRechazo,
+      rutaUrl: c.rutaUrl,
+      acreditado: c.acreditado,
+    };
+  });
+}
 
 export function RevisionCertificados() {
   const { data: session } = useSession();
   const rol = (session?.user?.role as string) || "Sin rol";
+  const permisosRevision = session?.user?.permissions?.permisos?.revision;
 
-  const certificados = useDbTable("certificados");
-  const calibraciones = useDbTable("calibraciones");
-  const recepcionDetalles = useDbTable("recepcion_equipo_detalles");
-  const ordenes = useDbTable("ordenes_trabajo");
-  const clientes = useDbTable("clientes");
-  const usuarios = useDbTable("usuarios");
-  const tarifas = useDbTable("tarifas");
-  const { loadTable } = useDbActions();
-
-  useEffect(() => {
-    loadTable("certificados");
-    loadTable("ordenes_trabajo");
-    loadTable("clientes");
-    loadTable("tarifas");
-  }, [loadTable]);
-
-  const [selected, setSelected] = useState<string | null>(null);
-  const [showDevolver, setShowDevolver] = useState<string | null>(null);
-  const [showAprobar, setShowAprobar] = useState<string | null>(null);
+  const [certsRaw, setCertsRaw] = useState<CertificadoRevision[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [showDevolver, setShowDevolver] = useState<number | null>(null);
+  const [showAprobar, setShowAprobar] = useState<number | null>(null);
   const [motivo, setMotivo] = useState("");
   const [motivoError, setMotivoError] = useState(false);
   const [toast, setToast] = useState("");
   const [sortField, setSortField] = useState<SortField>("espera");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const tienePermisosRevision = rol === "Director" || rol === "Coordinador";
+  const tienePermisosRevision = Boolean(
+    permisosRevision?.revisar_aprobar_acreditados ||
+      permisosRevision?.revisar_aprobar_no_acreditados ||
+      rol === "Director Técnico" ||
+      rol === "Coordinadora"
+  );
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(""), 3500);
   }, []);
 
-  // ==========================================
-  // DATOS DERIVADOS DEL STORE (sin mocks)
-  // ==========================================
-const [now] = useState<number>(() => Date.now());
-  const certs: CertificadoRevision[] = useMemo(() => {
-    
-    return (certificados ?? []).map((cert) => {
-      const cal = calibraciones.find((c) => c.idCalibracion === cert.idCalibracion);
-      const detalle = cal
-        ? recepcionDetalles.find((r) => r.idInstrumento === cal.idInstrumento)
-        : undefined;
-      const orden = ordenes.find((o) =>
-        (o.instrumentos ?? []).some((i) => i.idDetalle === cal?.idInstrumento)
-      );
-      const cliente = orden
-        ? clientes.find((c) => c.idCliente === orden.idCliente)
-        : undefined;
-      const tecnico = cal
-        ? usuarios.find((u) => u.idUsuario === cal.idTecnico)
-        : undefined;
-      const tarifa = detalle
-        ? tarifas.find((t) => t.Instrumento === detalle.instrumento)
-        : undefined;
-      const fecha = cal?.createdAt ? new Date(cal.createdAt) : new Date();
-      const espera = Math.max(0, Math.round((now - fecha.getTime()) / 3600000));
-      const datosTecnicos: Record<string, string> = cal?.datosTecnicos
-        ? Object.fromEntries(
-            Object.entries(cal.datosTecnicos as Record<string, unknown>).map(([k, v]) => [k, String(v)])
-          )
-        : {};
+  const cargar = useCallback(async () => {
+    const data = await obtenerCertificadosRevision();
+    setCertsRaw(mapRevision(data));
+    setCargando(false);
+  }, []);
 
-      const status: "pendiente" | "aprobado" | "devuelto" =
-        cert.estadoRevision === "APROBADO"
-          ? "aprobado"
-          : cert.estadoRevision === "RECHAZADO"
-          ? "devuelto"
-          : "pendiente";
+  useEffect(() => {
+    let activo = true;
+    obtenerCertificadosRevision()
+      .then((data) => {
+        if (!activo) return;
+        setCertsRaw(mapRevision(data));
+        setCargando(false);
+      })
+      .catch(() => {
+        if (activo) setCargando(false);
+      });
+    return () => {
+      activo = false;
+    };
+  }, []);
 
-      return {
-        idCertificado: cert.idCertificado,
-        ot: orden?.codigo ?? "—",
-        estampilla: detalle?.estampilla ?? "—",
-        cliente: cliente?.razonSocial ?? "—",
-        instrumento: detalle?.instrumento ?? "—",
-        tecnico: tecnico?.nombreCompleto ?? orden?.responsable ?? "—",
-        tipo: tarifa
-          ? tarifa.tipoServicio.toLowerCase().includes("acreditado")
-            ? "Acreditado"
-            : "No acreditado"
-          : "—",
-        fecha: `${fecha.toLocaleDateString("es-CO")} ${fecha.toLocaleTimeString("es-CO", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}`,
-        espera,
-        bloqueado: false,
-        status,
-        datosTecnicos,
-        motivoRechazo: cert.motivoRechazo ?? null,
-      };
-    });
-  }, [certificados, calibraciones, recepcionDetalles, ordenes, clientes, usuarios, tarifas]);
-
-  const pending = certs.filter((c) => c.status === "pendiente");
-  const selectedCert = certs.find((c) => c.ot === selected);
+  const pending = certsRaw.filter((c) => c.status === "pendiente");
+  const selectedCert = certsRaw.find((c) => c.idCertificado === selected);
+  const labelAprobar = certsRaw.find((c) => c.idCertificado === showAprobar)?.ot ?? "";
+  const labelDevolver = certsRaw.find((c) => c.idCertificado === showDevolver)?.ot ?? "";
 
   const handleSort = useCallback((field: SortField) => {
     setSortField((prevField) => {
@@ -664,56 +542,41 @@ const [now] = useState<number>(() => Date.now());
   }, [pending, sortField, sortDir]);
 
   const handleAprobar = useCallback(
-    async (ot: string) => {
+    async (idCertificado: number) => {
       if (!tienePermisosRevision) return;
-      const cert = certs.find((c) => c.ot === ot && c.status === "pendiente");
-      if (!cert) {
-        showToast("⚠️ No se encontró el certificado seleccionado.");
-        return;
-      }
-
-      const res = await aprobarCertificado(cert.idCertificado);
+      const res = await aprobarCertificado(idCertificado);
       if (!res.ok) {
         showToast(`❌ ${res.error ?? "No se pudo aprobar el certificado."}`);
         return;
       }
-
       setShowAprobar(null);
       setSelected(null);
       showToast(`✅ ${res.message ?? "Certificado aprobado con éxito."}`);
-      await loadTable("certificados");
+      await cargar();
     },
-    [tienePermisosRevision, certs, showToast, loadTable]
+    [tienePermisosRevision, showToast, cargar]
   );
 
   const handleDevolver = useCallback(
-    async (ot: string) => {
+    async (idCertificado: number) => {
       if (!tienePermisosRevision) return;
       if (!motivo.trim()) {
         setMotivoError(true);
         return;
       }
-
-      const cert = certs.find((c) => c.ot === ot && c.status === "pendiente");
-      if (!cert) {
-        showToast("⚠️ No se encontró el certificado seleccionado.");
-        return;
-      }
-
-      const res = await rechazarCertificado(cert.idCertificado, motivo.trim());
+      const res = await rechazarCertificado(idCertificado, motivo.trim());
       if (!res.ok) {
         showToast(`❌ ${res.error ?? "No se pudo rechazar el certificado."}`);
         return;
       }
-
       setShowDevolver(null);
       setMotivo("");
       setMotivoError(false);
       setSelected(null);
       showToast(`📤 ${res.message ?? "Certificado rechazado y devuelto al técnico."}`);
-      await loadTable("certificados");
+      await cargar();
     },
-    [tienePermisosRevision, motivo, certs, showToast, loadTable]
+    [tienePermisosRevision, motivo, showToast, cargar]
   );
 
   return (
@@ -722,6 +585,7 @@ const [now] = useState<number>(() => Date.now());
 
       <RejectModal
         showDevolver={showDevolver}
+        label={labelDevolver}
         motivo={motivo}
         motivoError={motivoError}
         setMotivo={setMotivo}
@@ -732,6 +596,7 @@ const [now] = useState<number>(() => Date.now());
 
       <ApproveModal
         showAprobar={showAprobar}
+        label={labelAprobar}
         setShowAprobar={setShowAprobar}
         handleAprobar={handleAprobar}
       />
@@ -746,17 +611,23 @@ const [now] = useState<number>(() => Date.now());
       >
         <HeaderSection pendingCount={pending.length} rol={rol} />
         <InfoBanner />
-        <CertificatesTable
-          sortedCerts={sorted}
-          selected={selected}
-          sortField={sortField}
-          sortDir={sortDir}
-          tienePermisosRevision={tienePermisosRevision}
-          handleSort={handleSort}
-          setSelected={setSelected}
-          setShowAprobar={setShowAprobar}
-          setShowDevolver={setShowDevolver}
-        />
+        {cargando ? (
+          <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
+            Cargando bandeja de certificados...
+          </div>
+        ) : (
+          <CertificatesTable
+            sortedCerts={sorted}
+            selected={selected}
+            sortField={sortField}
+            sortDir={sortDir}
+            tienePermisosRevision={tienePermisosRevision}
+            handleSort={handleSort}
+            setSelected={setSelected}
+            setShowAprobar={setShowAprobar}
+            setShowDevolver={setShowDevolver}
+          />
+        )}
       </div>
 
       {selected && selectedCert && (

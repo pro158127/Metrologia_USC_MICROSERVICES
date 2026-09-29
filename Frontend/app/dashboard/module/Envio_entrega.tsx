@@ -26,15 +26,10 @@ import {
 } from "@/app/action_module/envios";
 import { generarUrlArchivo } from "@/app/action_module/archivos";
 
-const ESTADOS_ENVIO = [
-  "Certificado_en_revisión",
-  "Certificado_aprobado",
-  "Certificado_enviado",
-] as const;
+const ESTADOS_ENVIO = ["Certificado_en_revisión", "Certificado_enviado"] as const;
 
 const ESTADO_BADGE: Record<string, string> = {
   "Certificado_en_revisión": "bg-amber-50 text-amber-700 border-amber-200",
-  Certificado_aprobado: "bg-emerald-50 text-emerald-700 border-emerald-200",
   Certificado_enviado: "bg-indigo-50 text-indigo-700 border-indigo-200",
 };
 

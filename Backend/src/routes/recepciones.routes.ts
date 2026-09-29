@@ -26,7 +26,7 @@ import {
 type InstrumentoInput = InstrumentoRecepcionInput;
 
 const REC_INCLUDE = {
-  recepcion_equipo_detalles: true,
+  recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
   documentos: true,
   cotizaciones: { include: { clientes: true } },
   ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
@@ -98,7 +98,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     async () => {
       const recepciones = await fastify.prisma.recepciones_equipo.findMany({
         include: {
-          recepcion_equipo_detalles: true,
+          recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
           cotizaciones: { include: { clientes: true } },
           ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
           documentos: true,
@@ -150,7 +150,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         await fastify.prisma.$transaction([
           fastify.prisma.recepciones_equipo.findMany({
             include: {
-              recepcion_equipo_detalles: true,
+              recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
               cotizaciones: { include: { clientes: true } },
               ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
               documentos: true,
@@ -260,7 +260,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                   MODELO: inst.modelo ?? null,
                   SERIE: inst.serie ?? null,
                   CODIGO_INVENTARIO: inst.codigoInventario ?? null,
-                  asignado: 1,
+                  asignado: null,
                   activacion: true,
                 })),
               },
@@ -410,6 +410,8 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             where: { ID_ORDEN_TRABAJO_FK: actual.ID_ORDEN_TRABAJO_FK },
           });
 
+          let otCambio = false;
+
           for (let i = 0; i < body.instrumentos.length; i++) {
             const inst = body.instrumentos[i];
             const item = i + 1;
@@ -418,31 +420,51 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               otDetalles.find((d) => d.INSTRUMENTO === inst.instrumento);
 
             if (otDet) {
-              await tx.orden_trabajo_detalles.update({
-                where: { ID_DETALLE: otDet.ID_DETALLE },
-                data: {
-                  ITEM: item,
-                  INSTRUMENTO: inst.instrumento,
-                  FABRICANTE: inst.marca ?? null,
-                  MODELO: inst.modelo ?? null,
-                  SERIE: inst.serie ?? null,
-                  CODIGO_INVENTARIO: inst.codigoInventario ?? null,
-                  activacion: true,
-                },
-              });
+              const marca = inst.marca ?? null;
+              const modelo = inst.modelo ?? null;
+              const serie = inst.serie ?? null;
+              const codigoInventario = inst.codigoInventario ?? null;
+
+              const cambio =
+                otDet.ITEM !== item ||
+                otDet.INSTRUMENTO !== inst.instrumento ||
+                otDet.FABRICANTE !== marca ||
+                otDet.MODELO !== modelo ||
+                otDet.SERIE !== serie ||
+                otDet.CODIGO_INVENTARIO !== codigoInventario ||
+                otDet.activacion === false;
+
+              if (cambio) {
+                otCambio = true;
+                await tx.orden_trabajo_detalles.update({
+                  where: { ID_DETALLE: otDet.ID_DETALLE },
+                  data: {
+                    ITEM: item,
+                    INSTRUMENTO: inst.instrumento,
+                    FABRICANTE: marca,
+                    MODELO: modelo,
+                    SERIE: serie,
+                    CODIGO_INVENTARIO: codigoInventario,
+                    activacion: true,
+                  },
+                });
+              }
             }
           }
 
-          const otActual = await tx.ordenes_trabajo.findUnique({
-            where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
-            select: { CODIGO_OT: true },
-          });
-          if (otActual) {
-            const nuevoCodigoOT = await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT);
-            await tx.ordenes_trabajo.update({
+          // Solo se versiona el consecutivo de la OT si sus datos cambiaron.
+          if (otCambio) {
+            const otActual = await tx.ordenes_trabajo.findUnique({
               where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
-              data: { CODIGO_OT: nuevoCodigoOT },
+              select: { CODIGO_OT: true },
             });
+            if (otActual) {
+              const nuevoCodigoOT = await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT);
+              await tx.ordenes_trabajo.update({
+                where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
+                data: { CODIGO_OT: nuevoCodigoOT },
+              });
+            }
           }
 
           await evaluarTransicionesOT(tx, actual.ID_ORDEN_TRABAJO_FK);

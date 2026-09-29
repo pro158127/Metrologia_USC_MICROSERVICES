@@ -719,7 +719,6 @@ const QuotationListTable = ({
 const QuotationDetailView = ({
   selectedQuotation,
   openVersionModal,
-  showToast,
   setSelectedQuotation,
   historialitems,
   formatCurrency,
@@ -741,9 +740,6 @@ const QuotationDetailView = ({
           </button>
           <button type="button" onClick={openVersionModal} className="rounded-xl bg-[#5680F9] px-3 py-2 text-xs font-bold text-white hover:bg-[#4069E2] transition-colors shadow-sm shadow-[#5680F9]/10">
             Generar nueva versión
-          </button>
-          <button type="button" onClick={() => showToast(`✅ PDF generado para ${selectedQuotation.codigo}`)} className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 transition-colors">
-            Generar PDF
           </button>
           <button type="button" onClick={() => setSelectedQuotation(null)} className="rounded-xl bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 transition-colors">
             Cerrar visualización
@@ -1518,7 +1514,6 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
             onopentable={()=>setOpenTable(true)}
               selectedQuotation={selectedQuotation}
               openVersionModal={openVersionModal}
-              showToast={showToast}
               setSelectedQuotation={setSelectedQuotation}
               formatCurrency={formatCurrency}
               historialitems={historialFormateado}

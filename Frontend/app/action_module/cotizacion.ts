@@ -6,7 +6,6 @@ import { CotizacionModel } from "@/tipos/entidades";
 import type {
   CotizacionConDetalles,
   CrearCotizacionInput,
-  ActualizarCotizacionInput,
   ObtenerCotizacionesParams,
 } from "@/tipos/cotizacion";
 import type { ActionResponse } from "@/tipos/comunes";
@@ -15,7 +14,9 @@ import { fastifyRequest, FastifyHttpError } from "@/app/lib/api/fastifyClient";
 // ==========================================
 // VALIDACIÓN DE PERMISOS (sin cambios)
 // ==========================================
-async function validarPermiso(accion: 'consultar' | 'desactivar' | 'crear_editar' | 'ver_historial') {
+async function validarPermiso(
+  accion: 'consultar' | 'desactivar' | 'crear_editar' | 'ver_historial' | 'aprobar_rechazar'
+) {
   const session = await auth();
   if (!session?.user) {
     return { autorizado: false, error: 'No autenticado' };
@@ -86,7 +87,29 @@ export async function obtenerCotizacionPorId(
 // ==========================================
 // ACTUALIZAR COTIZACIÓN (sin cambios)
 // ==========================================
-import {ActualizarCotizacionBody} from "backend/src/routes/cotizaciones.schemas"
+export interface ActualizarCotizacionBody {
+  idCotizacion: number;
+  codigo?: string;
+  idCliente?: number;
+  estado?: Estados;
+  viaticos?: number;
+  descuento?: number;
+  detalles?: Array<{
+    idDetalle?: number;
+    equipoDescripcion: string;
+    tipoServicio: string;
+    magnitud: string;
+    normaTecnica?: string | null;
+    cantidad: number;
+    valorUnitario: number;
+  }>;
+  cambios: {
+    descripcion: string;
+    aprobo: string;
+    observaciones?: string | null;
+  };
+}
+
 export async function actualizarCotizacion(
   data: ActualizarCotizacionBody
 ): Promise<ActionResponse<CotizacionConDetalles>> {
@@ -121,7 +144,7 @@ export async function cambiarEstadoCotizacion(
   idCotizacion: number,
   nuevoEstado: Estados
 ): Promise<ActionResponse<CotizacionConDetalles>> {
-  const perm = await validarPermiso('crear_editar');
+  const perm = await validarPermiso('aprobar_rechazar');
   if (!perm.autorizado) return { ok: false, error: perm.error };
 
   const session = await auth();

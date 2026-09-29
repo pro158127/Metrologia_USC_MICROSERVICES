@@ -18,30 +18,6 @@ export async function getMisInstrumentos(): Promise<InstrumentoAsignado[]> {
   }
 }
 
-export interface GuardarDatosCalibracionResult {
-  ok: boolean;
-  error?: string;
-}
-
-/** Guarda/actualiza los datos técnicos (JSON) de la calibración. */
-export async function guardarDatosCalibracion(
-  idInstrumento: number,
-  datosTecnicos: Record<string, unknown>,
-  observaciones?: string
-): Promise<GuardarDatosCalibracionResult> {
-  try {
-    const session = await auth();
-    await fastifyRequest(session, `/api/v1/calibraciones/${idInstrumento}`, {
-      method: 'PUT',
-      body: { datosTecnicos, observaciones },
-    });
-    return { ok: true };
-  } catch (error) {
-    console.error('Error al guardar datos de calibración:', error);
-    return { ok: false, error: (error as Error).message };
-  }
-}
-
 export interface SubirCertificadoResult {
   ok: boolean;
   error?: string;
@@ -49,23 +25,18 @@ export interface SubirCertificadoResult {
   rutaUrl?: string;
 }
 
-/** Sube el PDF del certificado y registra documento/versión/certificado. */
+/**
+ * Sube el PDF del técnico. Ese mismo PDF es el que el worker sellará al aprobar
+ * el certificado.
+ */
 export async function subirCertificadoCalibracion(
   idInstrumento: number,
-  file: File,
-  meta?: {
-    datosTecnicos?: Record<string, unknown>;
-    observaciones?: string;
-    estampilla?: string;
-  }
+  file: File
 ): Promise<SubirCertificadoResult> {
   try {
     const session = await auth();
     const form = new FormData();
     form.append('certificado', file, file.name);
-    if (meta?.datosTecnicos) form.append('datosTecnicos', JSON.stringify(meta.datosTecnicos));
-    if (meta?.observaciones) form.append('observaciones', meta.observaciones);
-    if (meta?.estampilla) form.append('estampilla', meta.estampilla);
 
     const res = await fastifyRequest<{
       ok: boolean;

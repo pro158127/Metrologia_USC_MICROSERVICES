@@ -1078,8 +1078,8 @@ useEffect(() => {
           ibcD_out: estadoIBC?.salida?.D ?? null,
           ibcA_out: estadoIBC?.salida?.A ?? null,
           
-          sensorInt: false,
-          sensorExt: false,
+          sensorInt: det.sensorInt ?? false,
+          sensorExt: det.sensorExt ?? false,
           estampilla: det.estampilla || "",
           observaciones: det.observaciones || "",
           verificadoExcel: true,

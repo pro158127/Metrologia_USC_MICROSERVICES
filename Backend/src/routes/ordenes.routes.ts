@@ -81,7 +81,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           include: {
             clientes: true,
             cotizaciones: { include: { clientes: true } },
-            orden_trabajo_detalles: true,
+            orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
           },
           orderBy: { CREATED_AT: 'desc' },
         }),
@@ -133,6 +133,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
       try {
         let quoteJobId: string | undefined;
         let codigoOT: string | undefined;
+        let estadoFinal: string | undefined;
 
         // 1. Transacción para garantizar integridad de BD
         await fastify.prisma.$transaction(async (tx) => {
@@ -151,69 +152,114 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
 
           codigoOT = otActualizada.CODIGO_OT;
 
-          // B. Procesar Instrumentos (Upsert) y Sincronizar Recepciones
-          for (const inst of data.instrumentos) {
-            // Actualizamos el detalle de la OT
-            if (inst.idDetalle) {
-              // Guard Clause: bloquear asignación de técnico si la OT no está en recepción.
-              const detalleActual = await tx.orden_trabajo_detalles.findUnique({
-                where: { ID_DETALLE: inst.idDetalle },
-                select: { asignado: true },
-              });
-              const tecnicoCambia =
-                detalleActual != null && Number(inst.asignado) !== detalleActual.asignado;
+          // Recepción asociada a la misma cotización (si existe)
+          const recepcionAsociada = otActualizada.ID_COTIZACION_FK
+            ? await tx.recepciones_equipo.findFirst({
+                where: { ID_COTIZACION_FK: otActualizada.ID_COTIZACION_FK },
+              })
+            : null;
 
+          const existentes = await tx.orden_trabajo_detalles.findMany({
+            where: { ID_ORDEN_TRABAJO_FK: id },
+          });
+          const usados = new Set<number>();
+
+          // B. Procesar Instrumentos (crear / actualizar) y Sincronizar Recepción
+          for (const inst of data.instrumentos) {
+            const asignadoFinal = Number(inst.asignado) > 0 ? Number(inst.asignado) : null;
+
+            const campos = {
+              ITEM: inst.item,
+              TIPO_SERVICIO: inst.tipoServicio,
+              INSTRUMENTO: inst.instrumento,
+              FABRICANTE: inst.fabricante,
+              MODELO: inst.modelo,
+              SERIE: inst.serie,
+              CODIGO_INVENTARIO: inst.codigoInventario,
+              UBICACION: inst.ubicacion,
+              PUNTOS_CALIBRAR: inst.puntosCalibrar ?? [],
+              UNIDAD: inst.unidad ?? null,
+              INTERVALO_RANGO: inst.intervaloRango ?? null,
+              RESOLUCION: inst.resolucion ?? null,
+              DECLARACION_CONFORMIDAD: inst.declaracionConformidad,
+              LIMITE_CONTROL_EMC: inst.limiteControlEMC ?? null,
+              DOC_ESPECIFICACION: inst.docEspecificacion ?? null,
+              REGLA_DECISION: inst.reglaDecision ?? null,
+              asignado: asignadoFinal,
+              activacion: true,
+            };
+
+            if (inst.idDetalle) {
+              // Guard Clause: bloquear cambio de técnico si la OT no está en recepción.
+              const detalleActual = existentes.find((d) => d.ID_DETALLE === inst.idDetalle);
+              const tecnicoCambia =
+                detalleActual != null && asignadoFinal !== detalleActual.asignado;
               if (tecnicoCambia) {
                 validarAsignacionPermitida(otActualizada.estado);
               }
 
               await tx.orden_trabajo_detalles.update({
                 where: { ID_DETALLE: inst.idDetalle },
-                data: {
-                  INSTRUMENTO: inst.instrumento,
-                  FABRICANTE: inst.fabricante,
-                  MODELO: inst.modelo,
-                  SERIE: inst.serie,
-                  CODIGO_INVENTARIO: inst.codigoInventario,
-                  asignado: inst.asignado,
-                  PUNTOS_CALIBRAR: inst.puntosCalibrar ?? [],
-                },
+                data: campos,
               });
+              usados.add(inst.idDetalle);
+            } else {
+              // Instrumento nuevo agregado en el formulario de la OT
+              const nuevo = await tx.orden_trabajo_detalles.create({
+                data: { ID_ORDEN_TRABAJO_FK: id, ...campos },
+              });
+              usados.add(nuevo.ID_DETALLE);
             }
 
-            // C. Sincronización Espejo con Recepciones (Homologación de campos)
-            // Buscamos la recepción asociada a la misma cotización de esta OT
-            if (otActualizada.ID_COTIZACION_FK) {
-              const recepcionAsociada = await tx.recepciones_equipo.findFirst({
-                where: { ID_COTIZACION_FK: otActualizada.ID_COTIZACION_FK }
+            // C. Sincronización Espejo con Recepción (crear si no existe)
+            if (recepcionAsociada) {
+              const recDet = await tx.recepcion_equipo_detalles.findFirst({
+                where: {
+                  ID_RECEPCION_FK: recepcionAsociada.ID_RECEPCION,
+                  OR: [
+                    { ITEM: inst.item },
+                    { ITEM: null, INSTRUMENTO: inst.instrumento },
+                  ],
+                },
               });
 
-              if (recepcionAsociada) {
-                // Actualizamos el instrumento en la recepción. Se correlaciona por ITEM
-                // y se hace backfill de ITEM para registros heredados (ITEM null).
-                await tx.recepcion_equipo_detalles.updateMany({
-                  where: {
-                    ID_RECEPCION_FK: recepcionAsociada.ID_RECEPCION,
-                    OR: [
-                      { ITEM: inst.item },
-                      { ITEM: null, INSTRUMENTO: inst.instrumento },
-                    ],
-                  },
-                  data: {
-                    ITEM: inst.item,
-                    INSTRUMENTO: inst.instrumento,
-                    MARCA: inst.fabricante, // Homologación: Fabricante (OT) -> Marca (Recepción)
-                    MODELO: inst.modelo,
-                    SERIE: inst.serie,
-                    CODIGO_INVENTARIO: inst.codigoInventario
-                  }
+              const mirrorData = {
+                ITEM: inst.item,
+                INSTRUMENTO: inst.instrumento,
+                MARCA: inst.fabricante,
+                MODELO: inst.modelo,
+                SERIE: inst.serie,
+                CODIGO_INVENTARIO: inst.codigoInventario,
+                RESOLUCION: inst.resolucion ?? null,
+                activacion: true,
+              };
+
+              if (recDet) {
+                await tx.recepcion_equipo_detalles.update({
+                  where: { ID_INSTRUMENTO: recDet.ID_INSTRUMENTO },
+                  data: mirrorData,
+                });
+              } else {
+                await tx.recepcion_equipo_detalles.create({
+                  data: { ID_RECEPCION_FK: recepcionAsociada.ID_RECEPCION, ...mirrorData },
                 });
               }
             }
           }
 
-          // C. Recalcular el estado automático de la OT (FSM) tras aplicar los cambios.
-          await evaluarTransicionesOT(tx, id);
+          // D. Soft delete (activacion=false) de instrumentos removidos en la OT
+          for (const d of existentes) {
+            if (!usados.has(d.ID_DETALLE) && d.activacion !== false) {
+              await tx.orden_trabajo_detalles.update({
+                where: { ID_DETALLE: d.ID_DETALLE },
+                data: { activacion: false },
+              });
+            }
+          }
+
+          // E. Recalcular el estado automático de la OT (FSM) tras aplicar los cambios.
+          const fsm = await evaluarTransicionesOT(tx, id);
+          estadoFinal = fsm.estadoNuevo;
 
           // 2. Registrar el tracker de generación documental (dentro de la tx)
           const quoteJob = await tx.quote.create({ data: { status: 'PENDING' } });
@@ -233,7 +279,8 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
         return reply.code(200).send({ 
           ok: true, 
           message: 'Orden consolidada y encolada para generación documental',
-          id_job: quoteJobId 
+          id_job: quoteJobId,
+          estado: estadoFinal,
         });
 
       } catch (error) {

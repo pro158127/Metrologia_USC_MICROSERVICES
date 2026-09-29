@@ -18,3 +18,34 @@ export async function generarUrlArchivo(s3Key: string): Promise<string | null> {
     return null;
   }
 }
+
+export interface SubirArchivoResult {
+  ok: boolean;
+  rutaUrl?: string;
+  error?: string;
+}
+
+/** Sube un archivo a MinIO (con autenticación) y devuelve su key. */
+export async function subirArchivoDocumento(
+  file: File,
+  nombreArchivo?: string
+): Promise<SubirArchivoResult> {
+  try {
+    const session = await auth();
+    const form = new FormData();
+    form.append('file', file, file.name);
+    if (nombreArchivo) form.append('nombreArchivo', nombreArchivo);
+
+    const res = await fastifyRequest<{
+      rutaUrl?: string;
+      url?: string;
+      data?: { rutaUrl?: string };
+    }>(session, '/api/v1/documentos/upload', { method: 'POST', body: form });
+
+    const rutaUrl = res.rutaUrl ?? res.url ?? res.data?.rutaUrl;
+    return { ok: true, rutaUrl };
+  } catch (error) {
+    console.error('Error al subir archivo:', error);
+    return { ok: false, error: (error as Error).message };
+  }
+}

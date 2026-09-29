@@ -22,7 +22,6 @@ import {
   Instrument,
   Warning,
   EstadoOrden,
-  MachineAssignmentsMap,
   TarifaOptionBase,
   ToastNotificationProps,
   HeaderSectionProps,
@@ -1292,12 +1291,6 @@ export const OrdenesTrabajo = () => {
   const [orderDraft, setOrderDraft] = useState<EditableOrderFields | null>(null);
   // Instrumentos editables en la tabla
   const [instrumentDrafts, setInstrumentDrafts] = useState<Instrument[]>(defaultInstrumentos);
-  // Técnicos asignados
-  const [assignedTechnicians, setAssignedTechnicians] = useState<string[]>([]);
-  // Máquinas seleccionadas
-  const [assignedMachines, setAssignedMachines] = useState<string[]>([]);
-  // Mapeo de máquina -> técnicos (cantidad + metrólogos)
-  const [machineAssignments, setMachineAssignments] = useState<MachineAssignmentsMap>({});
   // Mensaje toast temporal
   const [toast, setToast] = useState("");
 
@@ -1349,7 +1342,7 @@ export const OrdenesTrabajo = () => {
 
 const instrumentos_cot = useMemo(() => {
     return instrumentDrafts.map((inst) => ({
-      asignado: inst.asignado,
+      asignado: inst.asignado ?? 0,
       // Usamos directamente el ID del draft (que es un string seguro)
       id_instrumento: inst.id, 
       instrumento: inst.instrumento,
@@ -1457,9 +1450,6 @@ const instrumentos_cot = useMemo(() => {
     setEditingTechnician(false);
     setOrderDraft(buildOrderDraft(otCompleto));
     setInstrumentDrafts(instrumentosMapeados);
-    setAssignedTechnicians(otCompleta.responsable ? [otCompleta.responsable] : []);
-    setAssignedMachines([]);
-    setMachineAssignments({});
     setActiveMachine(null);
   };
 
@@ -1535,8 +1525,14 @@ const saveOrderEdits = async () => {
           codigoInventario: inst.codigoInventario ?? null,
           ubicacion: inst.ubicacion ?? null,
           puntosCalibrar: inst.puntosCalibrar,
-          asignado: Number(inst.asignado),
+          unidad: inst.unidad ?? null,
+          intervaloRango: inst.intervaloRango ?? null,
+          resolucion: inst.resolucion ?? null,
           declaracionConformidad: inst.declaracionConformidad,
+          limiteControlEMC: inst.limiteControlEMC ?? null,
+          docEspecificacion: inst.docEspecificacion ?? null,
+          reglaDecision: inst.reglaDecision ?? null,
+          asignado: Number(inst.asignado),
         })),
       };
 
@@ -1547,17 +1543,16 @@ const saveOrderEdits = async () => {
         throw new Error(response.error || "Fallo en la consolidación del servidor");
       }
 
-      // 🟢 4. Actualización del Estado Local
+      // 🟢 4. Actualización del Estado Local (usando el estado calculado por la FSM)
       const updatedOT: OTType = {
         ...selectedOT,
         ...orderDraft,
-        estado: orderDraft.estadoOrden as EstadoOrden,
+        estado: (response.estado as EstadoOrden) ?? (orderDraft.estadoOrden as EstadoOrden),
         tecnico: orderDraft.responsableUsc,
         instrumentos: instrumentDrafts,
       };
       
       setSelectedOT(updatedOT);
-      setAssignedTechnicians([orderDraft.responsableUsc]);
       setEditingOrder(false);
       showToast(`✅ Orden R-CM05 Consolidada. Job documental en curso (${response.id_job})`);
 
@@ -1565,23 +1560,6 @@ const saveOrderEdits = async () => {
       console.error(error);
       showToast(`❌ ${error.message}`);
     }
-  };
-  const assignTechnician = () => {
-    if (!selectedOT) return;
-    setSelectedOT({
-      ...selectedOT,
-      tecnico:
-        assignedTechnicians.length === 1
-          ? assignedTechnicians[0]
-          : assignedTechnicians.length > 1
-          ? "Múltiples técnicos"
-          : selectedOT.tecnico,
-      tecnicos: assignedTechnicians,
-      maquinas: assignedMachines,
-      asignaciones: machineAssignments,
-    });
-    setEditingTechnician(false);
-    showToast(`✅ Asignación física consolidada en el laboratorio.`);
   };
 
   const showToast = (msg: string) => {

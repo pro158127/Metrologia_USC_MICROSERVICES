@@ -431,17 +431,17 @@ export const CalibracionInformes: React.FC = () => {
   const ejecutarSubidaCertificado = useCallback(async () => {
     if (!selectedInstrumento || !selectedFile) return;
 
-    const idInstrumento =
-      selectedInstrumento.idInstrumento ?? Number(selectedInstrumento.id);
+    // El endpoint espera el ID de detalle de recepción (ID_INSTRUMENTO).
+    const idInstrumento = selectedInstrumento.idInstrumento;
     if (!idInstrumento || Number.isNaN(idInstrumento)) {
-      showToast("❌ No se pudo identificar el instrumento asignado.");
+      showToast("❌ No se pudo identificar el instrumento de recepción asignado.");
       return;
     }
 
+    const estampillaMostrada = selectedInstrumento.estampilla;
+
     setSubiendo(true);
-    const res = await subirCertificadoCalibracion(idInstrumento, selectedFile, {
-      estampilla: selectedInstrumento.estampilla !== "—" ? selectedInstrumento.estampilla : undefined,
-    });
+    const res = await subirCertificadoCalibracion(idInstrumento, selectedFile);
     setSubiendo(false);
 
     if (!res.ok) {
@@ -464,7 +464,7 @@ export const CalibracionInformes: React.FC = () => {
       )
     );
 
-    showToast(`✅ Certificado vinculado a la estampilla ${selectedInstrumento.estampilla}`);
+    showToast(`✅ PDF vinculado al instrumento ${estampillaMostrada}`);
     setSelectedFile(null);
     setSelectedInstrumento(null);
   }, [selectedInstrumento, selectedFile, showToast]);
@@ -545,7 +545,10 @@ export const CalibracionInformes: React.FC = () => {
                 key={ins.id}
                 instrumento={ins}
                 isSelected={selectedInstrumento?.id === ins.id}
-                onSelect={setSelectedInstrumento}
+                onSelect={(ins) => {
+                  setSelectedInstrumento(ins);
+                  setSelectedFile(null);
+                }}
                 obtenerBadgeEstado={obtenerBadgeEstado}
               />
             ))}

@@ -1,5 +1,4 @@
 import { FastifyInstance } from 'fastify';
-import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
@@ -21,16 +20,36 @@ function sanitizeFileName(fileName: string): string {
   return `${cleanBase}${extension}`;
 }
 
-function parseJsonField(value: unknown): Prisma.InputJsonValue {
-  if (value == null) return {};
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as Prisma.InputJsonValue;
-    } catch {
-      return { raw: value };
-    }
+/**
+ * Carga el detalle de recepción con su OT y valida que el instrumento esté
+ * asignado al técnico autenticado. Lanza 403 si no lo está.
+ */
+async function cargarDetalleAsignado(
+  fastify: FastifyInstance,
+  idInstrumento: number,
+  idUsuario: number
+) {
+  const detalle = await fastify.prisma.recepcion_equipo_detalles.findUnique({
+    where: { ID_INSTRUMENTO: idInstrumento },
+    include: {
+      recepciones_equipo: {
+        include: { ordenes_trabajo: { include: { orden_trabajo_detalles: true } } },
+      },
+    },
+  });
+  if (!detalle) throw new AppError(404, 'Instrumento no encontrado en recepción');
+
+  const ot = detalle.recepciones_equipo?.ordenes_trabajo ?? null;
+  const otDet =
+    ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle.ITEM) ??
+    ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle.INSTRUMENTO) ??
+    null;
+
+  if (!otDet || otDet.asignado !== idUsuario) {
+    throw new AppError(403, 'El instrumento no está asignado a este técnico.');
   }
-  return value as Prisma.InputJsonValue;
+
+  return { detalle, ot };
 }
 
 export default async function calibracionesRoutes(fastify: FastifyInstance) {
@@ -129,57 +148,9 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
   );
 
   // ==========================================================================
-  // PUT /api/v1/calibraciones/:idInstrumento
-  // Guarda/actualiza los datos técnicos de la calibración (JSON).
-  // ==========================================================================
-  app.put(
-    '/api/v1/calibraciones/:idInstrumento',
-    {
-      preHandler: [fastify.authenticate],
-      schema: {
-        params: idInstrumentoParamsSchema,
-        body: z.object({
-          datosTecnicos: z.record(z.string(), z.unknown()).optional(),
-          observaciones: z.string().nullish(),
-        }),
-      },
-    },
-    async (request) => {
-      const idInstrumento = request.params.idInstrumento;
-      const idUsuario = Number(request.user?.sub ?? 0);
-
-      const detalle = await fastify.prisma.recepcion_equipo_detalles.findUnique({
-        where: { ID_INSTRUMENTO: idInstrumento },
-        include: { recepciones_equipo: { include: { ordenes_trabajo: true } } },
-      });
-      if (!detalle) throw new AppError(404, 'Instrumento no encontrado en recepción');
-
-      const calibracion = await fastify.prisma.calibraciones.upsert({
-        where: { ID_INSTRUMENTO_FK: idInstrumento },
-        update: {
-          ID_TECNICO_FK: idUsuario,
-          DATOS_TECNICOS_JSON: (request.body.datosTecnicos ?? {}) as Prisma.InputJsonValue,
-          OBSERVACIONES: request.body.observaciones ?? null,
-        },
-        create: {
-          ID_INSTRUMENTO_FK: idInstrumento,
-          ID_TECNICO_FK: idUsuario,
-          DATOS_TECNICOS_JSON: (request.body.datosTecnicos ?? {}) as Prisma.InputJsonValue,
-          OBSERVACIONES: request.body.observaciones ?? null,
-        },
-      });
-
-      const ot = detalle.recepciones_equipo?.ordenes_trabajo;
-      if (ot) await evaluarTransicionesOT(fastify.prisma, ot.ID_ORDEN_TRABAJO);
-
-      return { ok: true as const, data: { idCalibracion: calibracion.ID_CALIBRACION } };
-    }
-  );
-
-  // ==========================================================================
   // POST /api/v1/calibraciones/:idInstrumento/certificado (multipart)
-  // Sube el PDF del certificado, registra documento/versión y crea el
-  // certificado en estado PENDIENTE_REVISION.
+  // Sube el PDF del técnico (que el worker sellará), registra documento/versión
+  // y crea el certificado en estado PENDIENTE_REVISION.
   // ==========================================================================
   app.post(
     '/api/v1/calibraciones/:idInstrumento/certificado',
@@ -199,41 +170,21 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
         throw new AppError(415, 'El certificado debe ser un archivo PDF');
       }
 
-      const fields = (data.fields ?? {}) as Record<string, { value?: unknown }>;
-      const datosTecnicos = parseJsonField(fields.datosTecnicos?.value);
-      const observaciones = (fields.observaciones?.value as string | undefined) ?? null;
-      const estampillaField = (fields.estampilla?.value as string | undefined) ?? null;
+      const { detalle: detalleRecepcion, ot } = await cargarDetalleAsignado(
+        fastify,
+        idInstrumento,
+        idUsuario
+      );
+      const recepcion = detalleRecepcion.recepciones_equipo;
 
-      const detalle = await fastify.prisma.recepcion_equipo_detalles.findUnique({
-        where: { ID_INSTRUMENTO: idInstrumento },
-        include: { recepciones_equipo: { include: { ordenes_trabajo: true } } },
-      });
-      if (!detalle) throw new AppError(404, 'Instrumento no encontrado en recepción');
-
-      const recepcion = detalle.recepciones_equipo;
-      const ot = recepcion?.ordenes_trabajo ?? null;
-
-      // Estampilla opcional (dispara la FSM a En_calibración)
-      if (estampillaField && estampillaField.trim() !== '') {
-        await fastify.prisma.recepcion_equipo_detalles.update({
-          where: { ID_INSTRUMENTO: idInstrumento },
-          data: { ESTAMPILLA: estampillaField.trim() },
-        });
-      }
-
-      // 1. Upsert calibración
+      // 1. Upsert calibración (solo el PDF; sin datos técnicos).
       const calibracion = await fastify.prisma.calibraciones.upsert({
         where: { ID_INSTRUMENTO_FK: idInstrumento },
-        update: {
-          ID_TECNICO_FK: idUsuario,
-          DATOS_TECNICOS_JSON: datosTecnicos,
-          OBSERVACIONES: observaciones,
-        },
+        update: { ID_TECNICO_FK: idUsuario },
         create: {
           ID_INSTRUMENTO_FK: idInstrumento,
           ID_TECNICO_FK: idUsuario,
-          DATOS_TECNICOS_JSON: datosTecnicos,
-          OBSERVACIONES: observaciones,
+          DATOS_TECNICOS_JSON: {},
         },
       });
 
@@ -297,7 +248,7 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
             content_json: { pdf: key },
           },
         });
-        const codigo = `CERT-${ot?.CODIGO_OT ?? 'SIN-OT'}-${detalle.ITEM ?? idInstrumento}`;
+        const codigo = `CERT-${ot?.CODIGO_OT ?? 'SIN-OT'}-${detalleRecepcion.ITEM ?? idInstrumento}`;
         const nuevoCert = await tx.certificados.create({
           data: {
             CODIGO_CERTIFICADO: codigo,

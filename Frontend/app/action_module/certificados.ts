@@ -48,6 +48,8 @@ export interface CertificadoRevisionItem {
   estadoRevision: string;
   motivoRechazo: string | null;
   idDocumento: number;
+  rutaUrl: string | null;
+  mimeType: string;
   idPlantillaSello: number | null;
   idCalibracion: number;
   idInstrumento: number | null;

@@ -192,14 +192,14 @@ model orden_trabajo_detalles {
   UNIDAD                  String?
   INTERVALO_RANGO         String?
   RESOLUCION              String?
-  asignado                Int
+  asignado                Int?
   DECLARACION_CONFORMIDAD Boolean         @default(false)
   LIMITE_CONTROL_EMC      String?
   DOC_ESPECIFICACION      String?
   REGLA_DECISION          String?
     activacion      Boolean?
   ordenes_trabajo         ordenes_trabajo @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO], onDelete: Cascade)
-  usuarios                usuarios        @relation(fields: [asignado], references: [ID_USUARIO_AUTO_INCREMENT], onDelete: Cascade)
+  usuarios                usuarios?       @relation(fields: [asignado], references: [ID_USUARIO_AUTO_INCREMENT], onDelete: Cascade)
 }
 model ordenes_trabajo {
   // ---------------------------------------------------------

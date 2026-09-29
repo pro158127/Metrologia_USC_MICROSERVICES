@@ -167,4 +167,77 @@ export async function composeCertificate(params: ComposeParams): Promise<Compose
   return { bytes, pageCount: totalPages, pages: pagesInfo };
 }
 
-export const pdfStamperService = { composeCertificate };
+/**
+ * Sella un documento tomando el PDF del técnico como BASE y superponiendo el
+ * sello/marca de agua (imagen o PDF) sobre las áreas indicadas.
+ */
+export async function stampDocumentWithSeal(params: {
+  documentBytes: Uint8Array | ArrayBuffer;
+  sealBytes?: Uint8Array | ArrayBuffer | null;
+  areas?: WatermarkAreaDTO[];
+  defaultOpacity?: number;
+}): Promise<ComposeResult> {
+  const { documentBytes, sealBytes, areas = [], defaultOpacity = 0.85 } = params;
+
+  if (!documentBytes) {
+    throw new AppError(400, 'Falta el documento del certificado para sellar.');
+  }
+
+  const outDoc = await PDFDocument.load(documentBytes, {
+    ignoreEncryption: true,
+    updateMetadata: false,
+  });
+
+  const totalPages = outDoc.getPageCount();
+  const pagesInfo: GeneratedPageInfo[] = [];
+
+  // Preparar el sello una sola vez (imagen embebida o página PDF).
+  let embeddedImage: Awaited<ReturnType<PDFDocument['embedPng']>> | null = null;
+  let sealEmbeddedPage: Awaited<ReturnType<PDFDocument['embedPdf']>>[number] | null = null;
+
+  if (sealBytes && areas.length > 0) {
+    const sealArr = sealBytes instanceof Uint8Array ? sealBytes : new Uint8Array(sealBytes);
+    const imageType = isImageBuffer(sealArr);
+    if (imageType) {
+      embeddedImage =
+        imageType === 'png' ? await outDoc.embedPng(sealArr) : await outDoc.embedJpg(sealArr);
+    } else {
+      const sealDoc = await PDFDocument.load(sealArr, { ignoreEncryption: true });
+      const [page] = await outDoc.embedPdf(sealDoc, [0]);
+      sealEmbeddedPage = page;
+    }
+  }
+
+  for (let i = 0; i < totalPages; i++) {
+    const page = outDoc.getPage(i);
+    const { width: pageWidth, height: pageHeight } = page.getSize();
+
+    if (embeddedImage || sealEmbeddedPage) {
+      for (const area of areas) {
+        const box = domToPdf(area.box, pageWidth, pageHeight);
+        const opacity = clamp(area.opacity ?? defaultOpacity, 0.05, 1);
+
+        const srcW = embeddedImage ? embeddedImage.width : sealEmbeddedPage!.width;
+        const srcH = embeddedImage ? embeddedImage.height : sealEmbeddedPage!.height;
+        const scale = Math.min(box.width / srcW, box.height / srcH);
+        const w = srcW * scale;
+        const h = srcH * scale;
+        const x = box.x + (box.width - w) / 2;
+        const y = box.y + (box.height - h) / 2;
+
+        if (embeddedImage) {
+          page.drawImage(embeddedImage, { x, y, width: w, height: h, opacity });
+        } else if (sealEmbeddedPage) {
+          page.drawPage(sealEmbeddedPage, { x, y, width: w, height: h, opacity });
+        }
+      }
+    }
+
+    pagesInfo.push({ pageIndex: i, templatePageIndex: i, documentPageIndex: i });
+  }
+
+  const bytes = await outDoc.save();
+  return { bytes, pageCount: totalPages, pages: pagesInfo };
+}
+
+export const pdfStamperService = { composeCertificate, stampDocumentWithSeal };

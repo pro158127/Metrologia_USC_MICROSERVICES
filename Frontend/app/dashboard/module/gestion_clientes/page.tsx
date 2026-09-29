@@ -19,6 +19,7 @@ import type {
   ClientesModuloProps,
 } from "@/tipos/clientes";
 import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada, crearDocumento, actualizarCliente, cambiarEstadoCliente } from "@/app/action_module/modulo_cliente";
+import { subirArchivoDocumento } from "@/app/action_module/archivos";
 
 const CIUDADES_COLOMBIA = [
   "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena", 
@@ -436,30 +437,15 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
   }, []);
 
   const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit") => {
-    const formData = new FormData();
     let url_ar = "";
     if (mode === "create") {
       if (data.rutFile) {
-        formData.append("file", data.rutFile as Blob);
-      }
-
-      try {
-        const response = await fetch("/api/v1/documentos/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Error HTTP: ${response.status}`);
+        const up = await subirArchivoDocumento(data.rutFile as File);
+        if (!up.ok || !up.rutaUrl) {
+          console.error("Error al subir el archivo:", up.error);
+          return;
         }
-
-        const result = await response.json();
-        console.log("Archivo subido con éxito:", result);
-
-        url_ar = result.rutaUrl || result.url || result.data?.rutaUrl || "";
-      } catch (error) {
-        console.error("Error al subir el archivo:", error);
-        return;
+        url_ar = up.rutaUrl;
       }
 
       console.log("Crear cliente con datos:", data, "Ruta URL:", url_ar);

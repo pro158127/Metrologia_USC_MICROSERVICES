@@ -15,9 +15,10 @@ export type SortField =
 
 export type SortDir = "asc" | "desc";
 
-/** Fila de revisión de certificados (derivada del store). */
+/** Fila de revisión de certificados (derivada del backend). */
 export interface CertificadoRevision {
   idCertificado: number;
+  codigo?: string;
   ot: string;
   estampilla: string;
   cliente: string;
@@ -30,6 +31,8 @@ export interface CertificadoRevision {
   status?: "pendiente" | "aprobado" | "devuelto";
   datosTecnicos?: Record<string, string>;
   motivoRechazo?: string | null;
+  rutaUrl?: string | null;
+  acreditado?: boolean;
 }
 
 export interface ToastNotificationProps {
@@ -37,39 +40,41 @@ export interface ToastNotificationProps {
 }
 
 export interface RejectModalProps {
-  showDevolver: string | null;
+  showDevolver: number | null;
+  label: string;
   motivo: string;
   motivoError: boolean;
   setMotivo: (val: string) => void;
   setMotivoError: (val: boolean) => void;
-  setShowDevolver: (val: string | null) => void;
-  handleDevolver: (ot: string) => void;
+  setShowDevolver: (val: number | null) => void;
+  handleDevolver: (idCertificado: number) => void;
 }
 
 export interface ApproveModalProps {
-  showAprobar: string | null;
-  setShowAprobar: (val: string | null) => void;
-  handleAprobar: (ot: string) => void;
+  showAprobar: number | null;
+  label: string;
+  setShowAprobar: (val: number | null) => void;
+  handleAprobar: (idCertificado: number) => void;
 }
 
 export interface CertificatesTableProps {
   sortedCerts: CertificadoRevision[];
-  selected: string | null;
+  selected: number | null;
   sortField: SortField;
   sortDir: SortDir;
   tienePermisosRevision: boolean;
   handleSort: (field: SortField) => void;
-  setSelected: (ot: string | null) => void;
-  setShowAprobar: (ot: string) => void;
-  setShowDevolver: (ot: string) => void;
+  setSelected: (v: number | null) => void;
+  setShowAprobar: (v: number) => void;
+  setShowDevolver: (v: number) => void;
 }
 
 export interface PDFViewerPanelProps {
   selectedCert: CertificadoRevision;
   tienePermisosRevision: boolean;
-  setSelected: (ot: string | null) => void;
-  setShowAprobar: (ot: string) => void;
-  setShowDevolver: (ot: string) => void;
+  setSelected: (v: number | null) => void;
+  setShowAprobar: (v: number) => void;
+  setShowDevolver: (v: number) => void;
 }
 
 // ============================================================

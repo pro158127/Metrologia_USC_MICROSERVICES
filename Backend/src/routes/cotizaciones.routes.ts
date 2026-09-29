@@ -335,7 +335,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                   ITEM: nuevo.ITEM,
                   INSTRUMENTO: nuevo.INSTRUMENTO,
                   TIPO_SERVICIO: nuevo.TIPO_SERVICIO,
-                  asignado: 1
+                  asignado: null
                 }
               });
             }
@@ -530,6 +530,15 @@ const trackingJobs: Record<string, string> = {};
         const actual = await tx.cotizaciones.findUnique({ where: { ID_COTIZACION: idCotizacion } });
         if (!actual) throw new AppError(404, 'Cotización no encontrada');
 
+        // 1.1 Validar la transición permitida (FSM) — mismo criterio que el PUT.
+        const permitidos = transicionesValidas[actual.ESTADO] || [];
+        if (!permitidos.includes(nuevoEstado)) {
+          throw new AppError(
+            409,
+            `Transición no permitida de ${actual.ESTADO} a ${nuevoEstado}`
+          );
+        }
+
         // 2. Actualizar estado
         const cotizacionActualizada = await tx.cotizaciones.update({
           where: { ID_COTIZACION: idCotizacion },
@@ -579,7 +588,7 @@ const trackingJobs: Record<string, string> = {};
                   ITEM: itemCounter,
                   INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
                   TIPO_SERVICIO: detalle.TIPO_SERVICIO,
-                  asignado: 1 
+                  asignado: null 
                 });
 
                 detallesRec.push({
@@ -624,13 +633,15 @@ const trackingJobs: Record<string, string> = {};
       // 5. DETONAR GENERACIÓN DE EXCEL (BULLMQ)
    const trackingJobs: Record<string, string> = {};
 
-      // 🔥 1. DETONAR TIPO 1 (Siempre, para que el worker valide y envíe el correo)
+      // 🔥 1. DETONAR TIPO 1 (Siempre). El correo de aprobación SOLO se envía
+      // cuando el nuevo estado es APROBADA; otros estados usan una acción neutra
+      // para que el worker regenere el documento sin notificar aprobación.
       const quoteTrackerCot = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
       await excelquue.add('actualizacion_estado_cot', {
         id_job: quoteTrackerCot.id, 
         tipo_entry: 'prod',
         id_registro: resultado.cotizacion.ID_COTIZACION,
-        action: 'aprove', // Mantén la acción que use tu worker para notificar
+        action: resultado.cotizacion.ESTADO === 'APROBADA' ? 'aprove' : 'estado_cambio',
         codigo_actual: resultado.cotizacion.CODIGO_COTIZACION,
         tipo: 1
       });

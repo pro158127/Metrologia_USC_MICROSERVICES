@@ -22,9 +22,25 @@ function sanitizeFileName(fileName: string): string {
 }
 
 export default async function documentosRoutes(fastify: FastifyInstance) {
-  fastify.post('/api/v1/documentos/upload', async (request, reply) => {
+  fastify.post(
+    '/api/v1/documentos/upload',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
     const data = await (request as any).file();
     if (!data) throw new AppError(400, 'No se ha adjuntado ningún archivo');
+
+    const ALLOWED = [
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'application/octet-stream',
+    ];
+    if (!ALLOWED.includes(data.mimetype)) {
+      throw new AppError(415, `Tipo de archivo no permitido: ${data.mimetype}`);
+    }
 
     const buffer = await data.toBuffer();
     const customFileName = (data.fields?.nombreArchivo as any)?.value;
@@ -55,7 +71,10 @@ export default async function documentosRoutes(fastify: FastifyInstance) {
     return reply.code(201).send({ rutaUrl: s3Key });
   });
 
-  fastify.get('/api/v1/documentos/ver/*', async (request, reply) => {
+  fastify.get(
+    '/api/v1/documentos/ver/*',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
     const rutaUrl = (request.params as any)['*'];
 
     if (!rutaUrl) throw new AppError(400, 'Ruta de archivo no proporcionada');

@@ -2,7 +2,12 @@
 // Lógica de generación de certificados PDF desacoplada del ciclo HTTP.
 // Es consumida tanto por el worker asíncrono (producción) como por rutas internas.
 import { PrismaClient } from '@prisma/client';
-import { composeCertificate, AreaBoxDTO, WatermarkAreaDTO } from './pdf-stamper.service.js';
+import {
+  composeCertificate,
+  stampDocumentWithSeal,
+  AreaBoxDTO,
+  WatermarkAreaDTO,
+} from './pdf-stamper.service.js';
 import { getObjectBuffer, uploadBuffer } from '../lib/minioClient.js';
 import type { CertificateComposeJobData } from '../lib/queue/queue.js';
 
@@ -153,15 +158,23 @@ export async function generarCertificadoFinal(
     (wm) => wm && wm.box && wm.box.width > 0 && wm.box.height > 0
   );
 
-  const [templateBuffer, documentBuffer] = await Promise.all([
+  // El PDF del técnico es la BASE y el sello (TEMPLATE_PDF_KEY) se superpone.
+  // Si no hay áreas de marca de agua, se usa DOCUMENT_AREA como área del sello.
+  const areas: WatermarkAreaDTO[] =
+    watermarkAreas.length > 0
+      ? watermarkAreas
+      : [{ id: 'default', box: documentArea, opacity: 0.85 }];
+
+  const [sealBuffer, documentBuffer] = await Promise.all([
     resolvePdfBuffer(plantilla.TEMPLATE_PDF_KEY),
     resolvePdfBuffer(cert.documentos.RUTA_URL),
   ]);
 
-  const result = await composeCertificate({
-    templateBytes: templateBuffer,
+  const result = await stampDocumentWithSeal({
     documentBytes: documentBuffer,
-    layout: { documentArea, watermarkAreas, documentOpacity: 0.88 },
+    sealBytes: sealBuffer,
+    areas,
+    defaultOpacity: 0.85,
   });
 
   const outputName = `${cert.CODIGO_CERTIFICADO}.pdf`;

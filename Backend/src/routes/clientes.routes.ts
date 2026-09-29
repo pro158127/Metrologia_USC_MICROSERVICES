@@ -195,11 +195,18 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
-      await fastify.prisma.clientes.delete({
+      const permisos = request.user?.user?.permissions?.permisos?.clientes;
+      if (!permisos?.desactivar) {
+        throw new AppError(403, 'Sin permisos para desactivar clientes.');
+      }
+
+      // Soft delete: no se elimina físicamente (integridad referencial).
+      await fastify.prisma.clientes.update({
         where: { ID_CLIENTE: request.params.id },
+        data: { status: 'INACTIVO', updatedAt: new Date() },
       });
 
-      return { ok: true as const, message: 'Cliente eliminado correctamente' };
+      return { ok: true as const, message: 'Cliente desactivado correctamente' };
     }
   );
 

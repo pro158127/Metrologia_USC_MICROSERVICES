@@ -16,6 +16,8 @@ export interface RespuestaWorkerJob {
   ok: boolean;
   id_job?: string;
   error?: string;
+  message?: string;
+  estado?: string;
 }
 
 export interface PollingJobStatus {

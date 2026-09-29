@@ -306,27 +306,39 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
   const filteredCotizaciones = useMemo<TrazabilidadCotizacionCard[]>(() => {
     if (!trazabilidad?.cotizaciones) return [];
 
-    return trazabilidad.cotizaciones.filter((cot) => {
-      const matchCodigo = cot?.codigo
-        ?.toLowerCase()
-        .includes(searchCodigo.toLowerCase());
-      const matchEstado =
-        filterEstado === "TODOS" || cot?.estado === filterEstado;
-      return matchCodigo && matchEstado;
-    });
+    return trazabilidad.cotizaciones
+      .filter((cot) => {
+        const matchCodigo = cot?.codigo
+          ?.toLowerCase()
+          .includes(searchCodigo.toLowerCase());
+        const matchEstado =
+          filterEstado === "TODOS" || cot?.estado === filterEstado;
+        return matchCodigo && matchEstado;
+      })
+      .map((cot) => {
+        const detalles = cot.detalles ?? [];
+        const primero = detalles[0]?.equipoDescripcion || "Servicio de calibración";
+        const titulo =
+          detalles.length > 1 ? `${primero} (+${detalles.length - 1})` : primero;
+        const fecha = cot.updatedAt ?? cot.createdAt;
+        const fechaFin = fecha ? new Date(fecha).toLocaleDateString("es-CO") : "—";
+        return { ...cot, titulo, fechaFin };
+      });
   }, [searchCodigo, filterEstado, trazabilidad]);
 
-  const handleViewRut = useCallback((trazabilidad: TrazabilidadCliente | null) => {
-    console.log("Abrir visor de RUT para cliente:", trazabilidad?.razonSocial, trazabilidad?.rutDocumento?.rutaUrl);
-
-    setConfig(createDocumentConfig({
-      apiBaseUrl: '/api/v1/pdf/ver/',
-      fileId: trazabilidad?.rutDocumento?.rutaUrl || '',
-      kind: "pdf",
-    }));
-    console.log("Configuración del visor de RUT:", config);
+  const handleViewRut = useCallback(async (t: TrazabilidadCliente | null) => {
+    const key = t?.rutDocumento?.rutaUrl;
+    const url = key ? await generarUrlArchivo(key) : null;
+    setConfig(
+      createDocumentConfig({
+        apiBaseUrl: '/api/v1',
+        fileId: '',
+        fileUrl: url ?? undefined,
+        kind: 'pdf',
+      })
+    );
     setIsOpenDocumento(true);
-  }, [config]);
+  }, []);
 
   return (
     <div className="w-full max-w-7xl mx-auto p-6 space-y-6 bg-slate-50/50 min-h-screen">
@@ -498,6 +510,7 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
           kind={config.kind}  
           apiBaseUrl={config.apiBaseUrl}  
           fileId={config.fileId}  
+          fileUrl={config.fileUrl}
         />
       </div>
 

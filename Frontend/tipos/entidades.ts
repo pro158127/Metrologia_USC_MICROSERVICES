@@ -204,7 +204,7 @@ export interface OrdenTrabajoDetalleModel {
   unidad: string | null;
   intervaloRango: string | null;
   resolucion: string | null;
-  asignado: number;
+  asignado: number | null;
   declaracionConformidad: boolean;
   limiteControlEMC: string | null;
   docEspecificacion: string | null;
@@ -255,12 +255,15 @@ export interface OrdenTrabajoModel {
 export interface RecepcionEquipoDetalleModel {
   idInstrumento: number;
   idRecepcion: number;
+  item?: number | null;
   instrumento: string;
   marca: string | null;
   modelo: string | null;
   serie: string | null;
   codigoInventario: string | null;
   resolucion: string | null;
+  sensorInt?: boolean;
+  sensorExt?: boolean;
   tipoSensorTemp: string | null;
   estadoIBC: unknown | null;
   estampilla: string | null;

@@ -203,7 +203,6 @@ export interface QuotationListTableProps {
 export interface QuotationDetailViewProps {
   selectedQuotation: CotizacionVista;
   openVersionModal: () => void;
-  showToast: (msg: string) => void;
   setSelectedQuotation: (q: CotizacionVista | null) => void;
   historialitems: HistorialItem[];
   formatCurrency: (v: number) => string;

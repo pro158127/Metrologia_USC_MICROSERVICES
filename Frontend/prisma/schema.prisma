@@ -330,7 +330,7 @@ model OrdenTrabajoDetalle {
   unidad                 String?      @map("UNIDAD")
   intervaloRango         String?      @map("INTERVALO_RANGO")
   resolucion             String?      @map("RESOLUCION")
-  asignado                Int       
+  asignado                Int?       
   // NUEVO CAMPO AGREGADO
   declaracionConformidad Boolean      @default(false) @map("DECLARACION_CONFORMIDAD")
   asginados              Usuario?      @relation(fields: [asignado],references:[idUsuario],onDelete:Cascade)

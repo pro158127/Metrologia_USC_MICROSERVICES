@@ -10,7 +10,7 @@ import {
   getRedisConnection,
   StampPdfJobData,
 } from '../lib/queue/queue.js';
-import { composeCertificate } from '../services/pdf-stamper.service.js';
+import { stampDocumentWithSeal } from '../services/pdf-stamper.service.js';
 
 const TEMPLATE_CACHE_PREFIX = 'sello:template:';
 
@@ -57,35 +57,29 @@ async function processStampJob(jobData: StampPdfJobData): Promise<{ outputKey: s
     (wm) => wm && wm.box && wm.box.width > 0 && wm.box.height > 0
   );
 
-  const selloTabla = await prisma.sellos.findUnique({
-    where: { ID_SELLO: selloId },
-    include: { documentos: true },
-  });
+  // El documento subido es la BASE; el sello (TEMPLATE_PDF_KEY) se superpone.
+  const areas: WatermarkArea[] =
+    watermarkAreas.length > 0
+      ? watermarkAreas
+      : [
+          {
+            id: 'default',
+            label: 'default',
+            box: docArea ?? { x: 0, y: 0, width: 100, height: 100 },
+            opacity: 0.85,
+          },
+        ];
 
-  const sealImages: Record<string, { bytes: Uint8Array; mimeType: 'image/png' | 'image/jpeg' }> = {};
-  if (selloTabla?.documentos) {
-    const mime = selloTabla.documentos.MIME_TYPE;
-    if (mime === 'image/png' || mime === 'image/jpeg') {
-      const bytes = await getObjectBuffer(selloTabla.documentos.RUTA_URL);
-      for (const wm of watermarkAreas) {
-        sealImages[wm.id] = { bytes, mimeType: mime };
-      }
-    }
-  }
-
-  const [templateBuffer, inputBuffer] = await Promise.all([
+  const [sealBuffer, inputBuffer] = await Promise.all([
     getTemplateBuffer(selloId, sello.TEMPLATE_PDF_KEY),
     getObjectBuffer(tempInputKey),
   ]);
 
-  const result = await composeCertificate({
-    templateBytes: templateBuffer,
+  const result = await stampDocumentWithSeal({
     documentBytes: inputBuffer,
-    layout: {
-      documentArea: docArea ?? { x: 0, y: 0, width: 100, height: 100 },
-      watermarkAreas,
-      sealImages: Object.keys(sealImages).length > 0 ? sealImages : undefined,
-    },
+    sealBytes: sealBuffer,
+    areas,
+    defaultOpacity: 0.85,
   });
 
   const outputBytes = Buffer.from(result.bytes);

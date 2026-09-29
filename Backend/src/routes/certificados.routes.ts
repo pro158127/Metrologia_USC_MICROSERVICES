@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
@@ -17,6 +17,17 @@ import {
   respuestaCertificadoMutacionSchema,
   respuestaCertificadosSchema,
 } from './certificados.schemas.js';
+
+/** Valida que el usuario tenga permisos de revisión de certificados. */
+function assertPermisoRevision(request: FastifyRequest): void {
+  const rev = request.user?.user?.permissions?.permisos?.revision;
+  const puede = Boolean(
+    rev?.revisar_aprobar_acreditados || rev?.revisar_aprobar_no_acreditados
+  );
+  if (!puede) {
+    throw new AppError(403, 'Sin permisos para revisar/aprobar certificados.');
+  }
+}
 
 export default async function certificadosRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
@@ -72,6 +83,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
     async () => {
       const certificados = await fastify.prisma.certificados.findMany({
         include: {
+          documentos: true,
           calibraciones: {
             include: {
               usuarios: true,
@@ -107,6 +119,8 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
           estadoRevision: cert.ESTADO_REVISION,
           motivoRechazo: cert.MOTIVO_RECHAZO,
           idDocumento: cert.ID_DOCUMENTO_FK,
+          rutaUrl: cert.documentos?.RUTA_URL ?? null,
+          mimeType: cert.documentos?.MIME_TYPE ?? 'application/pdf',
           idPlantillaSello: cert.ID_PLANTILLA_SELLO_FK,
           idCalibracion: cert.ID_CALIBRACION_FK,
           idInstrumento: detalle?.ID_INSTRUMENTO ?? null,
@@ -143,6 +157,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermisoRevision(request);
       const idCertificado = request.params.id;
       const idUsuario = Number(request.user?.sub ?? 0);
 
@@ -228,6 +243,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermisoRevision(request);
       const idCertificado = request.params.id;
       const idUsuario = Number(request.user?.sub ?? 0);
 

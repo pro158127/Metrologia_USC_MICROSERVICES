@@ -99,7 +99,7 @@ export type OrdenTrabajoDetalleBase = {
   unidad: string | null;
   intervaloRango: string | null;
   resolucion: string | null;
-  asignado: number;
+  asignado: number | null;
   declaracionConformidad: boolean;
   limiteControlEMC: string | null;
   docEspecificacion: string | null;

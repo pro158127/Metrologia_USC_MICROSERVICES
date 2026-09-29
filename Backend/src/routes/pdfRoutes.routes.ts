@@ -7,7 +7,10 @@ import { AppError } from '../lib/errors.js';
 const ALLOWED_MIMETYPES = ['application/pdf'];
 
 export default async function pdfRoutes(fastify: FastifyInstance) {
-  fastify.post('/api/v1/pdf/upload', async (request, reply) => {
+  fastify.post(
+    '/api/v1/pdf/upload',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
     const data = await (request as any).file();
     if (!data) throw new AppError(400, 'No se ha adjuntado ningún archivo');
 
@@ -41,7 +44,10 @@ export default async function pdfRoutes(fastify: FastifyInstance) {
     return reply.code(201).send({ rutaUrl: s3Key });
   });
 
-  fastify.get('/api/v1/pdf/ver/*', async (request, reply) => {
+  fastify.get(
+    '/api/v1/pdf/ver/*',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
     const rutaUrl = (request.params as any)['*'];
 
     if (!rutaUrl) throw new AppError(400, 'Ruta de archivo no proporcionada');

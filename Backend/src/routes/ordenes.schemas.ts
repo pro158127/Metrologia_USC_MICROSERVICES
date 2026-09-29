@@ -121,7 +121,7 @@ export const ordenTrabajoDetalleDtoSchema = z.object({
   unidad: z.string().nullable(),
   intervaloRango: z.string().nullable(),
   resolucion: z.string().nullable(),
-  asignado: z.number(),
+  asignado: z.number().nullable(),
   declaracionConformidad: z.boolean(),
   limiteControlEMC: z.string().nullable(),
   docEspecificacion: z.string().nullable(),
@@ -385,7 +385,7 @@ export const ordenTrabajoDetalleRawToDtoSchema = z
     UNIDAD: z.string().nullish(),
     INTERVALO_RANGO: z.string().nullish(),
     RESOLUCION: z.string().nullish(),
-    asignado: z.number(),
+    asignado: z.number().nullable(),
     DECLARACION_CONFORMIDAD: z.boolean().nullish(),
     LIMITE_CONTROL_EMC: z.string().nullish(),
     DOC_ESPECIFICACION: z.string().nullish(),
@@ -533,8 +533,14 @@ export const instrumentoConsolidarSchema = z.object({
   codigoInventario: z.string().nullable(),
   ubicacion: z.string().nullable(),
   puntosCalibrar: z.array(z.string()).optional(),
-  asignado: z.coerce.number(), // ID del técnico asignado
+  unidad: z.string().nullish(),
+  intervaloRango: z.string().nullish(),
+  resolucion: z.string().nullish(),
   declaracionConformidad: z.boolean(),
+  limiteControlEMC: z.string().nullish(),
+  docEspecificacion: z.string().nullish(),
+  reglaDecision: z.string().nullish(),
+  asignado: z.coerce.number(), // ID del técnico asignado (0 = sin asignar)
 });
 
 export const estadoOtEnum = z.enum([

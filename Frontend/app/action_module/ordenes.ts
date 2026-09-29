@@ -96,8 +96,14 @@ export interface InstrumentoConsolidar {
   codigoInventario: string | null;
   ubicacion: string | null;
   puntosCalibrar?: string[];
-  asignado: number;
+  unidad?: string | null;
+  intervaloRango?: string | null;
+  resolucion?: string | null;
   declaracionConformidad: boolean;
+  limiteControlEMC?: string | null;
+  docEspecificacion?: string | null;
+  reglaDecision?: string | null;
+  asignado: number;
 }
 
 export interface ConsolidarOtPayload {

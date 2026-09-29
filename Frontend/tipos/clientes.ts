@@ -127,6 +127,7 @@ export interface DocumentConfig {
   kind: FileKind;
   fileId: string;
   apiBaseUrl: string;
+  fileUrl?: string;
 }
 
 /** Cotización dentro de la trazabilidad de un cliente. */
