@@ -11,17 +11,21 @@ export const STAMP_PDF_QUEUE = 'stamp-pdf-queue';
 export const TEMPLATE_CACHE_TTL_SECONDS = 24 * 60 * 60; // 1 día de cache de plantillas base
 export const STAMP_JOB_PREFIX = 'stamp:job:';
 
+export const CERTIFICATE_PDF_QUEUE = 'certificate-pdf-queue';
+
 export const TARIFAS_QUEUE = 'tarifas-queue';
 
 export const  GENERATION_EXCEL='generation-excel-queue';
 const EMAIL_QUEUE_NAME = 'email_queue_jobs';
 
-let emailQueue: Queue;
+let emailQueue: Queue | null = null;
 let connection: IORedis | null = null;
 let snapshotQueue: Queue | null = null;
 let stampPdfQueue: Queue | null = null;
 let tarifasQueue: Queue | null = null;
 let generationExcelQueue: Queue | null = null;
+let certificatePdfQueue: Queue | null = null;
+let importQueue: Queue | null = null;
 
 /**
  * Conexión Redis compartida (singleton) para colas y worker.
@@ -78,6 +82,47 @@ export function getStampPdfQueue(): Queue {
     });
   }
   return stampPdfQueue;
+}
+
+export interface CertificateComposeJobData {
+  tipo: 'compose';
+  templatePdfKeyOrUrl: string;
+  documentPdfKeyOrUrl: string;
+  documentArea: { x: number; y: number; width: number; height: number };
+  watermarkAreas: Array<{
+    id: string;
+    box: { x: number; y: number; width: number; height: number };
+    opacity: number;
+  }>;
+  pageRange?: { start: number; end: number };
+  outputName?: string;
+  usuarioId?: number;
+  tipo_entry?: 'test' | 'prod';
+}
+
+export interface CertificateReviewJobData {
+  tipo: 'certificado';
+  certificadoId: number;
+  selloId?: number;
+  usuarioId?: number;
+  tipo_entry?: 'test' | 'prod';
+}
+
+export type CertificatePdfJobData = CertificateComposeJobData | CertificateReviewJobData;
+
+export function getCertificatePdfQueue(): Queue {
+  if (!certificatePdfQueue) {
+    certificatePdfQueue = new Queue(CERTIFICATE_PDF_QUEUE, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 60 * 60 * 24 },
+        removeOnFail: { age: 60 * 60 * 24 * 7 },
+      },
+    });
+  }
+  return certificatePdfQueue;
 }
 
 export interface TarifasJobData {
@@ -138,7 +183,10 @@ export type EmailTemplateType =
   | 'crear_cotizacion' 
   | 'actualizar_cotizacion' 
   | 'enviar_orden_trabajo'
-  | 'bienvenida_cliente'|'crear_ot'; // Agrega los que necesites
+  | 'bienvenida_cliente'
+  | 'aproved'
+  | 'crear_ot'
+  | 'envia_certifiados'; // Agrega los que necesites
 
 // 2. Interfaz estricta para el trabajo de BullMQ
 export interface EmailJobData {
@@ -178,8 +226,8 @@ export function getEmailQueue(): Queue {
 }
 export const IMPORTAR_QUEUE="prefix_imOT"
 export function getimportOT(): Queue {
-  if (!emailQueue) {
-    emailQueue = new Queue<ImportarOTEPayload>(IMPORTAR_QUEUE, {
+  if (!importQueue) {
+    importQueue = new Queue<ImportarOTEPayload>(IMPORTAR_QUEUE, {
       connection: getRedisConnection(),
       defaultJobOptions: {
         attempts: 3, // Reintenta 3 veces si Nodemailer o Outlook fallan
@@ -192,6 +240,6 @@ export function getimportOT(): Queue {
       },
     });
   }
-  return emailQueue;
+  return importQueue;
 }
 

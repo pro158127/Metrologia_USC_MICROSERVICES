@@ -318,3 +318,55 @@ export async function crearDocumento(input: CrearDocumentoInput) {
     return { success: false, error: "Error interno del servidor al crear el documento." };
   }
 }
+
+// ============================================================
+// Documentos categorizados por cotización
+// ============================================================
+
+export interface DocumentoVersionItem {
+  idVersion: number;
+  version: number;
+  rutaUrl: string;
+  createdAt: string;
+}
+
+export interface DocumentoItem {
+  idDocumento: number;
+  nombre: string;
+  rutaUrl: string;
+  mimeType: string;
+  createdAt: string;
+  versionActual: number;
+  versiones: DocumentoVersionItem[];
+}
+
+export interface DocumentosCotizacionCategorias {
+  idCotizacion: number;
+  codigo: string;
+  categorias: {
+    recepcion: DocumentoItem[];
+    cotizacion: DocumentoItem[];
+    ordenTrabajo: DocumentoItem[];
+    comprobantes: DocumentoItem[];
+    certificados: DocumentoItem[];
+  };
+}
+
+/** Obtiene los documentos de una cotización agrupados en 5 categorías. */
+export async function obtenerDocumentosCotizacion(
+  idCotizacion: number
+): Promise<DocumentosCotizacionCategorias | null> {
+  try {
+    const session = await auth();
+    if (!session?.user) return null;
+
+    const res = await fastifyRequest<{ ok: boolean; data: DocumentosCotizacionCategorias }>(
+      session,
+      `/api/v1/cotizaciones/${idCotizacion}/documentos`
+    );
+    return res.data ?? null;
+  } catch (error) {
+    console.error('Error en obtenerDocumentosCotizacion:', error);
+    return null;
+  }
+}

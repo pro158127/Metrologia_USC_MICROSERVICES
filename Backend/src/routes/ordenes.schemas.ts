@@ -537,13 +537,25 @@ export const instrumentoConsolidarSchema = z.object({
   declaracionConformidad: z.boolean(),
 });
 
+export const estadoOtEnum = z.enum([
+  'Creada',
+  'En_recepción',
+  'Asignada',
+  'En_calibración',
+  'Certificado_en_revisión',
+  'Certificado_aprobado',
+  'Certificado_enviado',
+]);
+
 export const consolidarOtBodySchema = z.object({
   responsableUsc: z.string().nullable(),
   fechaDiligenciamiento: z.string().nullable(),
   requiereAnexo: z.string(),
   observacionesGenerales: z.string().nullable(),
   lugarCalibracion: z.string(),
-  estadoOrden: z.string(),
+  // El estado ya no se acepta como texto libre: la FSM lo calcula en backend.
+  // Se mantiene opcional (y tolera "") por compatibilidad con el cliente actual.
+  estadoOrden: z.union([estadoOtEnum, z.literal('')]).optional(),
   instrumentos: z.array(instrumentoConsolidarSchema),
 });
 export type ConsolidarOtBody = z.infer<typeof consolidarOtBodySchema>;

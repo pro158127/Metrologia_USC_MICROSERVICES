@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Estados, Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import {
@@ -13,6 +14,7 @@ import {
   respuestaListaCotizacionesSchema,
 } from './cotizaciones.schemas.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
+import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 const transicionesValidas: Record<Estados, Estados[]> = {
   BORRADOR: [Estados.ENVIADA],
   ENVIADA: [Estados.APROBADA, Estados.RECHAZADA],
@@ -22,6 +24,38 @@ const transicionesValidas: Record<Estados, Estados[]> = {
 };
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
 const excelquue = getGenerationExcelQueue();
+
+// Esquemas de documentos categorizados por cotización
+const documentoVersionItemSchema = z.object({
+  idVersion: z.number(),
+  version: z.number(),
+  rutaUrl: z.string(),
+  createdAt: z.coerce.date(),
+});
+const documentoItemSchema = z.object({
+  idDocumento: z.number(),
+  nombre: z.string(),
+  rutaUrl: z.string(),
+  mimeType: z.string(),
+  createdAt: z.coerce.date(),
+  versionActual: z.number(),
+  versiones: z.array(documentoVersionItemSchema),
+});
+const respuestaDocumentosCotizacionSchema = z.object({
+  ok: z.literal(true),
+  data: z.object({
+    idCotizacion: z.number(),
+    codigo: z.string(),
+    categorias: z.object({
+      recepcion: z.array(documentoItemSchema),
+      cotizacion: z.array(documentoItemSchema),
+      ordenTrabajo: z.array(documentoItemSchema),
+      comprobantes: z.array(documentoItemSchema),
+      certificados: z.array(documentoItemSchema),
+    }),
+  }),
+});
+
 export default async function cotizacionesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
@@ -64,7 +98,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         const montoTotal = subtotalConViaticos - subtotalConViaticos * (descuentoPorcentaje / 100);
 
         const estado = request.body.estado || Estados.BORRADOR;
-        const consecutivo = await generarConsecutivo(fastify.prisma, "COT");
+        const consecutivo = await generarConsecutivo(tx, "COT");
         
         const nuevaCotizacion = await tx.cotizaciones.create({
           data: {
@@ -109,24 +143,24 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         // 2. CORRECCIÓN: Convertir a String explícitamente para cumplir con Zod
         id_jobs = String(trabajo.id); 
         
-   
-        const job = await excelquue.add('procesar_excel', {  
-          tipo: 1,
-          id_registro: nuevaCotizacion.ID_COTIZACION,
-          codigo_actual: consecutivo,
-          tipo_entry: 'prod',
-          action: "cot_create",
-          id_job: trabajo.id,
-          id_usuario: idUsuario
-        });
-
-        return nuevaCotizacion;
+        return { nuevaCotizacion, trabajo };
       });
 
-      // 3. Retorno validado sin errores de TypeScript
+      // 3. Encolar la generación documental DESPUÉS de confirmarse la transacción.
+      await excelquue.add('procesar_excel', {
+        tipo: 1,
+        id_registro: resultado.nuevaCotizacion.ID_COTIZACION,
+        codigo_actual: resultado.nuevaCotizacion.CODIGO_COTIZACION,
+        tipo_entry: 'prod',
+        action: "cot_create",
+        id_job: resultado.trabajo.id,
+        id_usuario: idUsuario
+      });
+
+      // 4. Retorno validado sin errores de TypeScript
       return { 
         ok: true as const, 
-        data: cotizacionRawToDtoSchema.parse(resultado), 
+        data: cotizacionRawToDtoSchema.parse(resultado.nuevaCotizacion), 
         id_job: id_jobs 
       };
     }
@@ -310,7 +344,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             const idsEliminar = detallesOTActuales.slice(instrumentosDesdoblados.length).map(d => d.ID_DETALLE);
             await tx.orden_trabajo_detalles.deleteMany({ where: { ID_DETALLE: { in: idsEliminar } } });
           }
-         const consecutivo_ot=await generarConsecutivo(fastify.prisma, "OT",existente.ordenes_trabajo[0].CODIGO_OT);
+         const consecutivo_ot=await generarConsecutivo(tx, "OT",existente.ordenes_trabajo[0].CODIGO_OT);
           const update_ot=await tx.ordenes_trabajo.update({where:{ID_ORDEN_TRABAJO:existente.ordenes_trabajo[0].ID_ORDEN_TRABAJO},data:{CODIGO_OT:consecutivo_ot}})
           codigo_actual_ot=update_ot.CODIGO_OT
           id_registro_ot=update_ot.ID_ORDEN_TRABAJO
@@ -326,7 +360,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             if (i < detallesRecepActuales.length) {
               await tx.recepcion_equipo_detalles.update({
                 where: { ID_INSTRUMENTO: detallesRecepActuales[i].ID_INSTRUMENTO },
-                data: { INSTRUMENTO: nuevo.INSTRUMENTO }
+                data: { INSTRUMENTO: nuevo.INSTRUMENTO, ITEM: nuevo.ITEM }
               });
             } else {
               // Estampilla temporal para satisfacer el @unique de Prisma
@@ -335,6 +369,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                 data: {
 
                   ID_RECEPCION_FK: recep.ID_RECEPCION,
+                  ITEM: nuevo.ITEM,
                   INSTRUMENTO: nuevo.INSTRUMENTO,
                 }
               });
@@ -344,10 +379,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             const idsEliminar = detallesRecepActuales.slice(instrumentosDesdoblados.length).map(d => d.ID_INSTRUMENTO);
             await tx.recepcion_equipo_detalles.deleteMany({ where: { ID_INSTRUMENTO: { in: idsEliminar } } });
           }
-              const consec=await generarConsecutivo(fastify.prisma,"REC",existente.recepciones_equipo[0].CODIGO_RECEPCION)
+              const consec=await generarConsecutivo(tx,"REC",existente.recepciones_equipo[0].CODIGO_RECEPCION)
              const update_rec= await tx.recepciones_equipo.update({where:{CODIGO_RECEPCION:existente.recepciones_equipo[0].CODIGO_RECEPCION},data:{CODIGO_RECEPCION:consec}})
              codigo_actual_recep=update_rec.CODIGO_RECEPCION
              id_registro_recp=update_rec.ID_RECEPCION
+        }
+
+        // 4.3 Recalcular el estado automático de la OT (FSM) tras sincronizar.
+        if (existente.ordenes_trabajo.length > 0) {
+          await evaluarTransicionesOT(tx, existente.ordenes_trabajo[0].ID_ORDEN_TRABAJO);
         }
       } else {
         subtotal = existente.cotizacion_detalles.reduce(
@@ -699,6 +739,123 @@ const trackingJobs: Record<string, string> = {};
           page,
           limit,
           totalPages: Math.ceil(total / limit),
+        },
+      };
+    }
+  );
+
+  // ==========================================================================
+  // GET /api/v1/cotizaciones/:id/documentos
+  // Documentos categorizados: Recepción, Cotización, Orden de trabajo,
+  // Comprobantes y Certificados (consultando documentos + version_documentos).
+  // ==========================================================================
+  app.get(
+    '/api/v1/cotizaciones/:id/documentos',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: idParamSchema,
+        response: { 200: respuestaDocumentosCotizacionSchema },
+      },
+    },
+    async (request) => {
+      const idCotizacion = request.params.id;
+
+      const cotizacion = await fastify.prisma.cotizaciones.findUnique({
+        where: { ID_COTIZACION: idCotizacion },
+      });
+      if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
+
+      const ordenes = await fastify.prisma.ordenes_trabajo.findMany({
+        where: { ID_COTIZACION_FK: idCotizacion },
+        select: { ID_ORDEN_TRABAJO: true },
+      });
+      const otIds = ordenes.map((o) => o.ID_ORDEN_TRABAJO);
+
+      const recepciones = await fastify.prisma.recepciones_equipo.findMany({
+        where: {
+          OR: [
+            { ID_COTIZACION_FK: idCotizacion },
+            ...(otIds.length ? [{ ID_ORDEN_TRABAJO_FK: { in: otIds } }] : []),
+          ],
+        },
+        include: {
+          recepcion_equipo_detalles: {
+            include: { calibraciones: { include: { certificados: true } } },
+          },
+        },
+      });
+      const recIds = recepciones.map((r) => r.ID_RECEPCION);
+
+      const documentos = await fastify.prisma.documentos.findMany({
+        where: {
+          OR: [
+            { ID_COTIZACION_FK: idCotizacion },
+            ...(otIds.length
+              ? [
+                  { ID_ORDEN_TRABAJO_FK: { in: otIds } },
+                  { ordenPagoId: { in: otIds } },
+                ]
+              : []),
+            ...(recIds.length ? [{ ID_RECEPCION_FK: { in: recIds } }] : []),
+          ],
+        },
+        include: { version_documentos: { orderBy: { VERSION: 'desc' } } },
+        orderBy: { CREATED_AT: 'desc' },
+      });
+
+      const certDocIds = new Set<number>();
+      recepciones.forEach((r) =>
+        r.recepcion_equipo_detalles.forEach((d) => {
+          const c = d.calibraciones?.certificados;
+          if (c) certDocIds.add(c.ID_DOCUMENTO_FK);
+        })
+      );
+
+      const toItem = (doc: (typeof documentos)[number]) => ({
+        idDocumento: doc.ID_DOCUMENTO,
+        nombre: doc.NOMBRE,
+        rutaUrl: doc.RUTA_URL,
+        mimeType: doc.MIME_TYPE,
+        createdAt: doc.CREATED_AT,
+        versionActual: doc.version_documentos[0]?.VERSION ?? 1,
+        versiones: doc.version_documentos.map((v) => ({
+          idVersion: v.ID_VERSION,
+          version: v.VERSION,
+          rutaUrl: v.RUTA_URL,
+          createdAt: v.CREATED_AT,
+        })),
+      });
+
+      const categorias = {
+        recepcion: [] as ReturnType<typeof toItem>[],
+        cotizacion: [] as ReturnType<typeof toItem>[],
+        ordenTrabajo: [] as ReturnType<typeof toItem>[],
+        comprobantes: [] as ReturnType<typeof toItem>[],
+        certificados: [] as ReturnType<typeof toItem>[],
+      };
+
+      for (const doc of documentos) {
+        const item = toItem(doc);
+        if (certDocIds.has(doc.ID_DOCUMENTO)) {
+          categorias.certificados.push(item);
+        } else if (doc.ordenPagoId != null && otIds.includes(doc.ordenPagoId)) {
+          categorias.comprobantes.push(item);
+        } else if (doc.ID_RECEPCION_FK != null && recIds.includes(doc.ID_RECEPCION_FK)) {
+          categorias.recepcion.push(item);
+        } else if (doc.ID_COTIZACION_FK === idCotizacion) {
+          categorias.cotizacion.push(item);
+        } else {
+          categorias.ordenTrabajo.push(item);
+        }
+      }
+
+      return {
+        ok: true as const,
+        data: {
+          idCotizacion,
+          codigo: cotizacion.CODIGO_COTIZACION,
+          categorias,
         },
       };
     }

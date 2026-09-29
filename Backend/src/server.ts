@@ -26,6 +26,8 @@ import reportesRoutes from './routes/reportes.routes.js';
 import plantillasRoutes from './routes/plantillas.routes.js';
 import ordenesRoutes from './routes/ordenes.routes.js';
 import recepcionesRoutes from './routes/recepciones.routes.js';
+import calibracionesRoutes from './routes/calibraciones.routes.js';
+import enviosRoutes from './routes/envios.routes.js';
 import plantillasGeneracionRoutes from './routes/plantillas-generacion.routes.js';
 import jobsRoutes from './routes/job.js';
 import fastifyMultipart from '@fastify/multipart';
@@ -80,6 +82,8 @@ async function bootstrap() {
   await fastify.register(ordenesRoutes);
   await fastify.register(quoteStatusRoutes);
   await fastify.register(recepcionesRoutes);
+  await fastify.register(calibracionesRoutes);
+  await fastify.register(enviosRoutes);
 
 
   // 4. Health Check

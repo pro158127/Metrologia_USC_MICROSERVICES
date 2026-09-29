@@ -876,6 +876,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
             }
           : null,
         {
+          tipo: 2,
+          id_registro: idOtFinal,
+          codigo_actual: codigoOTFinal,
+          action: 'ot_update',
+        },
+        {
           tipo: 3,
           id_registro: idRecepcionFinal,
           codigo_actual: codigoRecepcionFinal,

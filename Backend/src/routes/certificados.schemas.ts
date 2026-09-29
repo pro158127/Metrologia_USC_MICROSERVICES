@@ -32,6 +32,11 @@ export const certificadoDtoSchema = z.object({
   codigo: z.string(),
   idCalibracion: z.number(),
   idDocumento: z.number(),
+  estadoRevision: z.string(),
+  motivoRechazo: z.string().nullable(),
+  idRevisor: z.number().nullable(),
+  revisadoAt: z.coerce.date().nullable(),
+  idPlantillaSello: z.number().nullable(),
   sellos: z.array(certificadoSelloDtoSchema),
 });
 export type CertificadoDto = z.infer<typeof certificadoDtoSchema>;
@@ -196,6 +201,11 @@ export const certificadoRawToDtoSchema = z
     CODIGO_CERTIFICADO: z.string(),
     ID_CALIBRACION_FK: z.number(),
     ID_DOCUMENTO_FK: z.number(),
+    ESTADO_REVISION: z.string().nullish(),
+    MOTIVO_RECHAZO: z.string().nullish(),
+    ID_REVISOR_FK: z.number().nullish(),
+    REVISADO_AT: z.coerce.date().nullish(),
+    ID_PLANTILLA_SELLO_FK: z.number().nullish(),
     certificado_sellos: z.array(certificadoSelloRawToDtoSchema).nullish(),
   })
   .transform((raw): CertificadoDto => ({
@@ -203,6 +213,11 @@ export const certificadoRawToDtoSchema = z
     codigo: raw.CODIGO_CERTIFICADO,
     idCalibracion: raw.ID_CALIBRACION_FK,
     idDocumento: raw.ID_DOCUMENTO_FK,
+    estadoRevision: raw.ESTADO_REVISION ?? 'PENDIENTE_REVISION',
+    motivoRechazo: raw.MOTIVO_RECHAZO ?? null,
+    idRevisor: raw.ID_REVISOR_FK ?? null,
+    revisadoAt: raw.REVISADO_AT ?? null,
+    idPlantillaSello: raw.ID_PLANTILLA_SELLO_FK ?? null,
     sellos: raw.certificado_sellos ?? [],
   }));
 
@@ -422,3 +437,26 @@ export const respuestaCertificadosSchema = z.object({
   }),
 });
 export type RespuestaCertificados = z.infer<typeof respuestaCertificadosSchema>;
+
+// ============================================================
+// INPUTS DE REVISIÓN (aprobar / rechazar)
+// ============================================================
+export const certificadoIdParamsSchema = z.object({ id: z.coerce.number() });
+
+export const aprobarCertificadoBodySchema = z.object({
+  // Opcional: permite forzar una plantilla de sello concreta.
+  selloId: z.number().int().positive().optional(),
+});
+
+export const rechazarCertificadoBodySchema = z.object({
+  descripcion: z
+    .string()
+    .min(1, 'La descripción del motivo de rechazo es obligatoria'),
+});
+
+export const respuestaCertificadoMutacionSchema = z.object({
+  ok: z.literal(true),
+  message: z.string(),
+  data: certificadoDtoSchema.optional(),
+  id_job: z.string().optional(),
+});

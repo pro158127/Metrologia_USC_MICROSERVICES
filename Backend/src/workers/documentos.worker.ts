@@ -9,6 +9,10 @@ import '../workers/snapshot.worker.js'
 
 // 2. Despierta al encargado de sellar PDFs
 import './pdfStampingWorker.js';
+
+// 3. Despierta al generador asíncrono de certificados PDF
+import './certificatePdf.worker.js';
+
 import { iniciarSnapshotWorker } from '../workers/snapshot.worker.js';
 
 

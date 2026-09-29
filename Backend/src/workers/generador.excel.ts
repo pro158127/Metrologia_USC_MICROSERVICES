@@ -458,26 +458,35 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
   // 1. LECTURA DE BASE DE DATOS (Con consulta de documentos previos)
   // ====================================================================
   await prisma.$transaction(async (tx) => {
+    // `tipo` es el TIPO DE DOCUMENTO (1=Cotización, 2=OT, 3=Recepción).
+    // La versión de plantilla vigente se resuelve por el MÓDULO de la plantilla.
+    const MODULO_POR_TIPO: Record<number, string> = {
+      1: 'COTIZACIONES',
+      2: 'ORDEN_TRABAJO',
+      3: 'RECEPCION',
+    };
+    const modulo = MODULO_POR_TIPO[tipo];
+
     const version = await tx.version_plantillas.findFirst({
-      where: { ID_VERSION_PLANTILLA: tipo },
+      where: modulo ? { plantillas: { MODULO: modulo } } : { ID_VERSION_PLANTILLA: tipo },
       include: { documentos: true },
       orderBy: { VERSION: 'desc' }
     });
 
-    if (!version) throw new Error(`La versión ${tipo} no existe en la base de datos.`);
+    if (!version) throw new Error(`No existe una versión de plantilla para el tipo de documento ${tipo}.`);
     mappingConfig = mappingConfigSchema.parse(version?.MAPPING_CONFIG);
     s3TemplateKey = version?.documentos?.RUTA_URL || '';
 
     await tx.quote.update({ data: { status: 'PROCESSING' }, where: { id: id_job } });
 
     if (tipo === 1) {
-      cotizacion = await tx.cotizaciones.findFirst({ where: { ID_COTIZACION: Number(id_registro) }, include: { cotizacion_detalles: true, clientes: true, ordenes_trabajo: true } });
+      cotizacion = await tx.cotizaciones.findFirst({ where: { ID_COTIZACION: Number(id_registro) }, include: { cotizacion_detalles: { where: { activacion: true } }, clientes: true, ordenes_trabajo: true } });
     }
     if (tipo === 2) {
-      ordenTrabajo = await tx.ordenes_trabajo.findFirst({ where: { ID_ORDEN_TRABAJO: Number(id_registro) }, include: { orden_trabajo_detalles: true, clientes: true } });
+      ordenTrabajo = await tx.ordenes_trabajo.findFirst({ where: { ID_ORDEN_TRABAJO: Number(id_registro) }, include: { orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } }, clientes: true } });
     }
     if (tipo === 3) {
-      recepcion = await tx.recepciones_equipo.findFirst({ where: { ID_RECEPCION: Number(id_registro) }, include: { recepcion_equipo_detalles: true, cotizaciones: true } });
+      recepcion = await tx.recepciones_equipo.findFirst({ where: { ID_RECEPCION: Number(id_registro) }, include: { recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } }, cotizaciones: true } });
     }
 
     // 🔥 BUSCAR SI YA EXISTE UN DOCUMENTO PREVIO Y SU ÚLTIMA VERSIÓN

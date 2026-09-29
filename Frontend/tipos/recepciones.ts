@@ -22,14 +22,15 @@ export type {
 // Fila de instrumento del formulario (mapeada a RecepcionEquipoDetalle)
 export interface FilaInstrumento {
   id: string;
+  idInstrumento?: number;
   instrumento: string;
   marca: string;
   modelo: string;
   serie: string;
   codigoInterno: string;
   resolucion: string;
-  ibcE_in: null, ibcT_in: null, ibcD_in: null, ibcA_in: null,
-  ibcE_out: null, ibcT_out: null, ibcD_out: null, ibcA_out: null,
+  ibcE_in: boolean | null, ibcT_in: boolean | null, ibcD_in: boolean | null, ibcA_in: boolean | null,
+  ibcE_out: boolean | null, ibcT_out: boolean | null, ibcD_out: boolean | null, ibcA_out: boolean | null,
   sensorInt: boolean;
   sensorExt: boolean;
   estampilla: string;
@@ -103,6 +104,7 @@ export interface DatosGeneralesSectionProps {
   cotizaciones: CotizacionModel[];
   ordenesTrabajo: OrdenTrabajoModel[];
   onUpdateGeneral: (field: string, value: string) => void;
+  bloqueado?: boolean;
 }
 
 export interface TablaInstrumentosProps {
@@ -129,4 +131,5 @@ export interface InspeccionYFirmasSectionProps {
 export interface FormFooterActionsProps {
   actaGuardada: boolean;
   onGenerarActa: () => void;
+  guardando?: boolean;
 }

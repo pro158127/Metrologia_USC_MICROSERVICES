@@ -374,6 +374,7 @@ model RecepcionEquipo {
 model RecepcionEquipoDetalle {
   idInstrumento    Int             @id @default(autoincrement()) @map("ID_INSTRUMENTO")
   idRecepcion      Int             @map("ID_RECEPCION_FK")
+  item             Int?            @map("ITEM")
   instrumento      String          @map("INSTRUMENTO")
   marca            String?         @map("MARCA")
   modelo           String?         @map("MODELO")
@@ -409,6 +410,11 @@ model Certificado {
   codigo        String             @unique @map("CODIGO_CERTIFICADO")
   idCalibracion Int                @unique @map("ID_CALIBRACION_FK")
   idDocumento   Int                @map("ID_DOCUMENTO_FK")
+  estadoRevision   String    @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
+  motivoRechazo    String?   @map("MOTIVO_RECHAZO")
+  idRevisor        Int?      @map("ID_REVISOR_FK")
+  revisadoAt       DateTime? @map("REVISADO_AT")
+  idPlantillaSello Int?      @map("ID_PLANTILLA_SELLO_FK")
   sellos        CertificadoSello[]
   calibracion   Calibracion        @relation(fields: [idCalibracion], references: [idCalibracion])
   documento     Documento          @relation(fields: [idDocumento], references: [idDocumento])

@@ -17,6 +17,7 @@ export type SortDir = "asc" | "desc";
 
 /** Fila de revisión de certificados (derivada del store). */
 export interface CertificadoRevision {
+  idCertificado: number;
   ot: string;
   estampilla: string;
   cliente: string;
@@ -28,6 +29,7 @@ export interface CertificadoRevision {
   bloqueado: boolean;
   status?: "pendiente" | "aprobado" | "devuelto";
   datosTecnicos?: Record<string, string>;
+  motivoRechazo?: string | null;
 }
 
 export interface ToastNotificationProps {
@@ -78,6 +80,10 @@ export type EstadoInstrumento = "Pendiente" | "Adjuntado" | "En revisión" | "De
 
 export interface InstrumentoAsignado {
   id: string;
+  idInstrumento?: number;
+  idCalibracion?: number | null;
+  idCertificado?: number | null;
+  idOrdenTrabajo?: number | null;
   estampilla: string;
   workOrder: string;
   equipment: string;
@@ -86,6 +92,7 @@ export interface InstrumentoAsignado {
   fileName?: string;
   status: EstadoInstrumento;
   motivoDevolucion?: string;
+  datosTecnicos?: unknown;
 }
 
 export interface HeaderKPIsProps {

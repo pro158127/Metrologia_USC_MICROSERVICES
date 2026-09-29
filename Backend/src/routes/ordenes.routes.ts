@@ -13,8 +13,11 @@ import {
   consolidarOtParamsSchema
 } from './ordenes.schemas.js';
 import { getimportOT } from '../lib/queue/queue.js';
-import { EstadoOT } from '@prisma/client';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
+import {
+  evaluarTransicionesOT,
+  validarAsignacionPermitida,
+} from '../services/ot-fsm.service.js';
 export default async function ordenesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
@@ -128,10 +131,14 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
       const idUsuario = Number(request.user?.sub ?? 0);
 
       try {
+        let quoteJobId: string | undefined;
+        let codigoOT: string | undefined;
+
         // 1. Transacción para garantizar integridad de BD
         await fastify.prisma.$transaction(async (tx) => {
           
           // A. Actualizar cabecera de la OT
+          // NOTA: `estado` ya NO se escribe desde el cliente; lo gobierna la FSM.
           const otActualizada = await tx.ordenes_trabajo.update({
             where: { ID_ORDEN_TRABAJO: id },
             data: {
@@ -139,15 +146,27 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
               FECHA_CALIBRACION_DILIGENCIAMENTO: data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null,
               REQUIERE_ANEXO: data.requiereAnexo === 'Si',
               OBSERVACIONES: data.observacionesGenerales,
-              estado: data.estadoOrden as EstadoOT,
-            
             },
           });
+
+          codigoOT = otActualizada.CODIGO_OT;
 
           // B. Procesar Instrumentos (Upsert) y Sincronizar Recepciones
           for (const inst of data.instrumentos) {
             // Actualizamos el detalle de la OT
             if (inst.idDetalle) {
+              // Guard Clause: bloquear asignación de técnico si la OT no está en recepción.
+              const detalleActual = await tx.orden_trabajo_detalles.findUnique({
+                where: { ID_DETALLE: inst.idDetalle },
+                select: { asignado: true },
+              });
+              const tecnicoCambia =
+                detalleActual != null && Number(inst.asignado) !== detalleActual.asignado;
+
+              if (tecnicoCambia) {
+                validarAsignacionPermitida(otActualizada.estado);
+              }
+
               await tx.orden_trabajo_detalles.update({
                 where: { ID_DETALLE: inst.idDetalle },
                 data: {
@@ -170,13 +189,18 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
               });
 
               if (recepcionAsociada) {
-                // Actualizamos el instrumento en la recepción basándonos en el ITEM (posición)
+                // Actualizamos el instrumento en la recepción. Se correlaciona por ITEM
+                // y se hace backfill de ITEM para registros heredados (ITEM null).
                 await tx.recepcion_equipo_detalles.updateMany({
                   where: {
                     ID_RECEPCION_FK: recepcionAsociada.ID_RECEPCION,
-                    ITEM: inst.item
+                    OR: [
+                      { ITEM: inst.item },
+                      { ITEM: null, INSTRUMENTO: inst.instrumento },
+                    ],
                   },
                   data: {
+                    ITEM: inst.item,
                     INSTRUMENTO: inst.instrumento,
                     MARCA: inst.fabricante, // Homologación: Fabricante (OT) -> Marca (Recepción)
                     MODELO: inst.modelo,
@@ -188,25 +212,28 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             }
           }
 
-          // 2. Disparar Worker de Generación R-CM05 (Tipo 2 = OT)
-          // Usamos la cola que ya tienes configurada en queue.ts
-          const quoteJob = await tx.quote.create({ data: { status: 'PENDING' } });
-          const excelQueue = getGenerationExcelQueue();
-          
-          await excelQueue.add('generar_ot_consolidada', {
-            tipo: 2,
-            id_registro: id,
-            codigo_actual: otActualizada.CODIGO_OT,
-            tipo_entry: 'prod',
-            id_job: quoteJob.id,
-        
-          });
+          // C. Recalcular el estado automático de la OT (FSM) tras aplicar los cambios.
+          await evaluarTransicionesOT(tx, id);
 
-          return reply.code(200).send({ 
-            ok: true, 
-            message: 'Orden consolidada y encolada para generación documental',
-            id_job: quoteJob.id 
-          });
+          // 2. Registrar el tracker de generación documental (dentro de la tx)
+          const quoteJob = await tx.quote.create({ data: { status: 'PENDING' } });
+          quoteJobId = quoteJob.id;
+        });
+
+        // 3. Encolar el Worker de Generación R-CM05 (Tipo 2 = OT) DESPUÉS del commit.
+        const excelQueue = getGenerationExcelQueue();
+        await excelQueue.add('generar_ot_consolidada', {
+          tipo: 2,
+          id_registro: id,
+          codigo_actual: codigoOT,
+          tipo_entry: 'prod',
+          id_job: quoteJobId,
+        });
+
+        return reply.code(200).send({ 
+          ok: true, 
+          message: 'Orden consolidada y encolada para generación documental',
+          id_job: quoteJobId 
         });
 
       } catch (error) {

@@ -1,10 +1,9 @@
 // 1. Imports
 "use client";
 
-import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Upload, FileText, AlertTriangle, RefreshCw, ChevronDown, CheckCircle2, Clock, XCircle, Layers } from "lucide-react";
-import { useSession } from "next-auth/react";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { getMisInstrumentos, subirCertificadoCalibracion } from "@/app/action_module/calibraciones";
 import type {
   InstrumentoAsignado,
   EstadoInstrumento,
@@ -366,64 +365,29 @@ const InstrumentCard: React.FC<InstrumentCardProps> = ({
 // -----------------------------------------------------------------------------
 
 export const CalibracionInformes: React.FC = () => {
-  const { data: session } = useSession();
-  const idTecnico = Number(session?.user?.id_user);
-
-  const calibraciones = useDbTable("calibraciones");
-  const recepcionDetalles = useDbTable("recepcion_equipo_detalles");
-  const ordenes = useDbTable("ordenes_trabajo");
-  const clientes = useDbTable("clientes");
-  const certificados = useDbTable("certificados");
-  const { loadTable } = useDbActions();
-
-  useEffect(() => {
-    loadTable("certificados");
-    loadTable("ordenes_trabajo");
-    loadTable("clientes");
-    loadTable("recepcion_equipo_detalles")
-    loadTable("calibraciones")
-  }, [loadTable]);
-console.log(calibraciones,"calibracion list")
-  // ==========================================
-  // DATOS DERIVADOS DEL STORE (sin mocks)
-  // ==========================================
-  const instrumentosBase: InstrumentoAsignado[] = useMemo(() => {
-    console.log(idTecnico)
-    if (!idTecnico || Number.isNaN(idTecnico)) return [];
-    return [...calibraciones].filter((cal) => cal.idTecnico === idTecnico)
-      .map((cal) => {
-        const detalle = [...recepcionDetalles].find((r) => r.idInstrumento === cal.idInstrumento);
-        const orden = ordenes.find((o) =>
-          (o.instrumentos ?? []).some((i) => i.idDetalle === cal.idInstrumento)
-        );
-        const cliente = orden
-          ? clientes.find((c) => c.idCliente === orden.idCliente)
-          : undefined;
-        const certExiste = certificados.some((c) => c.idCalibracion === cal.idCalibracion);
-        return {
-          id: String(cal.idInstrumento),
-          estampilla: detalle?.estampilla ?? "—",
-          workOrder: orden?.codigo ?? "—",
-          equipment: detalle?.instrumento ?? "—",
-          client: cliente?.razonSocial ?? "—",
-          status: certExiste ? ("En revisión" as EstadoInstrumento) : ("Pendiente" as EstadoInstrumento),
-        };
-      });
-  }, [calibraciones, recepcionDetalles, ordenes, clientes, certificados, idTecnico]);
-
   const [instrumentos, setInstrumentos] = useState<InstrumentoAsignado[]>([]);
-  const syncedRef = useRef(false);
+  const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    if (!syncedRef.current && instrumentosBase.length > 0) {
-      setInstrumentos(instrumentosBase);
-      syncedRef.current = true;
-    }
-  }, [instrumentosBase]);
+    let activo = true;
+    getMisInstrumentos()
+      .then((data) => {
+        if (!activo) return;
+        setInstrumentos(data);
+        setCargando(false);
+      })
+      .catch(() => {
+        if (activo) setCargando(false);
+      });
+    return () => {
+      activo = false;
+    };
+  }, []);
 
   const [selectedInstrumento, setSelectedInstrumento] = useState<InstrumentoAsignado | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [toast, setToast] = useState("");
+  const [subiendo, setSubiendo] = useState(false);
 
   const [filterWorkOrder, setFilterWorkOrder] = useState("");
   const [filterClient, setFilterClient] = useState("");
@@ -464,14 +428,33 @@ console.log(calibraciones,"calibracion list")
     }
   }, []);
 
-  const ejecutarSubidaCertificado = useCallback(() => {
+  const ejecutarSubidaCertificado = useCallback(async () => {
     if (!selectedInstrumento || !selectedFile) return;
+
+    const idInstrumento =
+      selectedInstrumento.idInstrumento ?? Number(selectedInstrumento.id);
+    if (!idInstrumento || Number.isNaN(idInstrumento)) {
+      showToast("❌ No se pudo identificar el instrumento asignado.");
+      return;
+    }
+
+    setSubiendo(true);
+    const res = await subirCertificadoCalibracion(idInstrumento, selectedFile, {
+      estampilla: selectedInstrumento.estampilla !== "—" ? selectedInstrumento.estampilla : undefined,
+    });
+    setSubiendo(false);
+
+    if (!res.ok) {
+      showToast(`❌ ${res.error ?? "No se pudo subir el certificado."}`);
+      return;
+    }
 
     setInstrumentos((prev) =>
       prev.map((ins) =>
-        ins.estampilla === selectedInstrumento.estampilla
+        ins.id === selectedInstrumento.id
           ? {
               ...ins,
+              idCertificado: res.idCertificado ?? ins.idCertificado,
               status: "En revisión" as EstadoInstrumento,
               fileName: selectedFile.name,
               uploadDate: new Date().toISOString().split("T")[0],
@@ -516,6 +499,12 @@ console.log(calibraciones,"calibracion list")
         sugerenciasCliente={sugerenciasCliente}
       />
 
+      {subiendo && (
+        <div className="fixed bottom-4 left-4 z-50 px-4 py-2 rounded-xl bg-[#5680F9] text-white text-xs font-bold shadow-lg">
+          Subiendo certificado...
+        </div>
+      )}
+
       {selectedInstrumento && (
         <UploadDock
           selectedInstrumento={selectedInstrumento}
@@ -541,7 +530,11 @@ console.log(calibraciones,"calibracion list")
           </span>
         </div>
 
-        {instrumentosFiltrados.length === 0 ? (
+        {cargando ? (
+          <div className="bg-white rounded-xl border border-dashed border-slate-200 p-8 text-center text-xs text-slate-400">
+            Cargando instrumentos asignados...
+          </div>
+        ) : instrumentosFiltrados.length === 0 ? (
           <div className="bg-white rounded-xl border border-dashed border-slate-200 p-8 text-center text-xs text-slate-400">
             No se encontraron instrumentos que coincidan con los filtros aplicados.
           </div>

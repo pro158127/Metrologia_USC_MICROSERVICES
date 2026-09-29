@@ -311,6 +311,9 @@ export interface CertificadoModel {
   codigo: string;
   idCalibracion: number;
   idDocumento: number;
+  estadoRevision?: string;
+  motivoRechazo?: string | null;
+  idPlantillaSello?: number | null;
   sellos: CertificadoSelloModel[];
 }
 

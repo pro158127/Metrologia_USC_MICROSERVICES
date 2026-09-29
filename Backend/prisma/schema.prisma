@@ -45,13 +45,18 @@ model certificado_sellos {
 }
 
 model certificados {
-  ID_CERTIFICADO     Int                  @id @default(autoincrement())
-  CODIGO_CERTIFICADO String               @unique
-  ID_CALIBRACION_FK  Int                  @unique
-  ID_DOCUMENTO_FK    Int
-  certificado_sellos certificado_sellos[]
-  calibraciones      calibraciones        @relation(fields: [ID_CALIBRACION_FK], references: [ID_CALIBRACION])
-  documentos         documentos           @relation(fields: [ID_DOCUMENTO_FK], references: [ID_DOCUMENTO])
+  ID_CERTIFICADO        Int                  @id @default(autoincrement())
+  CODIGO_CERTIFICADO    String               @unique
+  ID_CALIBRACION_FK     Int                  @unique
+  ID_DOCUMENTO_FK       Int
+  ESTADO_REVISION       String               @default("PENDIENTE_REVISION")
+  MOTIVO_RECHAZO        String?
+  ID_REVISOR_FK         Int?
+  REVISADO_AT           DateTime?
+  ID_PLANTILLA_SELLO_FK Int?
+  certificado_sellos    certificado_sellos[]
+  calibraciones         calibraciones        @relation(fields: [ID_CALIBRACION_FK], references: [ID_CALIBRACION])
+  documentos            documentos           @relation(fields: [ID_DOCUMENTO_FK], references: [ID_DOCUMENTO])
 }
 
 model clientes {
@@ -310,6 +315,7 @@ model plantillas_sellos {
 model recepcion_equipo_detalles {
   ID_INSTRUMENTO     Int                @id @default(autoincrement())
   ID_RECEPCION_FK    Int
+  ITEM               Int?
   INSTRUMENTO        String
   MARCA              String?
   MODELO             String?

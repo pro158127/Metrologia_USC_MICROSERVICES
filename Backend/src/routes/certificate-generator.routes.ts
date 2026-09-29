@@ -1,19 +1,12 @@
 // routes/certificate-generator.routes.ts
-// Endpoint de generación y compilación de certificados (plantilla + documento + sellos).
-// Resuelve los PDFs desde S3/MinIO (key) o URL externa, compila con
-// CertificateGeneratorService y devuelve la URL del objeto o el PDF en streaming.
+// Encola la generación asíncrona de certificados (plantilla + documento + sellos).
+// El trabajo real se ejecuta en workers/certificatePdf.worker.ts para no bloquear
+// el Event Loop de la API (pdf-lib + IO de MinIO).
 import { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
-import { getObjectBuffer, getSignedObjectUrl, uploadBuffer } from '../lib/minioClient.js';
-import {
-  CertificateLayoutDTO,
-  GenerateCertificatePayloadDTO,
-  certificateGeneratorService,
-} from '../services/certificate-generator.service.js';
-
-const GENERATED_PREFIX = 'certificados-generados/';
+import { getCertificatePdfQueue } from '../lib/queue/queue.js';
 
 const areaBoxSchema = z.object({
   x: z.number().min(0).max(100),
@@ -35,29 +28,9 @@ const generateCertificateSchema = z.object({
   watermarkAreas: z.array(watermarkAreaSchema).default([]),
   pageRange: z.object({ start: z.number().int().min(1), end: z.number().int().min(1) }).optional(),
   outputName: z.string().min(1).optional(),
-  returnAs: z.enum(['url', 'stream']).default('url'),
 });
 
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
-/** Descarga un PDF desde URL externa (respuesta binaria, sin base64). */
-async function fetchPdfFromUrl(url: string): Promise<Uint8Array> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new AppError(502, `No se pudo descargar el PDF desde la URL (HTTP ${response.status})`);
-  }
-  return new Uint8Array(await response.arrayBuffer());
-}
-
-/** Resuelve una referencia (S3/MinIO key o URL) a bytes binarios del PDF. */
-async function resolvePdfBuffer(keyOrUrl: string): Promise<Uint8Array> {
-  if (isHttpUrl(keyOrUrl)) {
-    return fetchPdfFromUrl(keyOrUrl);
-  }
-  return getObjectBuffer(keyOrUrl);
-}
+const jobParamsSchema = z.object({ jobId: z.string().min(1) });
 
 export default async function certificateGeneratorRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
@@ -74,55 +47,62 @@ export default async function certificateGeneratorRoutes(fastify: FastifyInstanc
     },
     async (request, reply) => {
       const body = request.body;
-      const payload: GenerateCertificatePayloadDTO = body;
-      const layout: CertificateLayoutDTO = {
+      const usuarioId = Number(request.user?.sub ?? 0) || undefined;
+
+      const queue = getCertificatePdfQueue();
+      const job = await queue.add('compose-certificate', {
+        tipo: 'compose',
+        templatePdfKeyOrUrl: body.templatePdfKeyOrUrl,
+        documentPdfKeyOrUrl: body.documentPdfKeyOrUrl,
         documentArea: body.documentArea,
         watermarkAreas: body.watermarkAreas,
         pageRange: body.pageRange,
-      };
+        outputName: body.outputName,
+        usuarioId,
+      });
 
-      // Carga binaria de ambos PDFs en paralelo (ArrayBuffer / Uint8Array).
-      const [templateBuffer, documentBuffer] = await Promise.all([
-        resolvePdfBuffer(payload.templatePdfKeyOrUrl),
-        resolvePdfBuffer(payload.documentPdfKeyOrUrl),
-      ]);
+      return reply.code(202).send({
+        ok: true as const,
+        data: { status: 'pending', jobId: job.id },
+      });
+    }
+  );
 
-      const generated = await certificateGeneratorService.generate(
-        templateBuffer,
-        documentBuffer,
-        layout
-      );
+  app.get(
+    '/api/v1/certificados/generar/job/:jobId',
+    {
+      preHandler: [fastify.authenticate],
+      schema: { params: jobParamsSchema },
+    },
+    async (request) => {
+      const queue = getCertificatePdfQueue();
+      const job = await queue.getJob(request.params.jobId);
 
-      const pdfBuffer = Buffer.from(generated.bytes);
+      if (!job) throw new AppError(404, 'Job no encontrado');
 
-      // Modo streaming: devuelve el PDF compilado directamente.
-      if (body.returnAs === 'stream') {
-        reply.header('Content-Type', 'application/pdf');
-        reply.header(
-          'Content-Disposition',
-          `attachment; filename="${body.outputName || 'certificado.pdf'}"`
-        );
-        return reply.send(pdfBuffer);
+      const state = await job.getState();
+
+      if (state === 'completed') {
+        return {
+          ok: true as const,
+          data: { status: 'completed', ...(job.returnvalue as Record<string, unknown>) },
+        };
       }
 
-      // Modo por defecto: sube el binario compilado a MinIO y devuelve la URL firmada.
-      const outputName = body.outputName || `certificado_${Date.now()}.pdf`;
-      const outputKey = `${GENERATED_PREFIX}${Date.now()}_${outputName}`;
-      await uploadBuffer(outputKey, pdfBuffer, 'application/pdf', {
-        originalName: outputName,
-      });
+      if (state === 'failed') {
+        return {
+          ok: true as const,
+          data: { status: 'failed', error: job.failedReason || 'Procesamiento fallido' },
+        };
+      }
 
-      const url = await getSignedObjectUrl(outputKey, 3600);
-
-      return reply.code(201).send({
+      return {
         ok: true as const,
         data: {
-          outputKey,
-          url,
-          pageCount: generated.pageCount,
-          pages: generated.pages,
+          status: state === 'active' ? 'processing' : state || 'pending',
+          jobId: request.params.jobId,
         },
-      });
+      };
     }
   );
 }

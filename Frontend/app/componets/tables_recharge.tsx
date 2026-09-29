@@ -333,6 +333,10 @@ const normalizarPayload = (tabla: string, rawData: Record<string, any>): any => 
         codigo: rawData.CODIGO_CERTIFICADO ?? rawData.codigo ?? "",
         idCalibracion: Number(rawData.ID_CALIBRACION_FK ?? rawData.idCalibracion),
         idDocumento: Number(rawData.ID_DOCUMENTO_FK ?? rawData.idDocumento),
+        estadoRevision: rawData.ESTADO_REVISION ?? rawData.estadoRevision ?? "PENDIENTE_REVISION",
+        motivoRechazo: rawData.MOTIVO_RECHAZO ?? rawData.motivoRechazo ?? null,
+        idPlantillaSello:
+          rawData.ID_PLANTILLA_SELLO_FK ?? rawData.idPlantillaSello ?? null,
         sellos: rawData.sellos ?? rawData.SELLOS ?? [],
       };
 

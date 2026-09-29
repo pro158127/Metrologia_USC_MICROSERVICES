@@ -66,6 +66,7 @@ export type DocumentoDto = z.infer<typeof documentoDtoSchema>;
 export const recepcionDetalleDtoSchema = z.object({
   idInstrumento: z.number(),
   idRecepcion: z.number(),
+  item: z.number().nullable(),
   instrumento: z.string(),
   marca: z.string().nullable(),
   modelo: z.string().nullable(),
@@ -368,6 +369,7 @@ export const recepcionDetalleRawToDtoSchema = z
   .object({
     ID_INSTRUMENTO: z.number(),
     ID_RECEPCION_FK: z.number(),
+    ITEM: z.number().nullish(),
     INSTRUMENTO: z.string(),
     MARCA: z.string().nullish(),
     MODELO: z.string().nullish(),
@@ -382,6 +384,7 @@ export const recepcionDetalleRawToDtoSchema = z
   .transform((raw): RecepcionDetalleDto => ({
     idInstrumento: raw.ID_INSTRUMENTO,
     idRecepcion: raw.ID_RECEPCION_FK,
+    item: raw.ITEM ?? null,
     instrumento: raw.INSTRUMENTO,
     marca: raw.MARCA ?? null,
     modelo: raw.MODELO ?? null,
@@ -713,3 +716,94 @@ export const datosInicialesResponseSchema = z.object({
   tarifas: z.array(tarifaDtoSchema),
 });
 export type DatosInicialesResponse = z.infer<typeof datosInicialesResponseSchema>;
+
+// ============================================================================
+// Inputs de mutación (crear / actualizar recepción)
+// ============================================================================
+const ibcFlagSchema = z.object({
+  E: z.boolean().nullable(),
+  T: z.boolean().nullable(),
+  D: z.boolean().nullable(),
+  A: z.boolean().nullable(),
+});
+
+export const estadoIbcInputSchema = z
+  .object({
+    entrada: ibcFlagSchema.partial().optional(),
+    salida: ibcFlagSchema.partial().optional(),
+  })
+  .passthrough();
+
+export const instrumentoRecepcionInputSchema = z.object({
+  idLocal: z.string().optional(),
+  idInstrumento: z.number().optional(),
+  instrumento: z.string().min(1),
+  marca: z.string().nullish(),
+  modelo: z.string().nullish(),
+  serie: z.string().nullish(),
+  codigoInventario: z.string().nullish(),
+  resolucion: z.string().nullish(),
+  sensorInt: z.boolean().optional(),
+  sensorExt: z.boolean().optional(),
+  estampilla: z.string().nullish(),
+  observaciones: z.string().nullish(),
+  estadoIBC: z.unknown().optional(),
+});
+export type InstrumentoRecepcionInput = z.infer<typeof instrumentoRecepcionInputSchema>;
+
+export const recepcionBodySchema = z.object({
+  estado: z.string().optional(),
+  isNueva: z.boolean().optional(),
+  solicitante: z.string().min(1),
+  nombreEntrega: z.string().nullish(),
+  cotizacionCodigo: z.string().nullish(),
+  ordenTrabajoCodigo: z.string().nullish(),
+  sitioCalibracion: z.string().nullish(),
+  fechaRecepcion: z.string().min(1),
+  fechaSalida: z.string().nullish(),
+  nombreRecibe: z.string().nullish(),
+  nombreEmpaca: z.string().nullish(),
+  accesorios: z.string().nullish(),
+  pruebasCompletas: z.boolean().optional(),
+  observacionesPruebas: z.string().nullish(),
+  nombreCalibra: z.string().nullish(),
+  nombreRecibeServicio: z.string().nullish(),
+  instrumentos: z.array(instrumentoRecepcionInputSchema).min(1),
+});
+export type RecepcionBody = z.infer<typeof recepcionBodySchema>;
+
+export const recepcionParamsSchema = z.object({ id: z.coerce.number() });
+
+export const recepcionInstrumentoParamsSchema = z.object({
+  id: z.coerce.number(),
+  idInstrumento: z.coerce.number(),
+});
+
+export const respuestaRecepcionMutacionSchema = z.object({
+  ok: z.literal(true),
+  data: recepcionEquipoDtoSchema,
+  message: z.string().optional(),
+  id_job: z.string().optional(),
+});
+
+export const historialCambioDtoSchema = z.object({
+  id: z.string(),
+  numeroVersion: z.string(),
+  fechaCambio: z.coerce.date(),
+  descripcion: z.string(),
+  observaciones: z.string().nullable(),
+  aprobo: z.string(),
+  idCotizacion: z.number(),
+  createdAt: z.coerce.date(),
+});
+export type HistorialCambioDto = z.infer<typeof historialCambioDtoSchema>;
+
+export const respuestaHistorialRecepcionSchema = z.object({
+  ok: z.literal(true),
+  data: z.array(historialCambioDtoSchema),
+});
+
+export const respuestaSoftDeleteSchema = z.object({
+  ok: z.literal(true),
+  message: z.string(),
+});

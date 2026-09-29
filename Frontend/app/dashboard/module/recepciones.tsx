@@ -19,6 +19,8 @@ import {
   Plus,
   Trash2,
   Search,
+  History,
+  X,
 } from "lucide-react";
 
 // Importar el contexto y los tipos
@@ -271,8 +273,11 @@ const DatosGeneralesSection = ({
   ordenesTrabajo,
   // Función de actualización
   isNew, // 🟢 Nueva propiedad
+  bloqueado = false,
   onUpdateGeneral,
-}: DatosGeneralesSectionProps& { isNew: boolean }) => {
+}: DatosGeneralesSectionProps & { isNew: boolean }) => {
+  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
+  const camposRaizBloqueados = isNew || bloqueado;
   // Listas para datalist
   const clientesList = useMemo(
     () => clientes.map((c) => c.razonSocial).filter(Boolean),
@@ -325,11 +330,11 @@ const DatosGeneralesSection = ({
             Cotización (código)
           </label>
           <input
-            list={!isNew ? "cotizaciones-datalist" : undefined}
-            value={isNew ? "Automático (Al guardar)" : cotizacionCodigo}
-            disabled={isNew}
+            list={!camposRaizBloqueados ? "cotizaciones-datalist" : undefined}
+            value={camposRaizBloqueados ? "Automático (Al guardar)" : cotizacionCodigo}
+            disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("cotizacionCodigo", e.target.value)}
-            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${isNew ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
           <datalist id="cotizaciones-datalist">
             {cotizacionesList.map((c) => (
@@ -343,11 +348,11 @@ const DatosGeneralesSection = ({
             Orden de Trabajo (código)
           </label>
           <input
-            list={!isNew ? "ordenes-datalist" : undefined}
-            value={isNew ? "Automático (Al guardar)" : ordenTrabajoCodigo}
-            disabled={isNew}
+            list={!camposRaizBloqueados ? "ordenes-datalist" : undefined}
+            value={camposRaizBloqueados ? "Automático (Al guardar)" : ordenTrabajoCodigo}
+            disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
-            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${isNew ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
           <datalist id="ordenes-datalist">
             {ordenesList.map((o) => (
@@ -790,6 +795,7 @@ const InspeccionYFirmasSection = ({
 const FormFooterActions = ({
   actaGuardada,
   onGenerarActa,
+  guardando = false,
 }: FormFooterActionsProps) => {
   return (
     <>
@@ -804,9 +810,12 @@ const FormFooterActions = ({
         </div>
         <button
           onClick={onGenerarActa}
-          className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold bg-[#5680F9] text-white hover:bg-[#4069E2] cursor-pointer shadow-sm border-none"
+          disabled={guardando}
+          className={`flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm border-none ${
+            guardando ? "bg-slate-400 cursor-not-allowed" : "bg-[#5680F9] hover:bg-[#4069E2] cursor-pointer"
+          }`}
         >
-          <FileText size={15} /> Guardar Formato R-CM010
+          <FileText size={15} /> {guardando ? "Guardando..." : "Guardar Formato R-CM010"}
         </button>
       </div>
 
@@ -825,7 +834,15 @@ const FormFooterActions = ({
 // ============================================================
 // 4. COMPONENTE PADRE PRINCIPAL
 // ============================================================
-import { getRecepcionesEnriquecidas,getInitialData } from "@/app/action_module/recepciones";
+import {
+  getRecepcionesEnriquecidas,
+  getInitialData,
+  crearRecepcion,
+  actualizarRecepcion,
+  eliminarInstrumentoRecepcion,
+  getHistorialRecepcion,
+  type HistorialCambioItem,
+} from "@/app/action_module/recepciones";
 export function MainRenderers() {
   // --- Estado global por tabla (solo se re-renderiza si esa tabla cambia) ---
   const recepcionesEquipo = useDbTable("recepciones_equipo");
@@ -864,6 +881,19 @@ export function MainRenderers() {
   // Estado de guardado
   const [actaGuardada, setActaGuardada] = useState(false);
   const [toast, setToast] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  // Trazabilidad / edición
+  const [recepcionActual, setRecepcionActual] = useState<RecepcionEquipoModel | null>(null);
+  const [historialAbierto, setHistorialAbierto] = useState(false);
+  const [historialItems, setHistorialItems] = useState<HistorialCambioItem[]>([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
+
+  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
+  const esEdicionAtada =
+    selectedRecepcionId !== null &&
+    selectedRecepcionId !== "NUEVA" &&
+    !!recepcionActual?.idOrdenTrabajo;
 
   // --- Helpers ---
   const showToast = useCallback((msg: string) => {
@@ -983,7 +1013,22 @@ useEffect(() => {
   }, [showToast]);
 
   const eliminarFilaInstrumento = useCallback(
-    (index: number) => {
+    async (index: number) => {
+      const fila = formulario.instrumentos[index];
+
+      // Si el instrumento ya existe en BD, se desactiva con soft delete real.
+      if (fila?.idInstrumento && recepcionActual?.idRecepcion) {
+        const res = await eliminarInstrumentoRecepcion(
+          recepcionActual.idRecepcion,
+          fila.idInstrumento
+        );
+        if (!res.ok) {
+          showToast(res.error || "No se pudo desactivar el instrumento.");
+          return;
+        }
+        showToast("🗑️ Instrumento desactivado (soft delete) en recepción, OT y cotización.");
+      }
+
       setFormulario((prev) => {
         if (prev.instrumentos.length <= 1) {
           showToast("⚠️ El formato debe contener al menos un instrumento.");
@@ -993,7 +1038,7 @@ useEffect(() => {
         return { ...prev, instrumentos: filtrados };
       });
     },
-    [showToast]
+    [formulario.instrumentos, recepcionActual, showToast]
   );
 
   // --- Cargar una recepción existente para editar ---
@@ -1007,10 +1052,14 @@ useEffect(() => {
      const instrumentos = (recepcion.instrumentos || []).map((det) => {
         // Parseamos el JSON asumiendo que tiene la nueva estructura { entrada: {}, salida: {} }
         // Se usa 'as any' o una interfaz específica si la tienes definida para det.estadoIBC
-        const estadoIBC = det.estadoIBC as any; 
+        const estadoIBC = det.estadoIBC as {
+          entrada?: Record<string, boolean | null>;
+          salida?: Record<string, boolean | null>;
+        } | null;
         
         return {
           id: generarIdUnico(),
+          idInstrumento: det.idInstrumento,
           instrumento: det.instrumento || "",
           marca: det.marca || "",
           modelo: det.modelo || "",
@@ -1061,6 +1110,7 @@ useEffect(() => {
         instrumentos: instrumentos.length > 0 ? instrumentos : [crearFilaInstrumentoVacia()],
       });
 
+      setRecepcionActual(recepcion);
       setActaGuardada(false);
     },
     []
@@ -1087,6 +1137,7 @@ useEffect(() => {
       nombreQuienRecibeServicio: "",
       instrumentos: [crearFilaInstrumentoVacia()],
     });
+    setRecepcionActual(null);
     setActaGuardada(false);
     showToast("📋 Nueva recepción creada.");
   }, [showToast]);
@@ -1111,6 +1162,7 @@ useEffect(() => {
       nombreQuienRecibeServicio: "",
       instrumentos: [crearFilaInstrumentoVacia()],
     });
+    setRecepcionActual(null);
     setActaGuardada(false);
   }, []);
 
@@ -1195,24 +1247,60 @@ const handleGenerarActa = useCallback(async () => {
 
       console.log("📤 Payload a enviar al backend:", payload);
 
-      // 🟢 3. LLAMADA AL SERVER ACTION
-      // const response = await tuServerAction(payload);
-      // if(!response.success) throw new Error("Fallo en BD");
+      // 🟢 3. LLAMADA AL SERVER ACTION (crear o actualizar según el modo)
+      setGuardando(true);
+      const esNueva = selectedRecepcionId === "NUEVA" || !recepcionActual;
+      const response = esNueva
+        ? await crearRecepcion(payload)
+        : await actualizarRecepcion(recepcionActual.idRecepcion, payload);
 
-      setActaGuardada(true);
-      
-      // Si era nueva, lo sacamos a la lista después de guardar
-      if (selectedRecepcionId === "NUEVA") {
-        setTimeout(() => {
-          volverALista();
-        }, 2000);
+      if (!response.ok) {
+        throw new Error(response.error || "Fallo al persistir en el servidor");
       }
 
+      setActaGuardada(true);
+      showToast(response.message || "✅ Recepción guardada correctamente.");
+
+      // Refrescar la tabla global de recepciones
+      const data = await getInitialData();
+      setDbState((prev) => ({
+        ...prev,
+        recepciones_equipo: data.recepciones as RecepcionEquipoModel[],
+        clientes: data.clientes as ClienteModel[],
+        cotizaciones: data.cotizaciones as CotizacionModel[],
+        ordenes_trabajo: data.ordenes as OrdenTrabajoModel[],
+        tarifas: data.tarifas as TarifaModel[],
+      }));
+
+      // Si era nueva, lo sacamos a la lista después de guardar
+      if (esNueva) {
+        setTimeout(() => {
+          volverALista();
+        }, 1500);
+      }
     } catch (error) {
+      const mensaje = (error as Error)?.message;
       console.error("Error al guardar recepción:", error);
-      showToast("❌ Error al persistir los datos en el servidor.");
+      showToast(mensaje ? `❌ ${mensaje}` : "❌ Error al persistir los datos en el servidor.");
+    } finally {
+      setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, showToast, volverALista]);
+  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, setDbState]);
+
+  // --- Trazabilidad: cargar historial de cambios de la cotización ---
+  const abrirHistorial = useCallback(async () => {
+    if (!recepcionActual?.idRecepcion) {
+      showToast("⚠️ Guarda la recepción para consultar su trazabilidad.");
+      return;
+    }
+    setHistorialAbierto(true);
+    setCargandoHistorial(true);
+    try {
+      setHistorialItems(await getHistorialRecepcion(recepcionActual.idRecepcion));
+    } finally {
+      setCargandoHistorial(false);
+    }
+  }, [recepcionActual, showToast]);
 
   // ============================================================
   // RENDER
@@ -1269,8 +1357,25 @@ const handleGenerarActa = useCallback(async () => {
       ) : (
         // --- VISTA DE FORMULARIO ---
         <div className="flex flex-col gap-5">
+          {recepcionActual && (
+            <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-2.5">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                {esEdicionAtada
+                  ? "Edición atada a OT — campos raíz bloqueados"
+                  : `Editando recepción ${recepcionActual.codigo}`}
+              </span>
+              <button
+                onClick={abrirHistorial}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer border-none"
+              >
+                <History size={14} /> Ver trazabilidad
+              </button>
+            </div>
+          )}
+
           <DatosGeneralesSection
              isNew={selectedRecepcionId === "NUEVA"}
+            bloqueado={esEdicionAtada}
             solicitante={formulario.solicitante}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}
@@ -1306,7 +1411,51 @@ const handleGenerarActa = useCallback(async () => {
           <FormFooterActions
             actaGuardada={actaGuardada}
             onGenerarActa={handleGenerarActa}
+            guardando={guardando}
           />
+        </div>
+      )}
+
+      {historialAbierto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl border border-slate-100 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                <History size={16} /> Trazabilidad de cambios
+              </div>
+              <button
+                onClick={() => setHistorialAbierto(false)}
+                className="text-slate-400 hover:text-slate-700 border-none bg-transparent cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-5">
+              {cargandoHistorial ? (
+                <div className="text-xs text-slate-400">Cargando historial...</div>
+              ) : historialItems.length === 0 ? (
+                <div className="text-xs text-slate-400">Sin cambios registrados.</div>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {historialItems.map((h) => (
+                    <li key={h.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-[#5680F9]">{h.numeroVersion}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(h.fechaCambio).toLocaleString("es-CO")}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-700 mt-1">{h.descripcion}</p>
+                      {h.observaciones && (
+                        <p className="text-[11px] text-slate-500 mt-1">Obs: {h.observaciones}</p>
+                      )}
+                      <p className="text-[10px] text-slate-400 mt-1">Aprobó: {h.aprobo}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

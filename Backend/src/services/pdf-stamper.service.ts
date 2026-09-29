@@ -19,6 +19,8 @@ export interface ComposeLayoutDTO {
   documentArea: AreaBoxDTO;
   watermarkAreas: WatermarkAreaDTO[];
   documentOpacity?: number;
+  pageRange?: { start: number; end: number };
+  sealImages?: Record<string, { bytes: Uint8Array; mimeType: 'image/png' | 'image/jpeg' }>;
 }
 
 export interface GeneratedPageInfo {

@@ -15,6 +15,10 @@ import {
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import {
+  aprobarCertificado,
+  rechazarCertificado,
+} from "@/app/action_module/certificados";
 import type {
   SortField,
   SortDir,
@@ -605,7 +609,15 @@ const [now] = useState<number>(() => Date.now());
           )
         : {};
 
+      const status: "pendiente" | "aprobado" | "devuelto" =
+        cert.estadoRevision === "APROBADO"
+          ? "aprobado"
+          : cert.estadoRevision === "RECHAZADO"
+          ? "devuelto"
+          : "pendiente";
+
       return {
+        idCertificado: cert.idCertificado,
         ot: orden?.codigo ?? "—",
         estampilla: detalle?.estampilla ?? "—",
         cliente: cliente?.razonSocial ?? "—",
@@ -622,8 +634,9 @@ const [now] = useState<number>(() => Date.now());
         })}`,
         espera,
         bloqueado: false,
-        status: "pendiente",
+        status,
         datosTecnicos,
+        motivoRechazo: cert.motivoRechazo ?? null,
       };
     });
   }, [certificados, calibraciones, recepcionDetalles, ordenes, clientes, usuarios, tarifas]);
@@ -651,29 +664,56 @@ const [now] = useState<number>(() => Date.now());
   }, [pending, sortField, sortDir]);
 
   const handleAprobar = useCallback(
-    (ot: string) => {
+    async (ot: string) => {
       if (!tienePermisosRevision) return;
+      const cert = certs.find((c) => c.ot === ot && c.status === "pendiente");
+      if (!cert) {
+        showToast("⚠️ No se encontró el certificado seleccionado.");
+        return;
+      }
+
+      const res = await aprobarCertificado(cert.idCertificado);
+      if (!res.ok) {
+        showToast(`❌ ${res.error ?? "No se pudo aprobar el certificado."}`);
+        return;
+      }
+
       setShowAprobar(null);
       setSelected(null);
-      showToast("✅ Certificado aprobado con éxito.");
+      showToast(`✅ ${res.message ?? "Certificado aprobado con éxito."}`);
+      await loadTable("certificados");
     },
-    [tienePermisosRevision, showToast]
+    [tienePermisosRevision, certs, showToast, loadTable]
   );
 
   const handleDevolver = useCallback(
-    (ot: string) => {
+    async (ot: string) => {
       if (!tienePermisosRevision) return;
       if (!motivo.trim()) {
         setMotivoError(true);
         return;
       }
+
+      const cert = certs.find((c) => c.ot === ot && c.status === "pendiente");
+      if (!cert) {
+        showToast("⚠️ No se encontró el certificado seleccionado.");
+        return;
+      }
+
+      const res = await rechazarCertificado(cert.idCertificado, motivo.trim());
+      if (!res.ok) {
+        showToast(`❌ ${res.error ?? "No se pudo rechazar el certificado."}`);
+        return;
+      }
+
       setShowDevolver(null);
       setMotivo("");
       setMotivoError(false);
       setSelected(null);
-      showToast("📤 Certificado rechazado y devuelto al técnico.");
+      showToast(`📤 ${res.message ?? "Certificado rechazado y devuelto al técnico."}`);
+      await loadTable("certificados");
     },
-    [tienePermisosRevision, motivo, showToast]
+    [tienePermisosRevision, motivo, certs, showToast, loadTable]
   );
 
   return (
