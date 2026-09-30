@@ -46,4 +46,3 @@ next-env.d.ts
 
 .docker-data/
 *.sql.gz.pnpm-store/
-.pnpm-store/
