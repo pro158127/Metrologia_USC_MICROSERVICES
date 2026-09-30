@@ -17,7 +17,7 @@ import {
   Clock,
   Paperclip,
 } from "lucide-react";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import {
   getDocumentosEnvio,
   subirComprobante,
@@ -338,6 +338,7 @@ export function MainRendererenv() {
   const ordenes = useDbTable("ordenes_trabajo");
   const clientes = useDbTable("clientes");
   const { loadTable } = useDbActions();
+  const loadingEnvio = useDbLoading("ordenes_trabajo");
 
   useEffect(() => {
     loadTable("ordenes_trabajo");
@@ -460,7 +461,15 @@ export function MainRendererenv() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filas.length === 0 ? (
+            {loadingEnvio ? (
+              [1, 2, 3, 4, 5].map((n) => (
+                <tr key={n}>
+                  <td colSpan={7} className="px-4 py-3.5">
+                    <div className="h-4 rounded bg-slate-200 animate-pulse" />
+                  </td>
+                </tr>
+              ))
+            ) : filas.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
                   No hay órdenes que coincidan con los filtros.

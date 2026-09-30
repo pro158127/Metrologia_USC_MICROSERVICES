@@ -388,7 +388,21 @@ export function MainRendererreport() {
   const tarifas = useDbTable("tarifas");
   const usuarios = useDbTable("usuarios");
   const { loadTable } = useDbActions();
-  const loading = useDbLoading("certificados");
+  const loadingCertificados = useDbLoading("certificados");
+  const loadingOrdenes = useDbLoading("ordenes_trabajo");
+  const loadingCotizaciones = useDbLoading("cotizaciones");
+  const loadingFacturas = useDbLoading("facturas");
+  const loadingClientes = useDbLoading("clientes");
+  const loadingTarifas = useDbLoading("tarifas");
+  const loadingUsuarios = useDbLoading("usuarios");
+  const loading =
+    loadingCertificados ||
+    loadingOrdenes ||
+    loadingCotizaciones ||
+    loadingFacturas ||
+    loadingClientes ||
+    loadingTarifas ||
+    loadingUsuarios;
 
   const [facturaSearch, setFacturaSearch] = useState("");
   const [showTrazabilidad, setShowTrazabilidad] = useState(false);
@@ -548,19 +562,34 @@ export function MainRendererreport() {
 
   return (
     <div className="module-page text-slate-900">
-      <HeaderSection />
-      <FilterBar clientes={clientesFiltro} tecnicos={tecnicos} tiposServicio={tiposServicio} />
-      <KpiGrid kpis={kpis} />
-      <ChartsSection barData={barData} conversionData={conversionData} />
-      <TecnicoSummaryTable tecnicoData={tecnicoData} />
-      <HistoricalCertificatesTable certHistoricos={certHistoricos} />
-      <AuditTraceabilityReport
-        facturaSearch={facturaSearch}
-        showTrazabilidad={showTrazabilidad}
-        onSearchChange={setFacturaSearch}
-        onGenerateReport={handleGenerateReport}
-        filas={filasAuditoria}
-      />
+      {loading ? (
+        <div className="space-y-5 animate-pulse">
+          <div className="h-8 w-64 rounded bg-slate-200" />
+          <div className="h-12 rounded-2xl bg-slate-200" />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} className="h-28 rounded-2xl bg-slate-200" />
+            ))}
+          </div>
+          <div className="h-72 rounded-2xl bg-slate-200" />
+        </div>
+      ) : (
+        <>
+          <HeaderSection />
+          <FilterBar clientes={clientesFiltro} tecnicos={tecnicos} tiposServicio={tiposServicio} />
+          <KpiGrid kpis={kpis} />
+          <ChartsSection barData={barData} conversionData={conversionData} />
+          <TecnicoSummaryTable tecnicoData={tecnicoData} />
+          <HistoricalCertificatesTable certHistoricos={certHistoricos} />
+          <AuditTraceabilityReport
+            facturaSearch={facturaSearch}
+            showTrazabilidad={showTrazabilidad}
+            onSearchChange={setFacturaSearch}
+            onGenerateReport={handleGenerateReport}
+            filas={filasAuditoria}
+          />
+        </>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type RealtimeTablesState from '@/tipos/store';
+import { obtenerLlavePrimaria } from '@/app/lib/realtime/normalize';
 
 // Importa tus Server Actions
 import { obtenerUsuariosPorPermiso,obtenerRolesAction } from '@/app/action_module/administration';
@@ -52,8 +53,13 @@ export const useDbStore = create<
       table: K,
       updater: (prev: RealtimeTablesState[K]) => RealtimeTablesState[K]
     ) => void;
+    mergeTable: <K extends keyof RealtimeTablesState>(
+      table: K,
+      rows: RealtimeTablesState[K]
+    ) => void;
+    setTableLoading: <K extends keyof RealtimeTablesState>(table: K, value: boolean) => void;
     loadAllData: () => Promise<void>;
-    loadTable: <K extends keyof RealtimeTablesState>(table: K) => Promise<void>;
+    loadTable: <K extends keyof RealtimeTablesState>(table: K, force?: boolean) => Promise<void>;
     reset: () => void;
   }
 >((set, get) => ({
@@ -74,12 +80,46 @@ updateTable: (table, updater) =>
       [table]: [...updatedTableData], 
     };
   }),
+
+  // Fusiona un snapshot (fetch HTTP) con el estado actual por clave primaria:
+  // - Las filas del snapshot (autoritativas) ganan sobre las solapadas.
+  // - Las filas que solo existen en el estado actual (insertadas por webhook
+  //   durante el fetch) se conservan al inicio para no ocultarlas.
+  mergeTable: (table, rows) =>
+    set((state) => {
+      const actual = state[table] || [];
+      const incoming = rows || [];
+
+      const pkValida = (item: unknown): number | null => {
+        const { idValor } = obtenerLlavePrimaria(table as string, item);
+        return idValor !== undefined && idValor !== null && !isNaN(idValor) ? idValor : null;
+      };
+
+      const clavesIncoming = new Set<number>();
+      for (const item of incoming) {
+        const k = pkValida(item);
+        if (k !== null) clavesIncoming.add(k);
+      }
+
+      const extras = actual.filter((item) => {
+        const k = pkValida(item);
+        return k !== null && !clavesIncoming.has(k);
+      });
+
+      return {
+        ...state,
+        [table]: [...extras, ...incoming],
+      };
+    }),
+
+  setTableLoading: (table, value) =>
+    set((s) => ({ loading: { ...s.loading, [table]: value } })),
   
   reset: () => set(() => ({ ...initialState, loading: {}, initialized: false })),
 
-  loadTable: async (table) => {
+  loadTable: async (table, force = false) => {
     const state = get();
-    if (state[table].length > 0 && table !== 'usuarios') return;
+    if (state[table].length > 0 && table !== 'usuarios' && !force) return;
 
     set((s) => ({ loading: { ...s.loading, [table]: true } }));
     try {
@@ -144,13 +184,10 @@ updateTable: (table, updater) =>
           const res = await obtenerCertificadosConContexto();
           if (res.success && res.data) {
             data = res.data.certificados;
-            set((s) => ({
-              ...s,
-              calibraciones: res.data!.calibraciones,
-              recepcion_equipo_detalles: res.data!.instrumentos,
-              ordenes_trabajo: res.data!.ordenes,
-              clientes: res.data!.clientes,
-            }));
+            get().mergeTable('calibraciones', res.data.calibraciones);
+            get().mergeTable('recepcion_equipo_detalles', res.data.instrumentos);
+            get().mergeTable('ordenes_trabajo', res.data.ordenes);
+            get().mergeTable('clientes', res.data.clientes);
           }
           break;
         }
@@ -158,9 +195,8 @@ updateTable: (table, updater) =>
           console.warn(`⚠️ loadTable: Tabla "${table}" sin acción definida.`);
           data = [];
       }
+      get().mergeTable(table, data);
       set((s) => ({
-        ...s,
-        [table]: data || [],
         loading: { ...s.loading, [table]: false },
       }));
     } catch (error) {

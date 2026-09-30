@@ -1057,7 +1057,7 @@ export default function Cotizaciones() {
   const usuarios = useDbTable("usuarios");
   const tarifasStore = useDbTable("tarifas");
   const loadingCotizaciones = useDbLoading("cotizaciones");
-  const { setDbState, loadTable } = useDbActions();
+  const { loadTable, mergeTable, setTableLoading } = useDbActions();
 
   const [view, setView] = useState<ViewCotizacion>("list");
   const [search, setSearch] = useState("");
@@ -1093,46 +1093,48 @@ export default function Cotizaciones() {
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
   const cargarCotizaciones = useCallback(async () => {
-    const response = await obtenerTodasLasCotizaciones();
-    if (response.ok && Array.isArray(response.data)) {
-      const parse_data: CotizacionVista[] = response.data.map((c) => ({
-        idCotizacion: c.idCotizacion,
-        codigo: c.codigo,
-        idCliente: c.idCliente,
-        montoTotal: Number(c.montoTotal ?? 0),
-        estado: c.estado,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
-        viaticos: Number(c.viaticos ?? 0),
-        descuento: Number(c.descuento ?? 0),
-        detalles: (c.detalles ?? []).map((d) => ({
-          idDetalle: d.idDetalle,
-          idCotizacion: d.idCotizacion,
-          equipoDescripcion: d.equipoDescripcion,
-          tipoServicio: d.tipoServicio,
-          magnitud: d.magnitud,
-          normaTecnica: d.normaTecnica,
-          cantidad: d.cantidad,
-          valorUnitario: Number(d.valorUnitario),
-          valorTotal: Number(d.valorTotal),
-          sitio: d.sitio ?? null,
-        })),
-        cliente: {
+    setTableLoading("cotizaciones", true);
+    try {
+      const response = await obtenerTodasLasCotizaciones();
+      if (response.ok && Array.isArray(response.data)) {
+        const parse_data: CotizacionVista[] = response.data.map((c) => ({
+          idCotizacion: c.idCotizacion,
+          codigo: c.codigo,
           idCliente: c.idCliente,
-          razonSocial: c.cliente?.razonSocial ?? null,
-          correo: c.cliente?.correo ?? null,
-        },
-        historialEstados: c.historialEstados,
-        historial_cambio:c.Historiacambios,
-        
-      }));
+          montoTotal: Number(c.montoTotal ?? 0),
+          estado: c.estado,
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+          viaticos: Number(c.viaticos ?? 0),
+          descuento: Number(c.descuento ?? 0),
+          detalles: (c.detalles ?? []).map((d) => ({
+            idDetalle: d.idDetalle,
+            idCotizacion: d.idCotizacion,
+            equipoDescripcion: d.equipoDescripcion,
+            tipoServicio: d.tipoServicio,
+            magnitud: d.magnitud,
+            normaTecnica: d.normaTecnica,
+            cantidad: d.cantidad,
+            valorUnitario: Number(d.valorUnitario),
+            valorTotal: Number(d.valorTotal),
+            sitio: d.sitio ?? null,
+          })),
+          cliente: {
+            idCliente: c.idCliente,
+            razonSocial: c.cliente?.razonSocial ?? null,
+            correo: c.cliente?.correo ?? null,
+          },
+          historialEstados: c.historialEstados,
+          historial_cambio:c.Historiacambios,
+          
+        }));
 
-      setDbState((prev) => ({
-        ...prev,
-        cotizaciones: parse_data as unknown as CotizacionModel[],
-      }));
+        mergeTable("cotizaciones", parse_data as unknown as CotizacionModel[]);
+      }
+    } finally {
+      setTableLoading("cotizaciones", false);
     }
-  }, [setDbState]);
+  }, [mergeTable, setTableLoading]);
 
   // Tarifas derivadas del store (sin estado local ni fallback mock)
   const tarifasOptions: TarifaOption[] = useMemo(() => {

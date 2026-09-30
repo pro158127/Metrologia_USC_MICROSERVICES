@@ -419,6 +419,7 @@ const ClientControls = ({
 export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps) {
   const clientes = useDbTable("clientes") as unknown as ClienteVista[];
   const {loadTable}=useDbActions()
+  const loadingClientes = useDbLoading("clientes");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("Todos");
   const { data: session } = useSession();
@@ -565,16 +566,26 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filtered.map((c) => (
-              <CustomerTableRow
-                key={c.idCliente}
-                c={c}
-                permisos={permisos}
-                handleEdit={handleEdit}
-                handleToggleStatus={handleToggleStatus}
-                onSelectCliente={onSelectCliente}
-              />
-            ))}
+            {loadingClientes ? (
+              [1, 2, 3, 4, 5].map((n) => (
+                <tr key={n}>
+                  <td colSpan={8} className="px-4 py-3.5">
+                    <div className="h-4 rounded bg-slate-200 animate-pulse" />
+                  </td>
+                </tr>
+              ))
+            ) : (
+              filtered.map((c) => (
+                <CustomerTableRow
+                  key={c.idCliente}
+                  c={c}
+                  permisos={permisos}
+                  handleEdit={handleEdit}
+                  handleToggleStatus={handleToggleStatus}
+                  onSelectCliente={onSelectCliente}
+                />
+              ))
+            )}
           </tbody>
         </table>
       </div>

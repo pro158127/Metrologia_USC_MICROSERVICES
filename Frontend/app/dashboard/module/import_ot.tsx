@@ -4,6 +4,7 @@
   import React, { useState, useEffect } from "react";
   import { Link, FileText, Unlink, Layers, AlertTriangle, Search, Filter } from "lucide-react";
   import { useDbStore } from "../../stores/dbstore"; 
+  import { useDbLoading } from "@/app/componets/tables_recharge";
   import { procesarImportacionOTAction, consultarEstadoJobAction } from "@/app/action_module/ordenes";
   import { subirArchivoDocumento } from "@/app/action_module/archivos";
 
@@ -243,6 +244,7 @@
     const [isMounted, setIsMounted] = useState(false);
 
     const { cotizaciones, ordenes_trabajo, loadTable } = useDbStore();
+    const loadingOTs = useDbLoading("ordenes_trabajo");
 
     const [file, setFile] = useState<File | null>(null);
     const [showForm, setShowForm] = useState(false);
@@ -373,7 +375,15 @@
             )}
           </div>
         </section>
-        <OTTableSection generatedOTs={generatedOTs} />
+        {loadingOTs ? (
+          <div className="space-y-2 animate-pulse">
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="h-12 rounded-xl bg-slate-200" />
+            ))}
+          </div>
+        ) : (
+          <OTTableSection generatedOTs={generatedOTs} />
+        )}
       </div>
     );
   };

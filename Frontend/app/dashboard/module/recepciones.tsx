@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 
 // Importar el contexto y los tipos
-import { useDbTable, useDbActions } from "./../../componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables_recharge";
 import type {
   FilaInstrumento,
   FormularioRecepcion,
@@ -850,7 +850,8 @@ export function MainRenderers() {
   const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
   const clientesStore = useDbTable("clientes");
   const tarifasStore = useDbTable("tarifas");
-  const { setDbState } = useDbActions();
+  const { mergeTable, setTableLoading } = useDbActions();
+  const loadingRecepciones = useDbLoading("recepciones_equipo");
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
@@ -905,19 +906,20 @@ useEffect(() => {
   const fetchInitialData = async () => {
     // Si ya hay datos, evitamos recargar
     if (recepcionesEquipo.length > 0) return;
+    setTableLoading("recepciones_equipo", true);
     try {
       const data = await getInitialData();
-      // Actualizamos el contexto global
-      setDbState((prev) => ({
-        ...prev,
-        recepciones_equipo: data.recepciones as RecepcionEquipoModel[],
-        clientes: data.clientes as ClienteModel[],
-        cotizaciones: data.cotizaciones as CotizacionModel[],
-        ordenes_trabajo: data.ordenes as OrdenTrabajoModel[],
-        tarifas: data.tarifas as TarifaModel[],
-      }));
+      // Actualizamos el contexto global (fusionando con el estado actual para no
+      // pisar actualizaciones en tiempo real que hayan llegado durante el fetch)
+      mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+      mergeTable("clientes", data.clientes as ClienteModel[]);
+      mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+      mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+      mergeTable("tarifas", data.tarifas as TarifaModel[]);
     } catch (error) {
       console.error(error);
+    } finally {
+      setTableLoading("recepciones_equipo", false);
     }
   };
   fetchInitialData();
@@ -1261,16 +1263,18 @@ const handleGenerarActa = useCallback(async () => {
       setActaGuardada(true);
       showToast(response.message || "✅ Recepción guardada correctamente.");
 
-      // Refrescar la tabla global de recepciones
-      const data = await getInitialData();
-      setDbState((prev) => ({
-        ...prev,
-        recepciones_equipo: data.recepciones as RecepcionEquipoModel[],
-        clientes: data.clientes as ClienteModel[],
-        cotizaciones: data.cotizaciones as CotizacionModel[],
-        ordenes_trabajo: data.ordenes as OrdenTrabajoModel[],
-        tarifas: data.tarifas as TarifaModel[],
-      }));
+      // Refrescar la tabla global de recepciones (fusionando, sin pisar tiempo real)
+      setTableLoading("recepciones_equipo", true);
+      try {
+        const data = await getInitialData();
+        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+        mergeTable("clientes", data.clientes as ClienteModel[]);
+        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+        mergeTable("tarifas", data.tarifas as TarifaModel[]);
+      } finally {
+        setTableLoading("recepciones_equipo", false);
+      }
 
       // Si era nueva, lo sacamos a la lista después de guardar
       if (esNueva) {
@@ -1285,7 +1289,7 @@ const handleGenerarActa = useCallback(async () => {
     } finally {
       setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, setDbState]);
+  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, mergeTable, setTableLoading]);
 
   // --- Trazabilidad: cargar historial de cambios de la cotización ---
   const abrirHistorial = useCallback(async () => {
@@ -1339,7 +1343,11 @@ const handleGenerarActa = useCallback(async () => {
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {recepcionesFiltradas.length > 0 ? (
+            {loadingRecepciones ? (
+              [1, 2, 3].map((n) => (
+                <div key={n} className="h-40 rounded-2xl bg-slate-200 animate-pulse" />
+              ))
+            ) : recepcionesFiltradas.length > 0 ? (
               recepcionesFiltradas.map((r) => (
                 <RecepcionCard
                   key={r.idRecepcion}

@@ -1536,7 +1536,7 @@ import { module_permission } from "@/app/server_component/controlle_permission";
 import { useSession } from "next-auth/react";
 import { generarTokenBackend } from "@/app/lib/auth-token";
 // 🔄 Reemplazar useDbRealtime por los nuevos hooks
-import { UsuarioModel, useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { UsuarioModel, useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import { warn } from "console";
 
 // ==========================================
@@ -1560,6 +1560,7 @@ export function Administracion() {
   const usuarios = useDbTable("usuarios");
   const roles = useDbTable("roles");
   const { loadAllData, loadTable } = useDbActions();
+  const loadingUsuarios = useDbLoading("usuarios");
 
   const permisos = session?.user?.permissions;
   const permission = useMemo(() => module_permission(permisos), [permisos]);
@@ -1790,16 +1791,24 @@ console.log("LONGITUD FILTRADOS:", filteredUsers.length);
 
       {/* Vistas */}
       {tab === "usuarios" && (
-        <RenderTabUsuarios
-          search={search}
-          setSearch={setSearch}
-          filteredUsers={filteredUsers}
-          openCreate={openCreate}
-          openEdit={openEdit}
-          toggleEstado={toggleEstado}
-          showToast={showToast}
-          rolColors={rolColors}
-        />
+        loadingUsuarios ? (
+          <div className="space-y-2 animate-pulse">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div key={n} className="h-12 rounded-lg bg-slate-200" />
+            ))}
+          </div>
+        ) : (
+          <RenderTabUsuarios
+            search={search}
+            setSearch={setSearch}
+            filteredUsers={filteredUsers}
+            openCreate={openCreate}
+            openEdit={openEdit}
+            toggleEstado={toggleEstado}
+            showToast={showToast}
+            rolColors={rolColors}
+          />
+        )
       )}
 
       {tab === "bitacora" && (

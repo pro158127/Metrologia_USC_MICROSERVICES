@@ -1266,7 +1266,7 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
 // 3. COMPONENTE PADRE
 // ==========================================
 import { obtenerDatosIniciales } from "@/app/action_module/ordenes";
-import { useDbTable, useDbActions, OrdenTrabajoModel, UsuarioModel, CotizacionModel, RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading, OrdenTrabajoModel, UsuarioModel, CotizacionModel, RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";
 export const OrdenesTrabajo = () => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
   const usuarios = useDbTable("usuarios");
@@ -1275,7 +1275,8 @@ export const OrdenesTrabajo = () => {
   const clientes = useDbTable("clientes");
   const documentos = useDbTable("documentos");
   const tarifas = useDbTable("tarifas");
-  const { setDbState } = useDbActions();
+  const { mergeTable, setTableLoading } = useDbActions();
+  const loadingOrdenes = useDbLoading("ordenes_trabajo");
 
   // Vista actual (kanban, lista o detalle de OT)
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
@@ -1573,6 +1574,7 @@ const saveOrderEdits = async () => {
    */
   useEffect(() => {
     async function initdata() {
+      setTableLoading("ordenes_trabajo", true);
       try {
         const res = await obtenerDatosIniciales();
        
@@ -1595,15 +1597,15 @@ const saveOrderEdits = async () => {
               }));
            
 
-              setDbState((prev) => ({ ...prev, usuarios: parsedUsers }));
+              mergeTable("usuarios", parsedUsers as any);
               break;
             }
             case 1: {
-              setDbState((prev) => ({ ...prev, ordenes_trabajo: res?.ordenes }));
+              mergeTable("ordenes_trabajo", res?.ordenes as any);
               break;
             }
             case 2: {
-              setDbState((prev) => ({ ...prev, clientes: res?.clientes }));
+              mergeTable("clientes", res?.clientes as any);
               break;
             }
             case 3: {
@@ -1613,16 +1615,16 @@ const saveOrderEdits = async () => {
                   ...tarifa,
                   historial: tarifa.historial}
               ));
-              setDbState((prev) => ({ ...prev, tarifas: parsedTarifas }));
+              mergeTable("tarifas", parsedTarifas as any);
               break;
             }
             case 4: {
-              setDbState((prev) => ({ ...prev, roles: res.roles }));
+              mergeTable("roles", res.roles as any);
               break;
             }
             case 5: {
               // Documentos con sus versiones (si vienen en la respuesta)
-              setDbState((prev) => ({ ...prev, documentos: res.version }));
+              mergeTable("documentos", res.version as any);
               break;
             }
             default:
@@ -1632,6 +1634,8 @@ const saveOrderEdits = async () => {
         console.log(...usuarios,"aqui estaaa")
       } catch (error) {
         console.error("Error al obtener datos iniciales:", error);
+      } finally {
+        setTableLoading("ordenes_trabajo", false);
       }
     }
     initdata();
@@ -1798,18 +1802,36 @@ const handleRemoveInstrument = (id: string) => {
       )}
 
       {!selectedOT && viewMode === "kanban" && (
-        <KanbanBoardView
-          otsList={filtered}
-          collapsedColumns={collapsedColumns}
-          toggleColumnCollapse={toggleColumnCollapse}
-          onOpenOT={openOT}
-          warnigs={warnings} 
-     
-        />
+        loadingOrdenes ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} className="space-y-3">
+                <div className="h-6 w-24 rounded bg-slate-200" />
+                <div className="h-40 rounded-2xl bg-slate-200" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <KanbanBoardView
+            otsList={filtered}
+            collapsedColumns={collapsedColumns}
+            toggleColumnCollapse={toggleColumnCollapse}
+            onOpenOT={openOT}
+            warnigs={warnings} 
+          />
+        )
       )}
 
       {!selectedOT && viewMode === "list" && (
-        <ListViewTable otsList={otss} search={search} onOpenOT={openOT} />
+        loadingOrdenes ? (
+          <div className="space-y-2 animate-pulse">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div key={n} className="h-10 rounded-lg bg-slate-200" />
+            ))}
+          </div>
+        ) : (
+          <ListViewTable otsList={otss} search={search} onOpenOT={openOT} />
+        )
       )}
     </div>
   );

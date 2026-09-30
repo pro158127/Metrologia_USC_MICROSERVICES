@@ -40,7 +40,7 @@ import type {
   SystemStat,
   RecentActivityItem,
 } from "@/tipos/dashboard";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 
 // ========== UTILIDADES DE FORMATO ==========
 const formatMoneda = (val: number) =>
@@ -310,6 +310,17 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const facturas = useDbTable("facturas");
   const clientes = useDbTable("clientes");
   const { loadTable } = useDbActions();
+  const loadingCotizaciones = useDbLoading("cotizaciones");
+  const loadingOrdenes = useDbLoading("ordenes_trabajo");
+  const loadingCertificados = useDbLoading("certificados");
+  const loadingFacturas = useDbLoading("facturas");
+  const loadingClientes = useDbLoading("clientes");
+  const loadingDashboard =
+    loadingCotizaciones ||
+    loadingOrdenes ||
+    loadingCertificados ||
+    loadingFacturas ||
+    loadingClientes;
 
   useEffect(() => {
     loadTable("cotizaciones");
@@ -517,17 +528,34 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
   return (
     <div className="p-8 overflow-y-auto h-full bg-[#F8FAFC] text-slate-900">
-      <WelcomeHeaderSection systemStats={systemStats} />
-      <KpiGridSection kpiData={kpiData} />
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
-        <PendingCertificatesSection onNavigate={onNavigate} pendingCerts={pendingCerts} pendingCount={pendingCerts.length} />
-        <SystemAlertsSection alerts={alerts} recentActivity={recentActivity} />
-      </div>
-      <div className="grid gap-4 xl:grid-cols-[3fr_2fr] mb-6">
-        <QuotesBarChartSection barData={barData} />
-        <ServiceDistributionPieChartSection pieData={pieData} />
-      </div>
-      <FooterSection />
+      {loadingDashboard ? (
+        <div className="space-y-6 animate-pulse">
+          <div className="h-24 rounded-[24px] bg-slate-200" />
+          <div className="grid gap-4 xl:grid-cols-4">
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} className="h-32 rounded-[24px] bg-slate-200" />
+            ))}
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
+            <div className="h-64 rounded-[24px] bg-slate-200" />
+            <div className="h-64 rounded-[24px] bg-slate-200" />
+          </div>
+        </div>
+      ) : (
+        <>
+          <WelcomeHeaderSection systemStats={systemStats} />
+          <KpiGridSection kpiData={kpiData} />
+          <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
+            <PendingCertificatesSection onNavigate={onNavigate} pendingCerts={pendingCerts} pendingCount={pendingCerts.length} />
+            <SystemAlertsSection alerts={alerts} recentActivity={recentActivity} />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[3fr_2fr] mb-6">
+            <QuotesBarChartSection barData={barData} />
+            <ServiceDistributionPieChartSection pieData={pieData} />
+          </div>
+          <FooterSection />
+        </>
+      )}
     </div>
   );
 }

@@ -532,7 +532,7 @@ const CatalogRow = ({
 // ----------------------------------------------------------------------
 export const CatalogTableView = () => {
   const tarifas = useDbTable("tarifas");
-  const { setDbState, loadTable } = useDbActions();
+  const { mergeTable, loadTable, setTableLoading } = useDbActions();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMagnitud, setSelectedMagnitud] = useState("TODAS");
   const [selectedTipoServicio, setSelectedTipoServicio] = useState("TODOS");
@@ -572,12 +572,14 @@ export const CatalogTableView = () => {
   };
 
   const recargarTarifas = async () => {
-    const res = await obtenerTodasLasTarifas();
-    if (res.ok && res.data) {
-      setDbState((prev) => ({
-        ...prev,
-        tarifas: res.data as unknown as typeof prev.tarifas,
-      }));
+    setTableLoading("tarifas", true);
+    try {
+      const res = await obtenerTodasLasTarifas();
+      if (res.ok && res.data) {
+        mergeTable("tarifas", res.data as unknown as TarifaModel[]);
+      }
+    } finally {
+      setTableLoading("tarifas", false);
     }
   };
 
