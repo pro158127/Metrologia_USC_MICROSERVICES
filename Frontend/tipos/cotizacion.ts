@@ -20,6 +20,7 @@ export interface DetalleInput {
   normaTecnica?: string;
   cantidad: number;
   valorUnitario: number;
+  sitio?: "LABORATORIO" | "CLIENTE";
 }
 
 export interface CrearCotizacionInput {

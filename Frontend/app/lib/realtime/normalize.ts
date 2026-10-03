@@ -207,6 +207,7 @@ export const normalizarPayload = (tabla: string, rawData: Record<string, any>): 
         esInternoUSC: Boolean(rawData.ES_INTERNO_USC ?? rawData.esInternoUSC ?? false),
         esEnSitio: Boolean(rawData.ES_EN_SITIO ?? rawData.esEnSitio ?? false),
         esLabPermanente: Boolean(rawData.ES_LAB_PERMANENTE ?? rawData.esLabPermanente ?? true),
+        sitioCalibracion: rawData.SITIO_CALIBRACION ?? rawData.sitioCalibracion ?? null,
         personaContacto: rawData.PERSONA_CONTACTO ?? rawData.personaContacto ?? null,
         telefonoContacto: rawData.TELEFONO_CONTACTO ?? rawData.telefonoContacto ?? null,
         fechaCalibracion: rawData.FECHA_CALIBRACION ?? rawData.fechaCalibracion ?? null,

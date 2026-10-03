@@ -102,6 +102,7 @@ export interface ActualizarCotizacionBody {
     normaTecnica?: string | null;
     cantidad: number;
     valorUnitario: number;
+    sitio?: "LABORATORIO" | "CLIENTE";
   }>;
   cambios: {
     descripcion: string;

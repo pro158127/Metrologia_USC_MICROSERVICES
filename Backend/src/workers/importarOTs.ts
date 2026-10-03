@@ -375,12 +375,10 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
     let idCotizacionFinal = id_cotizacion;
     let codigoCotizacionFinal = '';
 
-    let isOtNueva = false;
     let idOtFinal = 0;
 
-    let isRecepcionNueva = false;
-    let codigoRecepcionFinal = '';
-    let idRecepcionFinal = 0;
+    const otsProcesadas: { id: number; codigo: string; esNueva: boolean }[] = [];
+    const recepcionesProcesadas: { id: number; codigo: string; esNueva: boolean }[] = [];
 
     await prisma.$transaction(async (tx) => {
       // ==============================================================
@@ -541,12 +539,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         codigoCotizacionFinal = cotizacionExistente.CODIGO_COTIZACION;
       }
       // ==============================================================
-      // 6. ORDEN DE TRABAJO
+      // 6. ORDEN DE TRABAJO (una por cada sitio detectado)
       // ==============================================================
-      const oteExistente = await tx.ordenes_trabajo.findFirst({
-        where: { ID_COTIZACION_FK: idCotizacionFinal },
-      });
-
       const datosOT = {
         // Área certificado / cliente
         Razon_social: cliente.RAZON_SOCIAL,
@@ -562,12 +556,6 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
         // Área calibración
         ES_INTERNO_USC: getBoolean(datosExtraidos, 'calib_interno_usc', false),
-        ES_EN_SITIO: getBoolean(datosExtraidos, 'calib_en_sitio', false),
-        ES_LAB_PERMANENTE: getBoolean(
-          datosExtraidos,
-          'calib_laboratorio_permanente',
-          true,
-        ),
         PERSONA_CONTACTO: getString(datosExtraidos, 'calib_persona_contacto'),
         TELEFONO_CONTACTO: getString(datosExtraidos, 'calib_telefono'),
         FECHA_CALIBRACION: fechaCalibracion,
@@ -608,168 +596,194 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         OBSERVACIONES: getString(datosExtraidos, 'observaciones'),
       };
 
-      let oteProcesada;
-
-      if (oteExistente) {
-        isOtNueva = false;
-        codigoOTFinal = oteExistente.CODIGO_OT;
-
-        oteProcesada = await tx.ordenes_trabajo.update({
-          where: {
-            ID_ORDEN_TRABAJO: oteExistente.ID_ORDEN_TRABAJO,
-          },
-          data: datosOT,
-        });
-      } else {
-        isOtNueva = true;
-        codigoOTFinal = await generarConsecutivo(tx, 'OT');
-
-        oteProcesada = await tx.ordenes_trabajo.create({
-          data: {
-            CODIGO_OT: codigoOTFinal,
-            ID_COTIZACION_FK: idCotizacionFinal,
-            ID_CLIENTE_FK: cliente.ID_CLIENTE,
-            estado: 'Creada',
-            ESTADO_REVISION: 'PENDIENTE_REVISION',
-            ...datosOT,
-          },
-        });
-      }
-
-      idOtFinal = oteProcesada.ID_ORDEN_TRABAJO;
-
-      // ==============================================================
-      // 7. DETALLES DE INSTRUMENTOS DE LA OT
-      // ==============================================================
-      await tx.orden_trabajo_detalles.deleteMany({
+      // Resolver el sitio de cada instrumento comparando su nombre con los
+      // detalles de la cotización (campo `sitio`).
+      const detallesCotizacion = await tx.cotizacion_detalles.findMany({
         where: {
-          ID_ORDEN_TRABAJO_FK: idOtFinal,
+          ID_COTIZACION_FK: idCotizacionFinal,
+          OR: [{ activacion: true }, { activacion: null }],
         },
       });
 
-      await tx.orden_trabajo_detalles.createMany({
-        data: datosExtraidos.tablas.map((item, index) => ({
-          ID_ORDEN_TRABAJO_FK: idOtFinal,
-          ITEM: index + 1,
-          INSTRUMENTO: item.instrumento,
-          TIPO_SERVICIO: item.tipo_servicio_real || item.tipo_servicio || 'Calibración',
-          FABRICANTE: item.fabricante || null,
-          MODELO: item.modelo || null,
-          SERIE: item.serie || null,
-          CODIGO_INVENTARIO: item.codigo_interno || null,
-          UBICACION: item.ubicacion || null,
-          PUNTOS_CALIBRAR: item.puntos_calibracion || [],
-          UNIDAD: item.unidad || null,
-          INTERVALO_RANGO: item.intervalo_medicion || null,
-          RESOLUCION: item.resolucion_division || null,
-          asignado: idUsuario,
-          DECLARACION_CONFORMIDAD: item.declaracion_conformidad ?? false,
-          LIMITE_CONTROL_EMC:
-            item.emp_ajuste_control || item.emp_limite_control || null,
-          DOC_ESPECIFICACION: item.documento_especificacion || null,
-          REGLA_DECISION: item.regla_decision || null,
-          activacion: true,
-        })),
-      });
-
-      // ==============================================================
-      // 8. RECEPCIÓN
-      // ==============================================================
-      const recepcionExistente = await tx.recepciones_equipo.findFirst({
-        where: {
-          ID_ORDEN_TRABAJO_FK: idOtFinal,
-        },
-      });
-
-      if (recepcionExistente) {
-        isRecepcionNueva = false;
-        codigoRecepcionFinal = recepcionExistente.CODIGO_RECEPCION;
-
-        const sitioCalibracion = getBoolean(
-          datosExtraidos,
-          'calib_en_sitio',
-          false,
-        )
-          ? 'CLIENTE'
-          : 'LABORATORIO';
-
-        await tx.recepciones_equipo.update({
-          where: {
-            ID_RECEPCION: recepcionExistente.ID_RECEPCION,
-          },
-          data: {
-            SOLICITANTE: getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL,
-            SITIO_CALIBRACION: sitioCalibracion,
-            ESTADO: 'BORRADOR',
-          },
-        });
-      } else {
-        isRecepcionNueva = true;
-        codigoRecepcionFinal = await generarConsecutivo(tx, 'REC');
-
-        const sitioCalibracion = getBoolean(
-          datosExtraidos,
-          'calib_en_sitio',
-          false,
-        )
-          ? 'CLIENTE'
-          : 'LABORATORIO';
-
-        const recepcionProcesada = await tx.recepciones_equipo.create({
-          data: {
-            CODIGO_RECEPCION: codigoRecepcionFinal,
-            ID_COTIZACION_FK: idCotizacionFinal,
-            ID_ORDEN_TRABAJO_FK: idOtFinal,
-            ESTADO: 'BORRADOR',
-            SOLICITANTE:
-              getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL,
-            SITIO_CALIBRACION: sitioCalibracion,
-          },
-        });
-
-        idRecepcionFinal = recepcionProcesada.ID_RECEPCION;
+      const sitioPorClave = new Map<string, 'LABORATORIO' | 'CLIENTE'>();
+      for (const d of detallesCotizacion) {
+        const inst = d.EQUIPO_DESCRIPCION.trim().toLowerCase();
+        const tipo = (d.TIPO_SERVICIO || '').trim().toLowerCase();
+        const sitio = d.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+        // Clave compuesta (instrumento + tipo servicio) para desambiguar cuando el
+        // mismo instrumento aparece en laboratorio y en sitio.
+        if (tipo && !sitioPorClave.has(`${inst}|${tipo}`)) {
+          sitioPorClave.set(`${inst}|${tipo}`, sitio);
+        }
+        // Fallback por nombre de instrumento.
+        if (!sitioPorClave.has(inst)) {
+          sitioPorClave.set(inst, sitio);
+        }
       }
 
-      if (!idRecepcionFinal) {
-        const recepcion = await tx.recepciones_equipo.findUnique({
-          where: {
-            CODIGO_RECEPCION: codigoRecepcionFinal,
-          },
-          select: {
-            ID_RECEPCION: true,
-          },
+      const resolverSitio = (item: ExtractedInstrument): 'LABORATORIO' | 'CLIENTE' => {
+        const inst = item.instrumento.trim().toLowerCase();
+        const tipo = (item.tipo_servicio_real || item.tipo_servicio || '').trim().toLowerCase();
+        if (tipo) {
+          const s = sitioPorClave.get(`${inst}|${tipo}`);
+          if (s) return s;
+        }
+        return sitioPorClave.get(inst) ?? 'LABORATORIO';
+      };
+
+      const instrumentosPorSitio = new Map<'LABORATORIO' | 'CLIENTE', typeof datosExtraidos.tablas>();
+      for (const item of datosExtraidos.tablas) {
+        const sitio = resolverSitio(item);
+        const lista = instrumentosPorSitio.get(sitio) ?? [];
+        lista.push(item);
+        instrumentosPorSitio.set(sitio, lista);
+      }
+
+      for (const [sitio, instrumentos] of instrumentosPorSitio.entries()) {
+        const esSitio = sitio === 'CLIENTE';
+
+        const oteExistente = await tx.ordenes_trabajo.findFirst({
+          where: { ID_COTIZACION_FK: idCotizacionFinal, SITIO_CALIBRACION: sitio },
         });
 
-        if (!recepcion) {
-          throw new Error(`No fue posible recuperar la recepción '${codigoRecepcionFinal}'.`);
+        let oteProcesada;
+        let esNueva = false;
+        let codigoOT;
+
+        if (oteExistente) {
+          codigoOT = oteExistente.CODIGO_OT;
+          oteProcesada = await tx.ordenes_trabajo.update({
+            where: { ID_ORDEN_TRABAJO: oteExistente.ID_ORDEN_TRABAJO },
+            data: {
+              ...datosOT,
+              SITIO_CALIBRACION: sitio,
+              ES_EN_SITIO: esSitio,
+              ES_LAB_PERMANENTE: !esSitio,
+            },
+          });
+        } else {
+          esNueva = true;
+          codigoOT = await generarConsecutivo(tx, 'OT');
+          oteProcesada = await tx.ordenes_trabajo.create({
+            data: {
+              CODIGO_OT: codigoOT,
+              ID_COTIZACION_FK: idCotizacionFinal,
+              ID_CLIENTE_FK: cliente.ID_CLIENTE,
+              estado: 'Creada',
+              ESTADO_REVISION: 'PENDIENTE_REVISION',
+              SITIO_CALIBRACION: sitio,
+              ES_EN_SITIO: esSitio,
+              ES_LAB_PERMANENTE: !esSitio,
+              ...datosOT,
+            },
+          });
         }
 
-        idRecepcionFinal = recepcion.ID_RECEPCION;
+        const idOt = oteProcesada.ID_ORDEN_TRABAJO;
+        otsProcesadas.push({ id: idOt, codigo: codigoOT, esNueva });
+
+        // ==============================================================
+        // 7. DETALLES DE INSTRUMENTOS DE LA OT
+        // ==============================================================
+        await tx.orden_trabajo_detalles.deleteMany({
+          where: { ID_ORDEN_TRABAJO_FK: idOt },
+        });
+
+        await tx.orden_trabajo_detalles.createMany({
+          data: instrumentos.map((item, index) => ({
+            ID_ORDEN_TRABAJO_FK: idOt,
+            ITEM: index + 1,
+            INSTRUMENTO: item.instrumento,
+            TIPO_SERVICIO: item.tipo_servicio_real || item.tipo_servicio || 'Calibración',
+            FABRICANTE: item.fabricante || null,
+            MODELO: item.modelo || null,
+            SERIE: item.serie || null,
+            CODIGO_INVENTARIO: item.codigo_interno || null,
+            UBICACION: item.ubicacion || null,
+            PUNTOS_CALIBRAR: item.puntos_calibracion || [],
+            UNIDAD: item.unidad || null,
+            INTERVALO_RANGO: item.intervalo_medicion || null,
+            RESOLUCION: item.resolucion_division || null,
+            asignado: idUsuario,
+            DECLARACION_CONFORMIDAD: item.declaracion_conformidad ?? false,
+            LIMITE_CONTROL_EMC:
+              item.emp_ajuste_control || item.emp_limite_control || null,
+            DOC_ESPECIFICACION: item.documento_especificacion || null,
+            REGLA_DECISION: item.regla_decision || null,
+            activacion: true,
+          })),
+        });
+
+        // ==============================================================
+        // 8. RECEPCIÓN
+        // ==============================================================
+        const recepcionExistente = await tx.recepciones_equipo.findFirst({
+          where: { ID_ORDEN_TRABAJO_FK: idOt },
+        });
+
+        let codigoRec;
+        let idRec;
+        let esNuevaRec = false;
+
+        if (recepcionExistente) {
+          codigoRec = recepcionExistente.CODIGO_RECEPCION;
+          idRec = recepcionExistente.ID_RECEPCION;
+          await tx.recepciones_equipo.update({
+            where: { ID_RECEPCION: idRec },
+            data: {
+              SOLICITANTE:
+                getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL,
+              SITIO_CALIBRACION: sitio,
+              ESTADO: 'BORRADOR',
+            },
+          });
+        } else {
+          esNuevaRec = true;
+          codigoRec = await generarConsecutivo(tx, 'REC');
+          const recepcionProcesada = await tx.recepciones_equipo.create({
+            data: {
+              CODIGO_RECEPCION: codigoRec,
+              ID_COTIZACION_FK: idCotizacionFinal,
+              ID_ORDEN_TRABAJO_FK: idOt,
+              ESTADO: 'BORRADOR',
+              SOLICITANTE:
+                getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL,
+              SITIO_CALIBRACION: sitio,
+            },
+          });
+          idRec = recepcionProcesada.ID_RECEPCION;
+        }
+
+        recepcionesProcesadas.push({ id: idRec, codigo: codigoRec, esNueva: esNuevaRec });
+
+        await tx.recepcion_equipo_detalles.deleteMany({
+          where: { ID_RECEPCION_FK: idRec },
+        });
+
+        await tx.recepcion_equipo_detalles.createMany({
+          data: instrumentos.map((item) => ({
+            ID_RECEPCION_FK: idRec,
+            INSTRUMENTO: item.instrumento,
+            MARCA: item.fabricante || null,
+            MODELO: item.modelo || null,
+            SERIE: item.serie || null,
+            CODIGO_INVENTARIO: item.codigo_interno || null,
+            ESTAMPILLA: `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            activacion: true,
+          })),
+        });
       }
-
-      await tx.recepcion_equipo_detalles.deleteMany({
-        where: {
-          ID_RECEPCION_FK: idRecepcionFinal,
-        },
-      });
-
-      await tx.recepcion_equipo_detalles.createMany({
-        data: datosExtraidos.tablas.map((item) => ({
-          ID_RECEPCION_FK: idRecepcionFinal,
-          INSTRUMENTO: item.instrumento,
-          MARCA: item.fabricante || null,
-          MODELO: item.modelo || null,
-          SERIE: item.serie || null,
-          CODIGO_INVENTARIO: item.codigo_interno || null,
-          ESTAMPILLA: `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          activacion: true,
-        })),
-      });
     });
 
     // ================================================================
     // 9. GUARDAR EXCEL DEFINITIVO EN S3
     // ================================================================
+    const primeraOT = otsProcesadas[0];
+    if (primeraOT) {
+      codigoOTFinal = primeraOT.codigo;
+      idOtFinal = primeraOT.id;
+    }
+
     const s3KeyDefinitiva = `importaciones_ote/${codigoOTFinal}.xlsx`;
 
     await s3Client.send(
@@ -875,18 +889,18 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
               action: 'cot_aprove',
             }
           : null,
-        {
+        ...otsProcesadas.map((o) => ({
           tipo: 2,
-          id_registro: idOtFinal,
-          codigo_actual: codigoOTFinal,
+          id_registro: o.id,
+          codigo_actual: o.codigo,
           action: 'ot_update',
-        },
-        {
+        })),
+        ...recepcionesProcesadas.map((r) => ({
           tipo: 3,
-          id_registro: idRecepcionFinal,
-          codigo_actual: codigoRecepcionFinal,
-          action: isRecepcionNueva ? 'rec_create' : 'rec_update',
-        },
+          id_registro: r.id,
+          codigo_actual: r.codigo,
+          action: r.esNueva ? 'rec_create' : 'rec_update',
+        })),
       ].filter(Boolean),
     };
   } catch (error: any) {

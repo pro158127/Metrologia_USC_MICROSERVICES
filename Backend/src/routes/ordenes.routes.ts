@@ -152,12 +152,11 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
 
           codigoOT = otActualizada.CODIGO_OT;
 
-          // Recepción asociada a la misma cotización (si existe)
-          const recepcionAsociada = otActualizada.ID_COTIZACION_FK
-            ? await tx.recepciones_equipo.findFirst({
-                where: { ID_COTIZACION_FK: otActualizada.ID_COTIZACION_FK },
-              })
-            : null;
+          // Recepción asociada a esta OT (resuelta por la OT, ya que puede
+          // existir más de una recepción por cotización: lab / sitio).
+          const recepcionAsociada = await tx.recepciones_equipo.findFirst({
+            where: { ID_ORDEN_TRABAJO_FK: id },
+          });
 
           const existentes = await tx.orden_trabajo_detalles.findMany({
             where: { ID_ORDEN_TRABAJO_FK: id },

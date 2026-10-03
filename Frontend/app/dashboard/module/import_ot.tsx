@@ -17,6 +17,7 @@
     equipmentCount: number;
     status: "Pendiente" | "En proceso" | "Completada" | string;
     cotizacionReferencia?: string; 
+    sitio?: string;
   }
 
   interface RecepcionPorCotizacion {
@@ -194,6 +195,7 @@
                   <th className="px-5 py-3">Cliente</th>
                   <th className="px-5 py-3">Fecha</th>
                   <th className="px-5 py-3 text-center">Equipos</th>
+                  <th className="px-5 py-3">Sitio</th>
                   <th className="px-5 py-3">Cotización Referencia</th>
                   <th className="px-5 py-3">Estado</th>
                   <th className="px-5 py-3 text-center">Acciones</th>
@@ -202,7 +204,7 @@
               <tbody className="divide-y divide-slate-100">
                 {filteredOTs.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-slate-400 font-medium">
+                    <td colSpan={8} className="px-5 py-8 text-center text-slate-400 font-medium">
                       No se encontraron órdenes de trabajo con los filtros actuales.
                     </td>
                   </tr>
@@ -213,6 +215,11 @@
                       <td className="px-5 py-3 font-semibold text-slate-700 truncate max-w-[200px]">{ot.client}</td>
                       <td className="px-5 py-3 font-medium text-slate-400 font-mono">{ot.date}</td>
                       <td className="px-5 py-3 text-center"><span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600 font-bold">{ot.equipmentCount}</span></td>
+                      <td className="px-5 py-3">
+                        <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase">
+                          {ot.sitio === "CLIENTE" ? "En sitio" : "Laboratorio"}
+                        </span>
+                      </td>
                       <td className="px-5 py-3">
                         {ot.cotizacionReferencia ? (
                           <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-100 font-bold text-[10px]"><Link size={10} /> {ot.cotizacionReferencia}</div>
@@ -290,7 +297,8 @@
       date: ot.createdAt ? String(ot.createdAt).substring(0, 10) : "-",
       equipmentCount: ot.instrumentos?.length || 0,
       status: ot.estado || "Pendiente",
-      cotizacionReferencia: ot.cotizacion?.codigo || undefined
+      cotizacionReferencia: ot.cotizacion?.codigo || undefined,
+      sitio: ot.sitioCalibracion || (ot.esEnSitio ? "CLIENTE" : "LABORATORIO")
     }));
 
     const handleCotizacionChange = (cotiz: string) => {

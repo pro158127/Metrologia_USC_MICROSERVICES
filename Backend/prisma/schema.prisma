@@ -90,7 +90,7 @@ model cotizacion_detalles {
   CANTIDAD           Int
   VALOR_UNITARIO     Decimal      @db.Decimal(12, 2)
   VALOR_TOTAL        Decimal      @db.Decimal(12, 2)
-  sitio              String?
+  sitio              sitio_calibracion?   @default(LABORATORIO)
   activacion            Boolean            @default(true)
   cotizaciones       cotizaciones @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
 }
@@ -232,6 +232,7 @@ model ordenes_trabajo {
   ES_INTERNO_USC                                     Boolean?                 @default(false)
   ES_EN_SITIO                                        Boolean?                 @default(false)
   ES_LAB_PERMANENTE                                  Boolean?                 @default(true)
+  SITIO_CALIBRACION                                  sitio_calibracion?       @default(LABORATORIO)
   PERSONA_CONTACTO                                   String?
   TELEFONO_CONTACTO                                  String?
   FECHA_CALIBRACION                                  DateTime?
@@ -344,7 +345,7 @@ model recepciones_equipo {
   ID_ORDEN_TRABAJO_FK       Int?
   SOLICITANTE               String
   NOMBRE_ENTREGA            String?
-  SITIO_CALIBRACION         sitio_calibracion?
+  SITIO_CALIBRACION         sitio_calibracion        @default(LABORATORIO)
   FECHA_RECEPCION           DateTime                    @default(now())
   FECHA_SALIDA              DateTime?
   NOMBRE_RECIBE             String?

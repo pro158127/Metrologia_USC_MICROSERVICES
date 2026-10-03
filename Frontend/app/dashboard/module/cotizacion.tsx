@@ -1205,7 +1205,7 @@ export default function Cotizaciones() {
       norma: d.normaTecnica || "N/A",
       cantidad: d.cantidad,
       valorUnitario: Number(d.valorUnitario),
-      lugarCalibracion: (d.sitio || "Laboratorio") as QuoteItem["lugarCalibracion"],
+      lugarCalibracion: (d.sitio === "CLIENTE" ? "Sitio" : "Laboratorio") as QuoteItem["lugarCalibracion"],
     }));
     setModalItems(mapeados);
     setModalDescuento(selectedQuotation.descuento || 0);
@@ -1235,6 +1235,7 @@ export default function Cotizaciones() {
           normaTecnica: i.norma,
           cantidad: i.cantidad,
           valorUnitario: i.valorUnitario,
+          sitio: i.lugarCalibracion === "Sitio" ? "CLIENTE" : "LABORATORIO",
         })),
       });
 
@@ -1284,6 +1285,7 @@ export default function Cotizaciones() {
           normaTecnica: i.norma,
           cantidad: i.cantidad,
           valorUnitario: i.valorUnitario,
+          sitio: i.lugarCalibracion === "Sitio" ? "CLIENTE" : "LABORATORIO",
         })),
         cambios:_auditForm
       });

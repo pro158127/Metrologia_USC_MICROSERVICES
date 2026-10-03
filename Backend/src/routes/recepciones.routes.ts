@@ -33,12 +33,12 @@ const REC_INCLUDE = {
 } satisfies Prisma.recepciones_equipoInclude;
 
 /** Normaliza el sitio de calibración al enum `sitio_calibracion`. */
-function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' | null {
-  if (!valor) return null;
+function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' {
+  if (!valor) return 'LABORATORIO';
   const v = valor.toUpperCase();
   if (v.includes('LAB')) return 'LABORATORIO';
   if (v.includes('CLI')) return 'CLIENTE';
-  return null;
+  return 'LABORATORIO';
 }
 
 function parseVersion(numeroVersion?: string | null): number {

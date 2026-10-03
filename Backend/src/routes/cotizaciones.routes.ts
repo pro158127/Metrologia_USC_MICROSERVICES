@@ -89,6 +89,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             CANTIDAD: d.cantidad,
             VALOR_UNITARIO: d.valorUnitario,
             VALOR_TOTAL: valorTotal,
+            sitio: d.sitio ?? 'LABORATORIO',
           };
         });
 
@@ -261,6 +262,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
               CANTIDAD: d.cantidad,
               VALOR_UNITARIO: d.valorUnitario,
               VALOR_TOTAL: valorTotal,
+              sitio: d.sitio ?? 'LABORATORIO',
             });
           } else {
             if(d.idDetalle !== undefined) {
@@ -278,6 +280,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                     CANTIDAD: d.cantidad,
                     VALOR_UNITARIO: d.valorUnitario,
                     VALOR_TOTAL: valorTotal,
+                    ...(d.sitio ? { sitio: d.sitio } : {}),
                   }
                 })
               );
@@ -556,78 +559,146 @@ const trackingJobs: Record<string, string> = {};
           }
         });
 
-        let dataOT = null;
-        let dataRec = null;
+        const dataOTs: any[] = [];
+        const dataRecs: any[] = [];
 
-        // 4. Interceptar APROBACIÓN
+        // 4. Interceptar APROBACIÓN: split por sitio (Laboratorio / Cliente)
         if (nuevoEstado === 'APROBADA') {
-          // 🔥 VERIFICACIÓN: Consultamos si ya existe
-          let ot = await tx.ordenes_trabajo.findFirst({
-            where: { ID_COTIZACION_FK: idCotizacion }
-          });
+          const detalles = cotizacionActualizada.cotizacion_detalles.filter(
+            (d) => d.activacion !== false
+          );
 
-          if (ot) {
-            // ✅ YA EXISTE: Solo consultamos sus IDs para el worker
-            const recepcion = await tx.recepciones_equipo.findFirst({
-              where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO }
-            });
-            dataOT = ot;
-            dataRec = recepcion;
-          } else {
-            // ❌ NO EXISTE: Procedemos con el nacimiento de OT y Recepción
-            const codigoOT = await generarConsecutivo(tx, "OT");
-            const codigoRec = await generarConsecutivo(tx, "REC");
+          const grupos = new Map<'LABORATORIO' | 'CLIENTE', typeof detalles>();
+          for (const detalle of detalles) {
+            const sitio = detalle.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+            const lista = grupos.get(sitio) ?? [];
+            lista.push(detalle);
+            grupos.set(sitio, lista);
+          }
 
+          for (const [sitio, detallesGrupo] of grupos.entries()) {
+            const esSitio = sitio === 'CLIENTE';
+
+            // Desdoblar ítems de la cotización en instrumentos (OT/Recepción).
             const detallesOT = [];
             const detallesRec = [];
             let itemCounter = 1;
 
-            for (const detalle of cotizacionActualizada.cotizacion_detalles) {
+            for (const detalle of detallesGrupo) {
               for (let i = 0; i < (detalle.CANTIDAD || 1); i++) {
                 detallesOT.push({
                   ITEM: itemCounter,
                   INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
                   TIPO_SERVICIO: detalle.TIPO_SERVICIO,
-                  asignado: null 
+                  asignado: null,
                 });
 
                 detallesRec.push({
                   INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
-                  ESTAMPILLA: `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+                  ESTAMPILLA: `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
                 });
 
                 itemCounter++;
               }
             }
 
-            dataOT = await tx.ordenes_trabajo.create({
-              data: {
-                CODIGO_OT: codigoOT,
-                ID_COTIZACION_FK: idCotizacion,
-                ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
-                Razon_social: cotizacionActualizada.clientes?.RAZON_SOCIAL,
-                NIT: cotizacionActualizada.clientes?.NIT,
-                dirrecion: cotizacionActualizada.clientes?.dirrecion,
-                ciudad: cotizacionActualizada.clientes?.ciudad,
-                estado: 'Creada',
-                orden_trabajo_detalles: { create: detallesOT }
-              }
+            // Resolver/reutilizar la OT para este sitio.
+            const otExistente = await tx.ordenes_trabajo.findFirst({
+              where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: sitio },
             });
 
-            dataRec = await tx.recepciones_equipo.create({
-              data: {
-                CODIGO_RECEPCION: codigoRec,
-                ID_COTIZACION_FK: idCotizacion,
-                ID_ORDEN_TRABAJO_FK: dataOT.ID_ORDEN_TRABAJO,
-                ESTADO: 'BORRADOR',
-                SOLICITANTE: cotizacionActualizada.clientes?.RAZON_SOCIAL??"sin solicitante",
-                recepcion_equipo_detalles: { create: detallesRec }
+            let ot: any;
+            if (otExistente) {
+              ot = await tx.ordenes_trabajo.update({
+                where: { ID_ORDEN_TRABAJO: otExistente.ID_ORDEN_TRABAJO },
+                data: {
+                  SITIO_CALIBRACION: sitio,
+                  ES_EN_SITIO: esSitio,
+                  ES_LAB_PERMANENTE: !esSitio,
+                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
+                },
+              });
+
+              // Solo resincronizamos instrumentos si la OT aún no avanzó en su FSM
+              // (evita borrar asignaciones/datos técnicos ya capturados).
+              const estadoOT = otExistente.estado ?? 'Creada';
+              if (estadoOT === 'Creada' || estadoOT === 'En_recepción') {
+                await tx.orden_trabajo_detalles.deleteMany({
+                  where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO },
+                });
+                await tx.orden_trabajo_detalles.createMany({
+                  data: detallesOT.map((d) => ({
+                    ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
+                    ...d,
+                  })),
+                });
               }
+            } else {
+              const codigoOT = await generarConsecutivo(tx, 'OT');
+              ot = await tx.ordenes_trabajo.create({
+                data: {
+                  CODIGO_OT: codigoOT,
+                  ID_COTIZACION_FK: idCotizacion,
+                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
+                  Razon_social: cotizacionActualizada.clientes?.RAZON_SOCIAL,
+                  NIT: cotizacionActualizada.clientes?.NIT,
+                  dirrecion: cotizacionActualizada.clientes?.dirrecion,
+                  ciudad: cotizacionActualizada.clientes?.ciudad,
+                  estado: 'Creada',
+                  SITIO_CALIBRACION: sitio,
+                  ES_EN_SITIO: esSitio,
+                  ES_LAB_PERMANENTE: !esSitio,
+                  ES_INTERNO_USC: false,
+                  orden_trabajo_detalles: { create: detallesOT },
+                },
+              });
+            }
+
+            // Resolver/reutilizar la Recepción para esta OT.
+            const recExistente = await tx.recepciones_equipo.findFirst({
+              where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO },
             });
+
+            let rec: any;
+            if (recExistente) {
+              rec = await tx.recepciones_equipo.update({
+                where: { ID_RECEPCION: recExistente.ID_RECEPCION },
+                data: {
+                  SITIO_CALIBRACION: sitio,
+                  SOLICITANTE: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? 'sin solicitante',
+                },
+              });
+
+              await tx.recepcion_equipo_detalles.deleteMany({
+                where: { ID_RECEPCION_FK: rec.ID_RECEPCION },
+              });
+              await tx.recepcion_equipo_detalles.createMany({
+                data: detallesRec.map((d) => ({
+                  ID_RECEPCION_FK: rec.ID_RECEPCION,
+                  ...d,
+                })),
+              });
+            } else {
+              const codigoRec = await generarConsecutivo(tx, 'REC');
+              rec = await tx.recepciones_equipo.create({
+                data: {
+                  CODIGO_RECEPCION: codigoRec,
+                  ID_COTIZACION_FK: idCotizacion,
+                  ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
+                  SITIO_CALIBRACION: sitio,
+                  ESTADO: 'BORRADOR',
+                  SOLICITANTE: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? 'sin solicitante',
+                  recepcion_equipo_detalles: { create: detallesRec },
+                },
+              });
+            }
+
+            dataOTs.push(ot);
+            dataRecs.push(rec);
           }
         }
 
-        return { cotizacion: cotizacionActualizada, ot: dataOT, rec: dataRec };
+        return { cotizacion: cotizacionActualizada, ots: dataOTs, recs: dataRecs };
       });
 
       // 5. DETONAR GENERACIÓN DE EXCEL (BULLMQ)
@@ -647,28 +718,28 @@ const trackingJobs: Record<string, string> = {};
       });
       trackingJobs.cot = quoteTrackerCot.id;
 
-      // 2. DETONAR TIPO 2 (Orden de Trabajo)
-      if (resultado.ot) {
+      // 2. DETONAR TIPO 2 (Orden de Trabajo) — una por cada OT generada/reutilizada
+      for (const ot of resultado.ots) {
         const quoteTrackerOT = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
         await excelquue.add('generar_ot_excel', {
           id_job: quoteTrackerOT.id, 
           tipo_entry: 'prod',
-          id_registro: resultado.ot.ID_ORDEN_TRABAJO,
+          id_registro: ot.ID_ORDEN_TRABAJO,
           action:"ot_create",
-          codigo_actual: resultado.ot.CODIGO_OT,
+          codigo_actual: ot.CODIGO_OT,
           tipo: 2
         });
         trackingJobs.ot = quoteTrackerOT.id;
       }
 
-      // 3. DETONAR TIPO 3 (Recepción)
-      if (resultado.rec) {
+      // 3. DETONAR TIPO 3 (Recepción) — una por cada Recepción generada/reutilizada
+      for (const rec of resultado.recs) {
         const quoteTrackerRec = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
         await excelquue.add('generar_recepcion_excel', {
           id_job: quoteTrackerRec.id, 
           tipo_entry: 'prod',
-          id_registro: resultado.rec.ID_RECEPCION,
-          codigo_actual: resultado.rec.CODIGO_RECEPCION,
+          id_registro: rec.ID_RECEPCION,
+          codigo_actual: rec.CODIGO_RECEPCION,
           tipo: 3
         });
         trackingJobs.rec = quoteTrackerRec.id;

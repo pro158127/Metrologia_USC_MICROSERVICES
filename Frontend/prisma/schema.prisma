@@ -218,7 +218,7 @@ model CotizacionDetalle {
   valorUnitario     Decimal    @map("VALOR_UNITARIO") @db.Decimal(12, 2)
   valorTotal        Decimal    @map("VALOR_TOTAL") @db.Decimal(12, 2)
   cotizacion        Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
-  sitio             String?
+  sitio             sitio_calibracion? @default(LABORATORIO)
 
   @@map("cotizacion_detalles")
 }
@@ -250,6 +250,7 @@ model OrdenTrabajo {
   esInternoUSC           Boolean ?              @default(false) @map("ES_INTERNO_USC")
   esEnSitio              Boolean  ?             @default(false) @map("ES_EN_SITIO")
   esLabPermanente        Boolean  ?             @default(true) @map("ES_LAB_PERMANENTE")
+  sitioCalibracion       sitio_calibracion?     @default(LABORATORIO) @map("SITIO_CALIBRACION")
   personaContacto        String?               @map("PERSONA_CONTACTO")
   telefonoContacto       String?               @map("TELEFONO_CONTACTO")
   fechaCalibracion       DateTime?             @map("FECHA_CALIBRACION")
@@ -350,7 +351,7 @@ model RecepcionEquipo {
   idOrdenTrabajo       Int?                     @map("ID_ORDEN_TRABAJO_FK")
   solicitante          String                   @map("SOLICITANTE")
   nombreEntrega        String?                  @map("NOMBRE_ENTREGA")
-  sitioCalibracion     String                   @map("SITIO_CALIBRACION")
+  sitioCalibracion     sitio_calibracion       @default(LABORATORIO) @map("SITIO_CALIBRACION")
   fechaRecepcion       DateTime                 @default(now()) @map("FECHA_RECEPCION")
   fechaSalida          DateTime?                @map("FECHA_SALIDA")
   nombreRecibe         String?                  @map("NOMBRE_RECIBE")
@@ -569,4 +570,9 @@ enum ProveedorAlmacenamiento {
   LOCAL
   AWS_S3
   GOOGLE_DRIVE
+}
+
+enum sitio_calibracion {
+  LABORATORIO
+  CLIENTE
 }
