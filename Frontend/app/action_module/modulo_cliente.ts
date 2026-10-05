@@ -328,6 +328,7 @@ export interface DocumentoVersionItem {
   version: number;
   rutaUrl: string;
   createdAt: string;
+  usuario: string | null;
 }
 
 export interface DocumentoItem {
@@ -340,15 +341,39 @@ export interface DocumentoItem {
   versiones: DocumentoVersionItem[];
 }
 
+export interface CertificadoTrazabilidad {
+  instrumento: string | null;
+  serie: string | null;
+  fechaCalibracion: string | null;
+  tecnico: string | null;
+  estadoRevision: string;
+  revisadoAt: string | null;
+  revisor: string | null;
+  motivoRechazo: string | null;
+  versiones: DocumentoVersionItem[];
+  sellos: string[];
+}
+
+export interface DocumentoCertificadoItem {
+  idCertificado: number;
+  codigoCertificado: string;
+  idDocumento: number;
+  nombre: string;
+  rutaUrl: string | null;
+  mimeType: string;
+  createdAt: string;
+  versiones: DocumentoVersionItem[];
+  trazabilidad: CertificadoTrazabilidad;
+}
+
 export interface DocumentosCotizacionCategorias {
   idCotizacion: number;
   codigo: string;
   categorias: {
     recepcion: DocumentoItem[];
-    cotizacion: DocumentoItem[];
     ordenTrabajo: DocumentoItem[];
     comprobantes: DocumentoItem[];
-    certificados: DocumentoItem[];
+    certificados: DocumentoCertificadoItem[];
   };
 }
 

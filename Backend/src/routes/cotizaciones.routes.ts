@@ -31,6 +31,7 @@ const documentoVersionItemSchema = z.object({
   version: z.number(),
   rutaUrl: z.string(),
   createdAt: z.coerce.date(),
+  usuario: z.string().nullable(),
 });
 const documentoItemSchema = z.object({
   idDocumento: z.number(),
@@ -41,6 +42,29 @@ const documentoItemSchema = z.object({
   versionActual: z.number(),
   versiones: z.array(documentoVersionItemSchema),
 });
+const certificadoTrazaSchema = z.object({
+  instrumento: z.string().nullable(),
+  serie: z.string().nullable(),
+  fechaCalibracion: z.coerce.date().nullable(),
+  tecnico: z.string().nullable(),
+  estadoRevision: z.string(),
+  revisadoAt: z.coerce.date().nullable(),
+  revisor: z.string().nullable(),
+  motivoRechazo: z.string().nullable(),
+  versiones: z.array(documentoVersionItemSchema),
+  sellos: z.array(z.string()),
+});
+const documentoCertificadoItemSchema = z.object({
+  idCertificado: z.number(),
+  codigoCertificado: z.string(),
+  idDocumento: z.number(),
+  nombre: z.string(),
+  rutaUrl: z.string().nullable(),
+  mimeType: z.string(),
+  createdAt: z.coerce.date(),
+  versiones: z.array(documentoVersionItemSchema),
+  trazabilidad: certificadoTrazaSchema,
+});
 const respuestaDocumentosCotizacionSchema = z.object({
   ok: z.literal(true),
   data: z.object({
@@ -48,10 +72,9 @@ const respuestaDocumentosCotizacionSchema = z.object({
     codigo: z.string(),
     categorias: z.object({
       recepcion: z.array(documentoItemSchema),
-      cotizacion: z.array(documentoItemSchema),
       ordenTrabajo: z.array(documentoItemSchema),
       comprobantes: z.array(documentoItemSchema),
-      certificados: z.array(documentoItemSchema),
+      certificados: z.array(documentoCertificadoItemSchema),
     }),
   }),
 });
@@ -828,8 +851,10 @@ const trackingJobs: Record<string, string> = {};
 
   // ==========================================================================
   // GET /api/v1/cotizaciones/:id/documentos
-  // Documentos categorizados: Recepción, Cotización, Orden de trabajo,
-  // Comprobantes y Certificados (consultando documentos + version_documentos).
+  // Documentos categorizados en 4 folders: Recepciones, Órdenes OT,
+  // Certificados y Comprobantes de pago.
+  // - Certificados: se cruza con version_documentos (NO se usa el link
+  //   principal de documentos) y se lista el ciclo de vida completo + trazabilidad.
   // ==========================================================================
   app.get(
     '/api/v1/cotizaciones/:id/documentos',
@@ -861,14 +886,12 @@ const trackingJobs: Record<string, string> = {};
             ...(otIds.length ? [{ ID_ORDEN_TRABAJO_FK: { in: otIds } }] : []),
           ],
         },
-        include: {
-          recepcion_equipo_detalles: {
-            include: { calibraciones: { include: { certificados: true } } },
-          },
-        },
+        select: { ID_RECEPCION: true },
       });
       const recIds = recepciones.map((r) => r.ID_RECEPCION);
 
+      // Documentos de Recepciones, Órdenes OT y Comprobantes de pago
+      // (facturas/cotizaciones). Los certificados se consultan por separado.
       const documentos = await fastify.prisma.documentos.findMany({
         where: {
           OR: [
@@ -882,17 +905,96 @@ const trackingJobs: Record<string, string> = {};
             ...(recIds.length ? [{ ID_RECEPCION_FK: { in: recIds } }] : []),
           ],
         },
-        include: { version_documentos: { orderBy: { VERSION: 'desc' } } },
+        include: {
+          version_documentos: {
+            include: {
+              usuarios: {
+                select: {
+                  ID_USUARIO_AUTO_INCREMENT: true,
+                  NOMBRE_COMPLETO: true,
+                },
+              },
+            },
+            orderBy: { VERSION: 'desc' },
+          },
+        },
         orderBy: { CREATED_AT: 'desc' },
       });
 
-      const certDocIds = new Set<number>();
-      recepciones.forEach((r) =>
-        r.recepcion_equipo_detalles.forEach((d) => {
-          const c = d.calibraciones?.certificados;
-          if (c) certDocIds.add(c.ID_DOCUMENTO_FK);
-        })
+      // ============ CERTIFICADOS (REGLA ESPECIAL) ============
+      // No se usa documentos.RUTA_URL; se cruza con version_documentos para
+      // listar todas las versiones y armar la trazabilidad completa.
+      const certificados = await fastify.prisma.certificados.findMany({
+        where: recIds.length
+          ? {
+              calibraciones: {
+                recepcion_equipo_detalles: {
+                  ID_RECEPCION_FK: { in: recIds },
+                },
+              },
+            }
+          : { ID_CERTIFICADO: -1 },
+        include: {
+          documentos: {
+            include: {
+              version_documentos: {
+                include: {
+                  usuarios: {
+                    select: {
+                      ID_USUARIO_AUTO_INCREMENT: true,
+                      NOMBRE_COMPLETO: true,
+                    },
+                  },
+                },
+                orderBy: { VERSION: 'desc' },
+              },
+            },
+          },
+          calibraciones: {
+            include: {
+              usuarios: { select: { NOMBRE_COMPLETO: true } },
+              recepcion_equipo_detalles: {
+                select: { INSTRUMENTO: true, SERIE: true },
+              },
+            },
+          },
+          certificado_sellos: {
+            include: { sellos: { select: { NOMBRE: true } } },
+          },
+        },
+        orderBy: { ID_CERTIFICADO: 'desc' },
+      });
+
+      const revisorIds = [
+        ...new Set(
+          certificados
+            .map((c) => c.ID_REVISOR_FK)
+            .filter((id): id is number => id != null)
+        ),
+      ];
+      const revisores = revisorIds.length
+        ? await fastify.prisma.usuarios.findMany({
+            where: { ID_USUARIO_AUTO_INCREMENT: { in: revisorIds } },
+            select: { ID_USUARIO_AUTO_INCREMENT: true, NOMBRE_COMPLETO: true },
+          })
+        : [];
+      const revisorMap = new Map(
+        revisores.map((u) => [u.ID_USUARIO_AUTO_INCREMENT, u.NOMBRE_COMPLETO])
       );
+
+      const toVersion = (v: {
+        ID_VERSION: number;
+        VERSION: number;
+        RUTA_URL: string;
+        CREATED_AT: Date;
+        usuarios?: { NOMBRE_COMPLETO: string } | null;
+      }) => ({
+        idVersion: v.ID_VERSION,
+        version: v.VERSION,
+        rutaUrl: v.RUTA_URL,
+        createdAt: v.CREATED_AT,
+        usuario: v.usuarios?.NOMBRE_COMPLETO ?? null,
+      });
 
       const toItem = (doc: (typeof documentos)[number]) => ({
         idDocumento: doc.ID_DOCUMENTO,
@@ -901,35 +1003,56 @@ const trackingJobs: Record<string, string> = {};
         mimeType: doc.MIME_TYPE,
         createdAt: doc.CREATED_AT,
         versionActual: doc.version_documentos[0]?.VERSION ?? 1,
-        versiones: doc.version_documentos.map((v) => ({
-          idVersion: v.ID_VERSION,
-          version: v.VERSION,
-          rutaUrl: v.RUTA_URL,
-          createdAt: v.CREATED_AT,
-        })),
+        versiones: doc.version_documentos.map(toVersion),
       });
 
       const categorias = {
         recepcion: [] as ReturnType<typeof toItem>[],
-        cotizacion: [] as ReturnType<typeof toItem>[],
         ordenTrabajo: [] as ReturnType<typeof toItem>[],
         comprobantes: [] as ReturnType<typeof toItem>[],
-        certificados: [] as ReturnType<typeof toItem>[],
+        certificados: [] as z.infer<typeof documentoCertificadoItemSchema>[],
       };
 
       for (const doc of documentos) {
         const item = toItem(doc);
-        if (certDocIds.has(doc.ID_DOCUMENTO)) {
-          categorias.certificados.push(item);
-        } else if (doc.ordenPagoId != null && otIds.includes(doc.ordenPagoId)) {
+        if (doc.ordenPagoId != null && otIds.includes(doc.ordenPagoId)) {
           categorias.comprobantes.push(item);
         } else if (doc.ID_RECEPCION_FK != null && recIds.includes(doc.ID_RECEPCION_FK)) {
           categorias.recepcion.push(item);
         } else if (doc.ID_COTIZACION_FK === idCotizacion) {
-          categorias.cotizacion.push(item);
+          categorias.comprobantes.push(item);
         } else {
           categorias.ordenTrabajo.push(item);
         }
+      }
+
+      for (const cert of certificados) {
+        const versiones = cert.documentos?.version_documentos ?? [];
+        const calibracion = cert.calibraciones;
+        const detalle = calibracion?.recepcion_equipo_detalles ?? null;
+
+        categorias.certificados.push({
+          idCertificado: cert.ID_CERTIFICADO,
+          codigoCertificado: cert.CODIGO_CERTIFICADO,
+          idDocumento: cert.ID_DOCUMENTO_FK,
+          nombre: cert.documentos?.NOMBRE ?? cert.CODIGO_CERTIFICADO,
+          rutaUrl: versiones[0]?.RUTA_URL ?? null,
+          mimeType: cert.documentos?.MIME_TYPE ?? 'application/pdf',
+          createdAt: cert.documentos?.CREATED_AT ?? calibracion?.CREATED_AT ?? new Date(),
+          versiones: versiones.map(toVersion),
+          trazabilidad: {
+            instrumento: detalle?.INSTRUMENTO ?? null,
+            serie: detalle?.SERIE ?? null,
+            fechaCalibracion: calibracion?.CREATED_AT ?? null,
+            tecnico: calibracion?.usuarios?.NOMBRE_COMPLETO ?? null,
+            estadoRevision: cert.ESTADO_REVISION,
+            revisadoAt: cert.REVISADO_AT ?? null,
+            revisor: cert.ID_REVISOR_FK != null ? revisorMap.get(cert.ID_REVISOR_FK) ?? null : null,
+            motivoRechazo: cert.MOTIVO_RECHAZO ?? null,
+            versiones: versiones.map(toVersion),
+            sellos: cert.certificado_sellos.map((cs) => cs.sellos.NOMBRE),
+          },
+        });
       }
 
       return {
