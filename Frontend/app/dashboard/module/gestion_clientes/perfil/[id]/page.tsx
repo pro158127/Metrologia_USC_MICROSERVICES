@@ -78,8 +78,15 @@ const CARPETA_FOLDERS: { key: CategoriaKey; label: string }[] = [
   { key: "comprobantes", label: "Comprobantes de pago" },
 ];
 
-const esExcel = (nombre: string) => /\.(xlsx|xls)$/i.test(nombre);
-const esPdf = (nombre: string) => /\.pdf$/i.test(nombre);
+const esExcel = (nombre: string, mimeType?: string | null, rutaUrl?: string | null) =>
+  /\.(xlsx|xls)$/i.test(nombre) ||
+  /spreadsheet|excel/i.test(mimeType ?? "") ||
+  /\.(xlsx|xls)(\?|$)/i.test(rutaUrl ?? "");
+
+const esPdf = (nombre: string, mimeType?: string | null, rutaUrl?: string | null) =>
+  /\.pdf$/i.test(nombre) ||
+  (mimeType ?? "") === "application/pdf" ||
+  /\.pdf(\?|$)/i.test(rutaUrl ?? "");
 
 // ========== LÍNEA DE TIEMPO DE TRAZABILIDAD DE CERTIFICADO ==========
 const TimelineCertificado = ({
@@ -87,7 +94,7 @@ const TimelineCertificado = ({
   onVerArchivo,
 }: {
   item: DocumentoCertificadoItem;
-  onVerArchivo: (rutaUrl: string, nombre: string) => void;
+  onVerArchivo: (rutaUrl: string, nombre: string, mimeType?: string | null) => void;
 }) => {
   const t = item.trazabilidad;
   const fmt = (d: string | null) =>
@@ -176,7 +183,7 @@ const TimelineCertificado = ({
                   <span className="text-[10px] text-slate-400 shrink-0">{fmt(v.createdAt)}</span>
                 </div>
                 <button
-                  onClick={() => onVerArchivo(v.rutaUrl, `${item.codigoCertificado} (v${v.version})`)}
+                  onClick={() => onVerArchivo(v.rutaUrl, `${item.codigoCertificado} (v${v.version})`, item.mimeType)}
                   className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
                 >
                   <Eye size={12} /> Ver
@@ -239,12 +246,10 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
   }, [cotizacion.idCotizacion]);
 
   const toggleFiles = useCallback(() => {
-    setShowFiles((prev) => {
-      const next = !prev;
-      if (next && !docs && !cargando) cargarDocumentos();
-      return next;
-    });
-  }, [docs, cargando, cargarDocumentos]);
+    const next = !showFiles;
+    setShowFiles(next);
+    if (next && !docs && !cargando) cargarDocumentos();
+  }, [showFiles, docs, cargando, cargarDocumentos]);
 
   const abrirPdf = useCallback(async (rutaUrl: string, nombre: string) => {
     setViewer({ url: null, nombre, cargando: true });
@@ -266,10 +271,10 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
   }, []);
 
   const verArchivo = useCallback(
-    (rutaUrl: string, nombre: string) => {
-      if (esExcel(nombre)) {
+    (rutaUrl: string, nombre: string, mimeType?: string | null) => {
+      if (esExcel(nombre, mimeType, rutaUrl)) {
         descargarArchivo(rutaUrl, nombre);
-      } else if (esPdf(nombre)) {
+      } else if (esPdf(nombre, mimeType, rutaUrl)) {
         abrirPdf(rutaUrl, nombre);
       } else {
         descargarArchivo(rutaUrl, nombre);
@@ -380,8 +385,8 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                         ) : (
                           <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
                             {(items as DocumentoItem[]).map((doc) => {
-                              const excel = esExcel(doc.nombre);
-                              const pdf = esPdf(doc.nombre);
+                              const excel = esExcel(doc.nombre, doc.mimeType, doc.rutaUrl);
+                              const pdf = esPdf(doc.nombre, doc.mimeType, doc.rutaUrl);
                               return (
                                 <div
                                   key={doc.idDocumento}
