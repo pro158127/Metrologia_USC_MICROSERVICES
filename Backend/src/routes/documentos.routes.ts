@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyReply } from 'fastify';
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client.js';
@@ -19,6 +19,37 @@ function sanitizeFileName(fileName: string): string {
     .replace(/_+/g, '_');           // Evita guiones bajos repetidos
 
   return `${cleanBase}${extension}`;
+}
+
+/** Streama un objeto de MinIO hacia el navegador (con CORS y Content-Disposition). */
+async function streamArchivo(fastify: FastifyInstance, key: string, reply: FastifyReply): Promise<void> {
+  const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+  const s3Response = await s3Client.send(getCommand);
+
+  if (!s3Response.Body) throw new AppError(400, 'El archivo recuperado está vacío');
+
+  const buffer = await streamToBuffer(s3Response.Body as Readable);
+  const contentType = s3Response.ContentType || 'application/octet-stream';
+
+  let originalFilename = key.split('/').pop() || 'archivo';
+  if (s3Response.Metadata?.originalname) {
+    try {
+      originalFilename = Buffer.from(s3Response.Metadata.originalname, 'base64').toString('utf-8');
+    } catch {
+      // Fallback si la decodificación falla
+    }
+  }
+
+  const encodedFilename = encodeURIComponent(originalFilename);
+
+  reply.header('Content-Type', contentType);
+  reply.header(
+    'Content-Disposition',
+    `inline; filename="${sanitizeFileName(originalFilename)}"; filename*=UTF-8''${encodedFilename}`
+  );
+  reply.header('Access-Control-Allow-Origin', '*');
+
+  void reply.send(buffer);
 }
 
 export default async function documentosRoutes(fastify: FastifyInstance) {
@@ -123,4 +154,37 @@ export default async function documentosRoutes(fastify: FastifyInstance) {
       throw new AppError(500, 'Error al procesar la descarga del archivo');
     }
   });
+
+  // ==========================================================================
+  // GET /api/v1/documentos/stream?key=<s3Key>&token=<jwt>
+  // Sirve el binario a través del backend (evita exponer URLs firmadas de MinIO
+  // al navegador, eliminando los problemas de firma/host del túnel y CORS).
+  // ==========================================================================
+  fastify.get(
+    '/api/v1/documentos/stream',
+    async (request, reply) => {
+      const { key, token } = (request.query ?? {}) as { key?: string; token?: string };
+
+      if (!key) throw new AppError(400, 'Ruta de archivo no proporcionada');
+      if (!token) throw new AppError(401, 'Token no provisto');
+
+      try {
+        fastify.jwt.verify(token);
+      } catch {
+        throw new AppError(401, 'Token inválido o expirado');
+      }
+
+      try {
+        await streamArchivo(fastify, key, reply);
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        request.log.error(error);
+        const s3Error = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+        if (s3Error.name === 'NoSuchKey' || s3Error.$metadata?.httpStatusCode === 404) {
+          throw new AppError(404, 'Archivo no encontrado en el servidor de objetos');
+        }
+        throw new AppError(500, 'Error al procesar la descarga del archivo');
+      }
+    }
+  );
 }

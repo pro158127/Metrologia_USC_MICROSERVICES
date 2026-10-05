@@ -71,8 +71,9 @@ export const createDocumentConfig = (
 type CategoriaKey = keyof DocumentosCotizacionCategorias["categorias"];
 
 const CARPETA_FOLDERS: { key: CategoriaKey; label: string }[] = [
+  { key: "cotizacion", label: "Cotización" },
+  { key: "ordenTrabajo", label: "Órdenes de trabajo" },
   { key: "recepcion", label: "Recepciones" },
-  { key: "ordenTrabajo", label: "Órdenes OT" },
   { key: "certificados", label: "Certificados" },
   { key: "comprobantes", label: "Comprobantes de pago" },
 ];

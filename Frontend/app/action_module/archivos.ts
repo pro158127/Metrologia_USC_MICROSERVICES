@@ -1,20 +1,26 @@
 'use server';
 
 import { auth } from '@/app/Login/types/auth';
+import { generarTokenBackend } from '@/app/lib/auth-token';
 import { fastifyRequest } from '@/app/lib/api/fastifyClient';
 
-/** Genera una URL firmada (15 min) para descargar/visualizar un objeto de MinIO. */
+/**
+ * Genera una URL de visualización/descarga que sirve el archivo a través del
+ * backend (GET /api/v1/documentos/stream) en lugar de exponer URLs firmadas de
+ * MinIO. Evita los problemas de firma/host del túnel y de CORS.
+ */
 export async function generarUrlArchivo(s3Key: string): Promise<string | null> {
   try {
     const session = await auth();
-    const res = await fastifyRequest<{ ok: boolean; url?: string }>(
-      session,
-      '/api/v1/archivos/generar-url',
-      { method: 'POST', body: { s3Key } }
-    );
-    return res.url ?? null;
+    if (!session?.user) return null;
+
+    const idUsuario = session.user.id_user ?? session.user.id ?? '';
+    const token = await generarTokenBackend({ sub: String(idUsuario) });
+
+    const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    return `${base}/api/v1/documentos/stream?key=${encodeURIComponent(s3Key)}&token=${encodeURIComponent(token)}`;
   } catch (error) {
-    console.error('Error al generar URL firmada:', error);
+    console.error('Error al generar URL de archivo:', error);
     return null;
   }
 }

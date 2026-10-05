@@ -371,6 +371,7 @@ export interface DocumentosCotizacionCategorias {
   codigo: string;
   categorias: {
     recepcion: DocumentoItem[];
+    cotizacion: DocumentoItem[];
     ordenTrabajo: DocumentoItem[];
     comprobantes: DocumentoItem[];
     certificados: DocumentoCertificadoItem[];

@@ -72,6 +72,7 @@ const respuestaDocumentosCotizacionSchema = z.object({
     codigo: z.string(),
     categorias: z.object({
       recepcion: z.array(documentoItemSchema),
+      cotizacion: z.array(documentoItemSchema),
       ordenTrabajo: z.array(documentoItemSchema),
       comprobantes: z.array(documentoItemSchema),
       certificados: z.array(documentoCertificadoItemSchema),
@@ -1008,6 +1009,7 @@ const trackingJobs: Record<string, string> = {};
 
       const categorias = {
         recepcion: [] as ReturnType<typeof toItem>[],
+        cotizacion: [] as ReturnType<typeof toItem>[],
         ordenTrabajo: [] as ReturnType<typeof toItem>[],
         comprobantes: [] as ReturnType<typeof toItem>[],
         certificados: [] as z.infer<typeof documentoCertificadoItemSchema>[],
@@ -1020,7 +1022,7 @@ const trackingJobs: Record<string, string> = {};
         } else if (doc.ID_RECEPCION_FK != null && recIds.includes(doc.ID_RECEPCION_FK)) {
           categorias.recepcion.push(item);
         } else if (doc.ID_COTIZACION_FK === idCotizacion) {
-          categorias.comprobantes.push(item);
+          categorias.cotizacion.push(item);
         } else {
           categorias.ordenTrabajo.push(item);
         }
