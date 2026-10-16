@@ -252,13 +252,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       });
       if (!existente) throw new AppError(404, 'Cotización no encontrada');
 
-      // 2. BLOQUEO DE SEGURIDAD (Validar estado de la OT)
+      // 2. BLOQUEO DE SEGURIDAD (Validar estado de todas las OTs)
       if (existente.ordenes_trabajo && existente.ordenes_trabajo.length > 0) {
-        const ot = existente.ordenes_trabajo[0];
         const estadosBloqueados = ['Asignada', 'En_calibración', 'Certificado_en_revisión', 'Certificado_aprobado', 'Certificado_enviado'];
-        
-        if (ot.estado && estadosBloqueados.includes(ot.estado)) {
-          throw new AppError(409, `Bloqueo de seguridad: La Orden de Trabajo ${ot.CODIGO_OT} se encuentra en estado '${ot.estado}'. No es posible modificar la cotización.`);
+        const otBloqueada = existente.ordenes_trabajo.find(
+          (ot) => ot.estado && estadosBloqueados.includes(ot.estado)
+        );
+
+        if (otBloqueada) {
+          throw new AppError(409, `Bloqueo de seguridad: La Orden de Trabajo ${otBloqueada.CODIGO_OT} se encuentra en estado '${otBloqueada.estado}'. No es posible modificar la cotización.`);
         }
       }
 
@@ -586,7 +588,7 @@ const trackingJobs: Record<string, string> = {};
         const dataOTs: any[] = [];
         const dataRecs: any[] = [];
 
-        // 4. Interceptar APROBACIÓN: split por sitio (Laboratorio / Cliente)
+        // 4. Interceptar APROBACIÓN: generar OT(s) según homogeneidad de sitio.
         if (nuevoEstado === 'APROBADA') {
           const detalles = cotizacionActualizada.cotizacion_detalles.filter(
             (d) => d.activacion !== false
@@ -600,33 +602,108 @@ const trackingJobs: Record<string, string> = {};
             grupos.set(sitio, lista);
           }
 
-          for (const [sitio, detallesGrupo] of grupos.entries()) {
-            const esSitio = sitio === 'CLIENTE';
+          const esHeterogenea = grupos.size > 1;
 
-            // Desdoblar ítems de la cotización en instrumentos (OT/Recepción).
-            const detallesOT = [];
-            const detallesRec = [];
+          const desdoblarDetallesOT = (
+            dets: typeof detalles,
+            sitio: 'LABORATORIO' | 'CLIENTE',
+          ) => {
+            const result: any[] = [];
             let itemCounter = 1;
+            for (const detalle of dets) {
+              for (let i = 0; i < (detalle.CANTIDAD || 1); i++) {
+                result.push({
+                  ITEM: itemCounter,
+                  INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
+                  TIPO_SERVICIO: detalle.TIPO_SERVICIO,
+                  asignado: null,
+                  sitio_calibracion: sitio,
+                });
+                itemCounter++;
+              }
+            }
+            return result;
+          };
 
-            for (const detalle of detallesGrupo) {
+          if (esHeterogenea) {
+            // ==========================================================
+            // HETEROGÉNEA: una única OT Master (SITIO_CALIBRACION = null).
+            // Cada fila conserva su propio sitio_calibracion.
+            // ==========================================================
+            const detallesOT: any[] = [];
+            let itemCounter = 1;
+            for (const detalle of detalles) {
+              const sitioFila =
+                detalle.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
               for (let i = 0; i < (detalle.CANTIDAD || 1); i++) {
                 detallesOT.push({
                   ITEM: itemCounter,
                   INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
                   TIPO_SERVICIO: detalle.TIPO_SERVICIO,
                   asignado: null,
+                  sitio_calibracion: sitioFila,
                 });
-
-                detallesRec.push({
-                  INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
-                  ESTAMPILLA: `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-                });
-
                 itemCounter++;
               }
             }
 
-            // Resolver/reutilizar la OT para este sitio.
+            const masterExistente = await tx.ordenes_trabajo.findFirst({
+              where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: null },
+            });
+
+            let ot: any;
+            if (masterExistente) {
+              ot = await tx.ordenes_trabajo.update({
+                where: { ID_ORDEN_TRABAJO: masterExistente.ID_ORDEN_TRABAJO },
+                data: {
+                  SITIO_CALIBRACION: null,
+                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
+                },
+              });
+
+              const estadoOT = masterExistente.estado ?? 'Creada';
+              if (estadoOT === 'Creada' || estadoOT === 'En_recepción') {
+                await tx.orden_trabajo_detalles.deleteMany({
+                  where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO },
+                });
+                await tx.orden_trabajo_detalles.createMany({
+                  data: detallesOT.map((d) => ({
+                    ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
+                    ...d,
+                  })),
+                });
+              }
+            } else {
+              const codigoOT = await generarConsecutivo(tx, 'OT');
+              ot = await tx.ordenes_trabajo.create({
+                data: {
+                  CODIGO_OT: codigoOT,
+                  ID_COTIZACION_FK: idCotizacion,
+                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
+                  Razon_social: cotizacionActualizada.clientes?.RAZON_SOCIAL,
+                  NIT: cotizacionActualizada.clientes?.NIT,
+                  dirrecion: cotizacionActualizada.clientes?.dirrecion,
+                  ciudad: cotizacionActualizada.clientes?.ciudad,
+                  estado: 'Creada',
+                  SITIO_CALIBRACION: null,
+                  ES_EN_SITIO: false,
+                  ES_LAB_PERMANENTE: false,
+                  ES_INTERNO_USC: false,
+                  orden_trabajo_detalles: { create: detallesOT },
+                },
+              });
+            }
+
+            dataOTs.push(ot);
+          } else {
+            // ==========================================================
+            // HOMOGÉNEA: una única OT operativa con SITIO_CALIBRACION fijo.
+            // ==========================================================
+            const [sitio, detallesGrupo] = Array.from(grupos.entries())[0];
+            const esSitio = sitio === 'CLIENTE';
+
+            const detallesOT = desdoblarDetallesOT(detallesGrupo, sitio);
+
             const otExistente = await tx.ordenes_trabajo.findFirst({
               where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: sitio },
             });
@@ -643,8 +720,6 @@ const trackingJobs: Record<string, string> = {};
                 },
               });
 
-              // Solo resincronizamos instrumentos si la OT aún no avanzó en su FSM
-              // (evita borrar asignaciones/datos técnicos ya capturados).
               const estadoOT = otExistente.estado ?? 'Creada';
               if (estadoOT === 'Creada' || estadoOT === 'En_recepción') {
                 await tx.orden_trabajo_detalles.deleteMany({
@@ -678,47 +753,7 @@ const trackingJobs: Record<string, string> = {};
               });
             }
 
-            // Resolver/reutilizar la Recepción para esta OT.
-            const recExistente = await tx.recepciones_equipo.findFirst({
-              where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO },
-            });
-
-            let rec: any;
-            if (recExistente) {
-              rec = await tx.recepciones_equipo.update({
-                where: { ID_RECEPCION: recExistente.ID_RECEPCION },
-                data: {
-                  SITIO_CALIBRACION: sitio,
-                  SOLICITANTE: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? 'sin solicitante',
-                },
-              });
-
-              await tx.recepcion_equipo_detalles.deleteMany({
-                where: { ID_RECEPCION_FK: rec.ID_RECEPCION },
-              });
-              await tx.recepcion_equipo_detalles.createMany({
-                data: detallesRec.map((d) => ({
-                  ID_RECEPCION_FK: rec.ID_RECEPCION,
-                  ...d,
-                })),
-              });
-            } else {
-              const codigoRec = await generarConsecutivo(tx, 'REC');
-              rec = await tx.recepciones_equipo.create({
-                data: {
-                  CODIGO_RECEPCION: codigoRec,
-                  ID_COTIZACION_FK: idCotizacion,
-                  ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
-                  SITIO_CALIBRACION: sitio,
-                  ESTADO: 'BORRADOR',
-                  SOLICITANTE: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? 'sin solicitante',
-                  recepcion_equipo_detalles: { create: detallesRec },
-                },
-              });
-            }
-
             dataOTs.push(ot);
-            dataRecs.push(rec);
           }
         }
 

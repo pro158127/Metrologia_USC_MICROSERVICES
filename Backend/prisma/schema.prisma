@@ -197,6 +197,7 @@ model orden_trabajo_detalles {
   LIMITE_CONTROL_EMC      String?
   DOC_ESPECIFICACION      String?
   REGLA_DECISION          String?
+  sitio_calibracion       sitio_calibracion? @default(LABORATORIO)
     activacion      Boolean?
   ordenes_trabajo         ordenes_trabajo @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO], onDelete: Cascade)
   usuarios                usuarios?       @relation(fields: [asignado], references: [ID_USUARIO_AUTO_INCREMENT], onDelete: Cascade)
@@ -264,9 +265,12 @@ model ordenes_trabajo {
   // ---------------------------------------------------------
   ID_COTIZACION_FK                                   Int?
   ID_CLIENTE_FK                                      Int?
+  ID_OT_PADRE_FK                                     Int?
   
   clientes                                           clientes?                @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
   cotizaciones                                       cotizaciones?            @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
+  orden_trabajo_padre                                ordenes_trabajo?         @relation("OTPadre", fields: [ID_OT_PADRE_FK], references: [ID_ORDEN_TRABAJO])
+  orden_trabajo_hijas                                ordenes_trabajo[]       @relation("OTPadre")
   
   // ÁREA 2: Los instrumentos van aquí
   orden_trabajo_detalles                             orden_trabajo_detalles[] 

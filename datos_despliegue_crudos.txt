@@ -1,0 +1,245 @@
+================================================================================
+DATOS TÉCNICOS CRUDOS PARA DESPLIEGUE — METROLOGIA USC (monorepo)
+Fecha de análisis: 2026-10-09
+Fuente: inspección estática del código (package.json, prisma/*.prisma, docker-compose.yml,
+nginx.conf, Dockerfiles, src/**/*.ts, scripts/*, .env)
+Nota: datos brutos, sin redacción gerencial. Listos para consumo de otro LLM.
+================================================================================
+
+STACK TECNOLÓGICO RESUMIDO
+---------------------------
+- Backend: Fastify 5 (REST, puerto 3001) + Socket.IO + @fastify/jwt + Zod + Prisma 6.4.1
+- Frontend: Next.js 16.2.10 (React 19.2.4) + NextAuth v5 (5.0.0-beta.31) + Zustand
+- DB: PostgreSQL 16 (imagen pgvector/pgvector:pg16) con extensión pgvector
+- Cache/colas: Redis 7 (BullMQ + ioredis)
+- Objetos: MinIO (S3-compatible) vía @aws-sdk/client-s3
+- Colas/Workers: BullMQ (7 colas), workers con Python3 + pandas + openpyxl + LibreOffice
+- Proxy: Nginx (alpine)
+- Infra: docker-compose (7 servicios + 1 contenedor backup)
+- Notas real-time: LISTEN/NOTIFY Postgres en canal "cambio_tablas" (doble listener: backend + frontend)
+
+================================================================================
+1) SEGURIDAD APLICADA (IMPLEMENTADA EN CÓDIGO)
+================================================================================
+IMPLEMENTADO:
+- [HASH PASSWORDS] argon2 (argon2id) en backend (usuarios.routes.ts:106,300; auth.routes.ts:40).
+  => OJO: seed.ts:303 usa argon2i con parámetros DÉBILES (m=16,t=2,p=1) para el usuario director.
+- [JWT] @fastify/jwt backend con secret AUTH_SECRET (HS256). Guard "fastify.authenticate"
+  (plugins/auth.ts). Frontend genera token backend vía jose (SignJWT HS256, exp 5 min)
+  (app/lib/auth-token.ts).
+- [SESIONES] NextAuth v5 estrategia JWT, maxAge 30 min, updateAge 5 min (Login/types/auth.ts:50-54).
+- [BLOQUEO CUENTA] lockout tras 3 intentos fallidos (auth.routes.ts:36,43). Incongruencia:
+  el código bloquea a los 3 intentos pero el mensaje de notificación dice "5 intentos".
+- [VALIDACIÓN DE INPUTS] Zod (z) en bodies/params/responses de todas las rutas
+  (fastify-type-provider-zod). Schemas en *.schemas.ts.
+- [CORS] @fastify/cors configurado, PERO `origin: true` (refleja cualquier origen => abierto)
+  (server.ts:42-47).
+- [SUBLIMIT] @fastify/multipart con límite fileSize = 15 MB (server.ts:50).
+- [WHITELIST MIME] upload de documentos restringido a pdf/png/jpeg/jpg/xlsx/xls/octet-stream
+  (documentos.routes.ts:63-74).
+- [SANITIZACIÓN NOMBRES] sanitizeFileName() normaliza tildes y caracteres especiales para
+  keys S3 (documentos.routes.ts:11-22).
+- [URLS FIRMADAS] presigned URLs S3 con TTL 15 min (archivos.routes.ts:42) y 1 h (minioClient.ts:68).
+- [AUDITORÍA] tabla audit_logs (action, tableName, recordId, USER_ID, ip, details) usada en
+  usuarios.routes.ts (registrarAuditoria). Export a Excel (audit.routes.ts).
+- [RBAC] permisos por rol en PERMISOS_JSON (JSON). Verificados explícitamente en rutas:
+  audit.routes.ts:50 (consultar_bitacora_auditoria), envios.routes.ts:14-22 (entrega_y_envio).
+- [RUTA INTERNA] /api/internal/emitir-socket protegida con header x-worker-secret
+  hardcodeado "SecretoInternoDocker123" (internal.route.ts:34-38).
+- [SOFT DELETE] usuarios con flag `elminado` (no borrado físico).
+- [SEED] trigger PL/pgSQL notify_cambio_tablas() filtra columnas gigantes (JSON) para no
+  exceder 8 KB de payload NOTIFY (seed.ts:369-406).
+
+NO IMPLEMENTADO / BRECHAS (riesgos detectados en código):
+- SIN rate limiting / brute-force por IP (solo lockout por cuenta).
+- SIN headers de seguridad (helmet: no X-Frame-Options, CSP, HSTS, etc.).
+- SIN protección CSRF.
+- CORS `origin: true` => cualquier dominio puede llamar la API.
+- SECRETS EN TEXTO PLANO y commiteados: docker-compose.yml + .env contienen
+  DATABASE_URL_AWS con user/pass, MINIO access/secret, OUTLOOK_APP_PASSWORD, AUTH_SECRET "dev_secret_local_metrologia".
+- postgrest-listener.ts:7 hardcodea cadena de conexión Postgres (ignora env).
+- SSL `rejectUnauthorized: false` para BD de producción (postgrest-listener.ts:18 y server.ts frontend).
+- Seed con hash argon2i débil; contraseñas temporales con Math.random() (PRNG no seguro)
+  (usuarios.routes.ts:32-41) y sin política de complejidad/cambio obligatorio.
+- Redis sin contraseña (REDIS_URL redis://redis_cache:6379).
+- Postgres expuesto en 5432 con password "password123"; Redis en 6379; MinIO en 9000/9001
+  públicos (docker-compose ports:). Nginx solo escucha puerto 80 (sin TLS propio).
+- Socket.IO: CORS `origin: true`; los clientes se unen a salas `user_room_<id>` pasando userId
+  como query param SIN verificación de token (frontend/server.ts:33-52 y postgrest-listener.ts).
+- Mínimo control de tamaño en rutas multipart específicas (comprobante, certificado,
+  sellos) => dependen solo del límite global de 15 MB.
+- Sin cifrado en reposo en MinIO ni en el volumen de Postgres.
+
+================================================================================
+2) MAPEO DE LICENCIAS (dependencias directas de producción)
+================================================================================
+Fuente: `pnpm licenses list` + package.json (Backend, Frontend, raíz).
+
+MIT (permisiva, sin riesgo legal):
+  @azure/msal-node, @fastify/cors, @fastify/jwt, @fastify/multipart, @fortune-sheet/core,
+  @fortune-sheet/react, @types/bcryptjs, @zwight/luckyexcel, @zzhaoh/luckyexcel, argon2,
+  bullmq, exceljs, fastify, fastify-plugin, fastify-type-provider-zod, handlebars, ioredis,
+  jose, libreoffice-convert, next, pdf-lib, pg, react, react-dom, react-idle-timer,
+  recharts, socket.io, socket.io-client, sonner, tailwindcss, ts-node, tsx, zod, zustand,
+  eslint, eslint-config-next
+
+Apache-2.0 (permisiva; obliga a incluir NOTICE):
+  @aws-sdk/client-s3, @aws-sdk/s3-request-presigner, @prisma/client, prisma,
+  @univerjs/preset-sheets-core, @univerjs/presets, @univerjs/sheets-conditional-formatting,
+  @univerjs/sheets-conditional-formatting-ui, @univerjs/sheets-data-validation, minio,
+  pdfjs-dist, typescript, xlsx
+
+ISC (permisiva):
+  lucide-react, next-auth
+
+BSD-3-Clause: bcryptjs
+BSD-2-Clause: dotenv, mammoth
+BSD (genérica): import (paquete ^0.0.6)
+MIT-0 (MIT "No Attribution"): nodemailer
+
+DECLARADO PERO SIN USO EN CÓDIGO (candidato a limpieza):
+  @azure/msal-node (OAuth MSAL, no se usa en src), argon2 y bcryptjs en Frontend (no usados;
+  la autenticación real es argon2 en backend), @types/bcryptjs.
+NOTA LICENCIAS TRANSITIVAS CON CONDICIONES:
+  - jszip: "(MIT OR GPL-3.0-or-later)" (transitiva; xlsx/univer).
+  - pako: "(MIT AND Zlib)".
+  - tslib: 0BSD.
+  - @img/sharp-* : Apache-2.0 (binarios nativos de Next.js).
+No se detectaron dependencias directas bajo GPL/copyleft fuerte. Recomendación legal: revisar
+cadenas transitivas de exceljs/xlsx/univerjs (usan jszip con doble licencia MIT/GPL).
+
+================================================================================
+3) REQUISITOS DE HARDWARE (estimación para PRODUCCIÓN)
+================================================================================
+Servicios concurrentes (docker-compose):
+  1. postgres_db (pgvector)          - memoria index/vector
+  2. redis_cache                     - bajo
+  3. minio (objetos)                 - I/O de disco
+  4. nginx                           - bajo
+  5. backend (Node + Python3/pandas + LibreOffice)  - CPU/RAM ALTOS
+  6. worker_documentos (PDF stamping, certificados) - CPU/RAM
+  7. worker_datos (limit 1 GB memory)               - CPU/RAM (Excels gigantes)
+  8. frontend (Next.js)              - medio
+  9. postgres_backup (cron pg_dump)  - bajo, picos nocturnos
+
+CARGAS CRÍTICAS (por código):
+  - LibreOffice convierte .xlsx -> .pdf (proceso pesado, CPU, 1 proceso por job)
+    (generador.excel.ts:760-772; Dockerfile.backend instala libreoffice).
+  - ExcelJS carga workbook COMPLETO en memoria (workbook.xlsx.load(buffer)).
+  - pandas/openpyxl en Python para "Excels gigantes" (worker:documentos).
+  - Buffers: uploads 15 MB máx, streams a buffer completos (streamToBuffer), PDFs en memoria.
+  - BullMQ: concurrency 2 por worker (plantillas.worker.ts:95,120).
+
+ESTIMACIÓN MÍNIMA (producción institucional, ~10-50 usuarios):
+  - CPU: 4 vCPU (recomendado 8 vCPU si se procesan muchos certificados/Excel en paralelo)
+  - RAM: 8 GB mínimo (recomendado 16 GB). LibreOffice+pandas+Node+Postgres juntos consumen
+    fácilmente >4 GB; worker_datos ya tiene limit de 1 GB solo él.
+  - ALMACENAMIENTO (OS + imágenes Docker + volúmenes): 250 GB SSD mínimo.
+    => imágenes Docker ~2-3 GB (backend incluye Python+LibreOffice, ~2 GB+ cada imagen).
+    => volumen Postgres + Redis + MinIO (ver proyección sección 5).
+  - RED: puertos internos en red Docker; solo 80/443 hacia afuera (recomendado).
+  - Disco: SSD/NVMe (pgvector y LibreOffice se benefician de I/O rápido).
+
+PERFIL: el backend + workers son CPU-bound (conversión de documentos). Dimensionar CPU antes
+que RAM si el volumen de certificados/plantillas crece.
+
+================================================================================
+4) SEGURIDAD MÍNIMA PARA PUBLICAR (INFRAESTRUCTURA)
+================================================================================
+1. TERMINACIÓN TLS/SSL: certificado (Let's Encrypt / organización) en el proxy inverso.
+   HTTPS obligatorio en todo el tráfico público.
+2. PROXY INVERSO como ÚNICO punto de entrada (Nginx/Traefik/ALB). Hoy el docker-compose
+   expone 5432, 6379, 9000, 9001 y 3000 al host. => ocultar/eliminar esos puertos públicos.
+3. FIREWALL / SECURITY GROUPS: abrir SOLO 80/443. Bloquear 5432 (Postgres), 6379 (Redis),
+   9000/9001 (MinIO), 3000/3001 (app) desde internet.
+4. GESTIÓN DE SECRETOS: sacar credenciales del código/docker-compose. Usar Vault/secretos
+   del orquestador/archivo .env no versionado. Rotar TODO secreto ya expuesto en el repo.
+5. REDIS: habilitar autenticación (requirepass) y aislar en red interna.
+6. POSTGRES: contraseñas fuertes, restringir conexiones, deshabilitar SSL con
+   rejectUnauthorized:false => usar CA real. No exponer 5432.
+7. MINIO: buckets privados (solo presigned URLs para descargas), habilitar server-side
+   encryption, cambiar credenciales por defecto, ocultar consola 9001.
+8. CABECERAS DE SEGURIDAD: agregar helmet/CSP/HSTS/X-Frame-Options/X-Content-Type-Options.
+9. RATE LIMITING + WAF: limitar /api/v1/auth/credentials y endpoints sensibles; bloqueo por IP.
+10. CSRF: habilitar protección para sesiones de NextAuth/cookies.
+11. CORS: reemplazar `origin: true` por lista explícita de orígenes permitidos.
+12. AUTENTICACIÓN SOCKETS: verificar JWT en handshake de Socket.IO (hoy no se verifica).
+13. BACKUPS: cifrar y definir política de retención (el script backup.sh NO borra respaldos
+    => crecimiento ilimitado del bucket backups-postgres). Probar restauración periódicamente.
+14. MONITOREO/LOGS: centralizar logs, alertas, y copias off-site.
+15. SUBIR `db push --accept-data-loss` es peligroso en producción => usar migraciones.
+16. NO exponer MinIO público vía túneles (devtunnels) en producción.
+
+================================================================================
+5) PROYECCIÓN A 5 AÑOS (PESO ESTIMADO EN ALMACENAMIENTO)
+================================================================================
+MODELO DE NEGOCIO DETECTADO EN ESQUEMA (prisma):
+  Cotización -> Orden de Trabajo -> Recepción de equipos -> Calibración -> Certificado
+  (PDF firmado/sellado) -> Comprobante de pago -> Envío por correo.
+  Cada documento (cotización/OT/recepción) genera par XLSX+PDF vía plantillas; cada
+  regeneración crea NUEVOS objetos S3 y una fila en version_documentos (versionado acumulativo).
+  También: RUT de clientes, sellos/plantillas, uploads generales, chunks con embedding
+  pgvector (document_chunks) para IA.
+
+SUPUESTOS DE TAMAÑO (promedios típicos de documentos de metrología):
+  - Excel cotización 100 KB | PDF cotización 200 KB
+  - Excel OT        200 KB | PDF OT        400 KB
+  - Excel recepción 200 KB | PDF recepción 400 KB
+  - Certificado base PDF 200 KB + sellado/firma ~150 KB = 350 KB
+  - Comprobante de pago (scan) 1.5 MB
+  - RUT 0.8 MB (por cliente nuevo, ~1 por cada 5 OT)
+  - Plantillas base (3) + sellos ~1 MB c/u (crecimiento marginal)
+
+TRANSACCIÓN BASE = 1 Orden de Trabajo (OT) con 3 instrumentos/certificados:
+  Cotización (300 KB) + OT (600 KB) + Recepción (600 KB) + Certificados 3x350 (1050 KB)
+  + Comprobante (1500 KB) + RUT prorrateado (160 KB)
+  = ~4.2 MB por OT
+  x factor de versionado 1.4 (regeneraciones/correcciones) = ~5.9 MB por OT
+
+ESCENARIOS (250 días laborales/año):
+
+  ESCENARIO      OT/día   OT/año    Archivos/año   5 AÑOS (archivos)
+  ----------------------------------------------------------------
+  Bajo (lab.)      5        1,250       7.4 GB         ~37 GB
+  Medio           20        5,000      29.5 GB        ~148 GB
+  Alto            50       12,500      73.8 GB        ~369 GB
+
+BASE DE DATOS (Postgres, crecimiento separado):
+  - Datos estructurados (clientes, cotizaciones, OT, historial, auditoría, notificaciones):
+    estimado 1-5 GB a 5 años (dominado por audit_logs y notificaciones).
+  - document_chunks + embeddings pgvector (si el módulo IA indexa documentos):
+    ~70 KB por certificado (10 chunks x (embedding 1536-dim ~6 KB + texto ~1 KB)).
+    => ~15,000 certificados/año (escenario medio) => ~1 GB/año => ~5 GB a 5 años.
+  => TOTAL BD a 5 años: ~6-10 GB (sin contar backups).
+
+BACKUPS (hallazgo crítico):
+  - backup.sh hace pg_dump diario comprimido a bucket "backups-postgres" SIN RETENCIÓN
+    (nunca borra). A ~50 MB/backup promedio y creciendo => 1,825 backups en 5 años.
+  - Acumulado estimado: 30-90 GB adicionales si NO se define política de retención.
+  - RECOMENDACIÓN: retención 30 días (mantiene ~1.5-3 GB) o incremental.
+
+TOTAL RECOMENDADO (escenario MEDIO a 5 años, con retención de backups 30 días):
+  - Archivos de documentos (MinIO):  ~150 GB
+  - Base de datos (Postgres):        ~10 GB
+  - Backups (30 días):               ~3 GB
+  - Sistema + imágenes Docker:       ~10 GB
+  => PROVISIONAR: 500 GB útiles (mínimo 250 GB si solo se despliega el escenario bajo).
+  => Con margen de crecimiento/seguridad: disco de 1 TB (preferible SSD/NVMe).
+
+FACTORES QUE ACELERAN EL CRECIMIENTO (riesgo de subestimación):
+  - Versionado acumulativo: cada corrección de cotización/OT/certificado duplica objetos S3.
+  - Módulo IA (pgvector): indexación masiva de documentos dispara document_chunks.
+  - Backup sin retención (backups-postgres crece sin límite).
+  - Soportes/escaneos de alta resolución (comprobantes, RUT) pueden superar 1.5 MB c/u.
+
+================================================================================
+RESUMEN DE EXPOSICIONES URGENTES (TOP)
+================================================================================
+1. Credenciales reales en docker-compose.yml y .env commiteados (AWS RDS, MinIO, Outlook, AUTH_SECRET).
+2. CORS abierto (origin:true) + Socket.IO sin verificación de JWT en handshake.
+3. Postgres/Redis/MinIO expuestos en puertos públicos con credenciales débiles.
+4. SSL con rejectUnauthorized:false hacia BD de producción.
+5. Sin rate limiting, sin cabeceras de seguridad, sin CSRF.
+6. Backup sin retención => crecimiento ilimitado de almacenamiento.
+7. Hash semilla del usuario director con parámetros argon2i débiles.
+8. `db push --accept-data-loss` en el arranque del contenedor backend (peligroso en prod).

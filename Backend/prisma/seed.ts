@@ -43,19 +43,6 @@ const schemaCotizacion = {
         ]
       },
       {
-        "key": "tabla_control_cambios",
-        "label": "Hoja de Control de Cambios del Formato",
-        "required": false,
-        "columns": [
-          { "key": "no_version", "label": "N° Versión", "dataType": "STRING", "required": true },
-          { "key": "fecha_cambio", "label": "Fecha de Cambio", "dataType": "DATE", "required": true },
-          { "key": "descripcion", "label": "Descripción del Cambio", "dataType": "STRING", "required": true },
-          { "key": "validacion_hoja_calculo", "label": "¿Se realiza validación de la hoja de cálculo?", "dataType": "STRING", "required": false },
-          { "key": "observaciones", "label": "Observaciones", "dataType": "STRING", "required": false },
-          { "key": "aprobo", "label": "Aprobó", "dataType": "STRING", "required": true }
-        ]
-      },
-      {
   "key": "tabla_tarifas",
   "label": "Catálogo de tarifas",
   "required": true,
@@ -116,6 +103,7 @@ const schemaOrdenTrabajo = {
           { "key": "item", "label": "Ítem", "dataType": "INTEGER", "required": true },
           { "key": "tipo_servicio", "label": "Tipo de Servicio", "dataType": "STRING", "required": true },
           { "key": "instrumento", "label": "Instrumento", "dataType": "STRING", "required": true },
+          { "key": "sitio_calibracion", "label": "Sitio de Calibración", "dataType": "STRING", "required": true },
           { "key": "fabricante", "label": "Fabricante", "dataType": "STRING", "required": false },
           { "key": "modelo", "label": "Modelo", "dataType": "STRING", "required": false },
           { "key": "serie", "label": "Serie", "dataType": "STRING", "required": true },
@@ -144,6 +132,7 @@ const schemaOrdenTrabajo = {
         "columns": [
           { "key": "item", "label": "Ítem", "dataType": "INTEGER", "required": true },
           { "key": "instrumento", "label": "Instrumento", "dataType": "STRING", "required": true },
+          { "key": "sitio_calibracion", "label": "Sitio de Calibración", "dataType": "STRING", "required": true },
           { "key": "marca", "label": "Marca", "dataType": "STRING", "required": false },
           { "key": "modelo", "label": "Modelo", "dataType": "STRING", "required": false },
           { "key": "serie", "label": "Serie", "dataType": "STRING", "required": true },

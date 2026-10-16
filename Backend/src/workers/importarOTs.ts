@@ -11,6 +11,11 @@ import {
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
+import {
+  splitHeterogeneousOT,
+  InstrumentoResuelto,
+  SitioCalibracion,
+} from '../services/ot-split.service.js';
 import { Worker, Job } from 'bullmq';
 import { getRedisConnection, IMPORTAR_QUEUE } from '../lib/queue/queue.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
@@ -23,6 +28,7 @@ interface ImportarOTEPayload {
   id_cotizacion?: number;
   idUsuario: number;
   id_job: string;
+  tipoFlujo?: 'estandar' | 'inverso';
 }
 
 type ExtractedScalar = string | number | boolean | Date | null;
@@ -49,6 +55,7 @@ interface ExtractedInstrument {
   magnitud_real?: string | null;
   tipo_servicio_real?: string | null;
   valor_estimado?: number;
+  sitio?: string | null;
 }
 
 interface ExtractedData {
@@ -211,6 +218,8 @@ function normalizeInstrument(raw: Record<string, any>, tableKey: string): Extrac
     regla_decision: cleanString(raw.regla_decision),
     // El anexo no trae tipo_servicio; se resolverá desde tarifas.
     tipo_servicio: cleanString(raw.tipo_servicio),
+    // Sitio por fila (opcional en el mapping; si no viene se resuelve luego).
+    sitio: cleanString(raw.sitio ?? raw.sitio_calibracion ?? raw.lugar_calibracion),
     tarifa_id: undefined,
     magnitud_real: null,
     tipo_servicio_real: null,
@@ -405,6 +414,15 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         );
       }
 
+      // ==============================================================
+      // 4. VALIDACIÓN DE TARIFAS (reporte agregado, sin insertar nada si falla)
+      // ==============================================================
+      const instrumentosSinTarifa: {
+        item: string | number | null | undefined;
+        instrumento: string;
+        motivo: string;
+      }[] = [];
+
       for (const item of datosExtraidos.tablas) {
         const tarifa = await tx.tarifas.findFirst({
           where: {
@@ -414,12 +432,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
             },
             ESTADO: 'ACTIVO',
           },
-          // 🟢 CORRECCIÓN: Hacemos el JOIN con historial_tarifas
+          // Hacemos el JOIN con historial_tarifas para obtener el precio vigente.
           include: {
             historial_tarifas: {
-              where: { FECHA_FIN: null }, // Buscamos la tarifa que no ha expirado
-              orderBy: { FECHA_INICIO: 'desc' }, // Aseguramos traer la más reciente
-              take: 1, // Solo necesitamos el precio actual
+              where: { FECHA_FIN: null },
+              orderBy: { FECHA_INICIO: 'desc' },
+              take: 1,
             }
           },
           orderBy: {
@@ -428,44 +446,61 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         });
 
         if (!tarifa) {
-          throw new Error(
-            `Validación fallida: El instrumento '${item.instrumento}' no existe en la matriz de tarifas.`,
-          );
+          instrumentosSinTarifa.push({
+            item: item.item ?? null,
+            instrumento: item.instrumento,
+            motivo: 'No existe en la matriz de tarifas',
+          });
+          continue;
         }
 
-        // 🟢 VALIDACIÓN: Evitamos fallo si existe la tarifa pero nunca se le asignó precio
         if (tarifa.historial_tarifas.length === 0) {
-           throw new Error(
-            `Validación fallida: El instrumento '${item.instrumento}' no tiene un precio vigente en su historial de tarifas.`,
-          );
+          instrumentosSinTarifa.push({
+            item: item.item ?? null,
+            instrumento: item.instrumento,
+            motivo: 'Sin precio vigente en su historial de tarifas',
+          });
+          continue;
         }
 
         item.tarifa_id = tarifa.ID_TARIFA;
         item.magnitud_real = tarifa.MAGNITUD;
         item.tipo_servicio_real = tarifa.TIPO_SERVICIO;
-        
-        // 🟢 Extraemos el PRECIO_U y lo guardamos (forzado a número para cálculos)
         item.valor_estimado = Number(tarifa.historial_tarifas[0].PRECIO_U);
         item.tipo_servicio = item.tipo_servicio_real;
+      }
+
+      if (instrumentosSinTarifa.length > 0) {
+        throw new Error(
+          `Validación de tarifas fallida para ${instrumentosSinTarifa.length} instrumento(s): ${JSON.stringify(
+            instrumentosSinTarifa,
+          )}`,
+        );
       }
 
       // ==============================================================
       // 5. COTIZACIÓN
       // ==============================================================
+      const normalizarSitio = (raw?: string | null): SitioCalibracion =>
+        raw && String(raw).toUpperCase().startsWith('CLI') ? 'CLIENTE' : 'LABORATORIO';
+
       if (!idCotizacionFinal) {
         isCotizacionNueva = true;
         codigoCotizacionFinal = await generarConsecutivo(tx, 'COT');
 
         // ==========================================================
-        // AGRUPAR INSTRUMENTOS PARA CALCULAR CANTIDAD
+        // AGRUPAR INSTRUMENTOS PARA CALCULAR CANTIDAD (incluye sitio)
         // ==========================================================
         const itemsAgrupados = new Map<string, any>();
 
         for (const item of datosExtraidos.tablas) {
+          const sitio = normalizarSitio(item.sitio);
+          item.sitio = sitio;
           const clave = [
             item.instrumento?.trim().toLowerCase(),
             item.tipo_servicio_real?.trim().toLowerCase(),
             item.magnitud_real?.trim().toLowerCase(),
+            sitio,
           ].join('|');
 
           const existente = itemsAgrupados.get(clave);
@@ -477,6 +512,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
               instrumento: item.instrumento,
               tipo_servicio: item.tipo_servicio_real || 'NO ACREDITADO',
               magnitud: item.magnitud_real || 'N/A',
+              sitio,
               cantidad: 1,
               valor_unitario: decimalOrZero(item.valor_estimado), // Usa el PRECIO_U obtenido
             });
@@ -492,8 +528,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           (item) => {
             const valorUnitario = item.valor_unitario;
             const cantidad = item.cantidad;
-            
-            // 🟢 Multiplicación con operadores nativos
+
+            // Multiplicación con operadores nativos
             const valorTotal = valorUnitario * cantidad;
             subtotalGeneral += valorTotal; // Acumulamos al gran total
 
@@ -504,19 +540,20 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
               CANTIDAD: cantidad,
               VALOR_UNITARIO: valorUnitario,
               VALOR_TOTAL: valorTotal,
+              sitio: item.sitio,
             };
           },
         );
 
         // ==========================================================
-        // CREAR COTIZACIÓN
+        // CREAR COTIZACIÓN (estado BORRADOR en importación directa)
         // ==========================================================
         const nuevaCotizacion = await tx.cotizaciones.create({
           data: {
             CODIGO_COTIZACION: codigoCotizacionFinal,
             ID_CLIENTE_FK: cliente.ID_CLIENTE,
-            MONTO_TOTAL: subtotalGeneral, // 🟢 Insertamos la suma total calculada
-            ESTADO: 'APROBADA',
+            MONTO_TOTAL: subtotalGeneral, // Insertamos la suma total calculada
+            ESTADO: 'BORRADOR',
             enviar: false,
             viaticos: 0,
             descuento: 0,
@@ -539,7 +576,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         codigoCotizacionFinal = cotizacionExistente.CODIGO_COTIZACION;
       }
       // ==============================================================
-      // 6. ORDEN DE TRABAJO (una por cada sitio detectado)
+      // 6. DATOS DE CABECERA DE LA OT (se aplican a cada OT generada)
       // ==============================================================
       const datosOT = {
         // Área certificado / cliente
@@ -596,32 +633,31 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         OBSERVACIONES: getString(datosExtraidos, 'observaciones'),
       };
 
-      // Resolver el sitio de cada instrumento comparando su nombre con los
-      // detalles de la cotización (campo `sitio`).
+      // ==============================================================
+      // 6. RESOLVER SITIO POR FILA + SPLIT ENGINE
+      // ==============================================================
       const detallesCotizacion = await tx.cotizacion_detalles.findMany({
         where: {
           ID_COTIZACION_FK: idCotizacionFinal,
-          OR: [{ activacion: true }, { activacion: null }],
+          activacion: true,
         },
       });
 
-      const sitioPorClave = new Map<string, 'LABORATORIO' | 'CLIENTE'>();
+      const sitioPorClave = new Map<string, SitioCalibracion>();
       for (const d of detallesCotizacion) {
         const inst = d.EQUIPO_DESCRIPCION.trim().toLowerCase();
         const tipo = (d.TIPO_SERVICIO || '').trim().toLowerCase();
         const sitio = d.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
-        // Clave compuesta (instrumento + tipo servicio) para desambiguar cuando el
-        // mismo instrumento aparece en laboratorio y en sitio.
         if (tipo && !sitioPorClave.has(`${inst}|${tipo}`)) {
           sitioPorClave.set(`${inst}|${tipo}`, sitio);
         }
-        // Fallback por nombre de instrumento.
         if (!sitioPorClave.has(inst)) {
           sitioPorClave.set(inst, sitio);
         }
       }
 
-      const resolverSitio = (item: ExtractedInstrument): 'LABORATORIO' | 'CLIENTE' => {
+      const resolverSitio = (item: ExtractedInstrument): SitioCalibracion => {
+        if (item.sitio) return normalizarSitio(item.sitio);
         const inst = item.instrumento.trim().toLowerCase();
         const tipo = (item.tipo_servicio_real || item.tipo_servicio || '').trim().toLowerCase();
         if (tipo) {
@@ -631,159 +667,105 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         return sitioPorClave.get(inst) ?? 'LABORATORIO';
       };
 
-      const instrumentosPorSitio = new Map<'LABORATORIO' | 'CLIENTE', typeof datosExtraidos.tablas>();
-      for (const item of datosExtraidos.tablas) {
-        const sitio = resolverSitio(item);
-        const lista = instrumentosPorSitio.get(sitio) ?? [];
-        lista.push(item);
-        instrumentosPorSitio.set(sitio, lista);
+      const instrumentosResueltos: InstrumentoResuelto[] = datosExtraidos.tablas.map((item) => ({
+        item: item.item != null ? Number(item.item) : null,
+        tipo_servicio: item.tipo_servicio_real || item.tipo_servicio || 'Calibración',
+        instrumento: item.instrumento,
+        fabricante: item.fabricante,
+        modelo: item.modelo,
+        serie: item.serie,
+        codigo_interno: item.codigo_interno,
+        ubicacion: item.ubicacion,
+        puntos_calibracion: item.puntos_calibracion,
+        unidad: item.unidad,
+        intervalo_medicion: item.intervalo_medicion,
+        resolucion_division: item.resolucion_division,
+        declaracion_conformidad: item.declaracion_conformidad,
+        emp_ajuste_control: item.emp_ajuste_control,
+        emp_limite_control: item.emp_limite_control,
+        documento_especificacion: item.documento_especificacion,
+        regla_decision: item.regla_decision,
+        asignado: idUsuario,
+        sitio: resolverSitio(item),
+      }));
+
+      const esHeterogenea = new Set(instrumentosResueltos.map((i) => i.sitio)).size > 1;
+
+      // Flujo 2 heterogéneo: localizar la OT Master (SITIO_CALIBRACION = null).
+      let idOtMaster: number | null = null;
+      let codigoOtMaster: string | null = null;
+      if (id_cotizacion != null && esHeterogenea) {
+        const master = await tx.ordenes_trabajo.findFirst({
+          where: { ID_COTIZACION_FK: idCotizacionFinal, SITIO_CALIBRACION: null },
+        });
+        if (master) {
+          idOtMaster = master.ID_ORDEN_TRABAJO;
+          codigoOtMaster = master.CODIGO_OT;
+        }
       }
 
-      for (const [sitio, instrumentos] of instrumentosPorSitio.entries()) {
-        const esSitio = sitio === 'CLIENTE';
+      const solicitante =
+        getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL;
 
-        const oteExistente = await tx.ordenes_trabajo.findFirst({
-          where: { ID_COTIZACION_FK: idCotizacionFinal, SITIO_CALIBRACION: sitio },
+      const resultado = await splitHeterogeneousOT(tx, instrumentosResueltos, {
+        idCotizacion: idCotizacionFinal,
+        idCliente: cliente.ID_CLIENTE,
+        idUsuario,
+        idOtMaster,
+        datosOT,
+        solicitante,
+      });
+
+      for (const o of resultado.ots) {
+        otsProcesadas.push({ id: o.id, codigo: o.codigo, esNueva: o.esNueva });
+      }
+      for (const r of resultado.recepciones) {
+        recepcionesProcesadas.push({ id: r.id, codigo: r.codigo, esNueva: r.esNueva });
+      }
+
+      // ==============================================================
+      // 7. HISTORIAL DE CAMBIOS (solo en división heterogénea de Flujo 2)
+      // ==============================================================
+      if (esHeterogenea && idOtMaster != null) {
+        const ultimaVersion = await tx.historial_cambios.findFirst({
+          where: { id_cotizacion: idCotizacionFinal },
+          orderBy: { created_at: 'desc' },
         });
 
-        let oteProcesada;
-        let esNueva = false;
-        let codigoOT;
-
-        if (oteExistente) {
-          codigoOT = oteExistente.CODIGO_OT;
-          oteProcesada = await tx.ordenes_trabajo.update({
-            where: { ID_ORDEN_TRABAJO: oteExistente.ID_ORDEN_TRABAJO },
-            data: {
-              ...datosOT,
-              SITIO_CALIBRACION: sitio,
-              ES_EN_SITIO: esSitio,
-              ES_LAB_PERMANENTE: !esSitio,
-            },
-          });
-        } else {
-          esNueva = true;
-          codigoOT = await generarConsecutivo(tx, 'OT');
-          oteProcesada = await tx.ordenes_trabajo.create({
-            data: {
-              CODIGO_OT: codigoOT,
-              ID_COTIZACION_FK: idCotizacionFinal,
-              ID_CLIENTE_FK: cliente.ID_CLIENTE,
-              estado: 'Creada',
-              ESTADO_REVISION: 'PENDIENTE_REVISION',
-              SITIO_CALIBRACION: sitio,
-              ES_EN_SITIO: esSitio,
-              ES_LAB_PERMANENTE: !esSitio,
-              ...datosOT,
-            },
-          });
+        let siguienteNum = 1;
+        if (ultimaVersion && ultimaVersion.numero_version) {
+          const match = ultimaVersion.numero_version.match(/V(\d+)/);
+          if (match) siguienteNum = parseInt(match[1], 10) + 1;
         }
 
-        const idOt = oteProcesada.ID_ORDEN_TRABAJO;
-        otsProcesadas.push({ id: idOt, codigo: codigoOT, esNueva });
-
-        // ==============================================================
-        // 7. DETALLES DE INSTRUMENTOS DE LA OT
-        // ==============================================================
-        await tx.orden_trabajo_detalles.deleteMany({
-          where: { ID_ORDEN_TRABAJO_FK: idOt },
+        await tx.historial_cambios.create({
+          data: {
+            id: crypto.randomUUID(),
+            numero_version: `V${siguienteNum}`,
+            fecha_cambio: new Date(),
+            descripcion:
+              'División de Orden de Trabajo por sitio de calibración (importación de OT).',
+            observaciones: null,
+            aprobo: 'Sistema',
+            id_cotizacion: idCotizacionFinal,
+            updated_at: new Date(),
+          },
         });
+      }
 
-        await tx.orden_trabajo_detalles.createMany({
-          data: instrumentos.map((item, index) => ({
-            ID_ORDEN_TRABAJO_FK: idOt,
-            ITEM: index + 1,
-            INSTRUMENTO: item.instrumento,
-            TIPO_SERVICIO: item.tipo_servicio_real || item.tipo_servicio || 'Calibración',
-            FABRICANTE: item.fabricante || null,
-            MODELO: item.modelo || null,
-            SERIE: item.serie || null,
-            CODIGO_INVENTARIO: item.codigo_interno || null,
-            UBICACION: item.ubicacion || null,
-            PUNTOS_CALIBRAR: item.puntos_calibracion || [],
-            UNIDAD: item.unidad || null,
-            INTERVALO_RANGO: item.intervalo_medicion || null,
-            RESOLUCION: item.resolucion_division || null,
-            asignado: idUsuario,
-            DECLARACION_CONFORMIDAD: item.declaracion_conformidad ?? false,
-            LIMITE_CONTROL_EMC:
-              item.emp_ajuste_control || item.emp_limite_control || null,
-            DOC_ESPECIFICACION: item.documento_especificacion || null,
-            REGLA_DECISION: item.regla_decision || null,
-            activacion: true,
-          })),
-        });
-
-        // ==============================================================
-        // 8. RECEPCIÓN
-        // ==============================================================
-        const recepcionExistente = await tx.recepciones_equipo.findFirst({
-          where: { ID_ORDEN_TRABAJO_FK: idOt },
-        });
-
-        let codigoRec;
-        let idRec;
-        let esNuevaRec = false;
-
-        if (recepcionExistente) {
-          codigoRec = recepcionExistente.CODIGO_RECEPCION;
-          idRec = recepcionExistente.ID_RECEPCION;
-          await tx.recepciones_equipo.update({
-            where: { ID_RECEPCION: idRec },
-            data: {
-              SOLICITANTE:
-                getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL,
-              SITIO_CALIBRACION: sitio,
-              ESTADO: 'BORRADOR',
-            },
-          });
-        } else {
-          esNuevaRec = true;
-          codigoRec = await generarConsecutivo(tx, 'REC');
-          const recepcionProcesada = await tx.recepciones_equipo.create({
-            data: {
-              CODIGO_RECEPCION: codigoRec,
-              ID_COTIZACION_FK: idCotizacionFinal,
-              ID_ORDEN_TRABAJO_FK: idOt,
-              ESTADO: 'BORRADOR',
-              SOLICITANTE:
-                getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL,
-              SITIO_CALIBRACION: sitio,
-            },
-          });
-          idRec = recepcionProcesada.ID_RECEPCION;
-        }
-
-        recepcionesProcesadas.push({ id: idRec, codigo: codigoRec, esNueva: esNuevaRec });
-
-        await tx.recepcion_equipo_detalles.deleteMany({
-          where: { ID_RECEPCION_FK: idRec },
-        });
-
-        await tx.recepcion_equipo_detalles.createMany({
-          data: instrumentos.map((item) => ({
-            ID_RECEPCION_FK: idRec,
-            INSTRUMENTO: item.instrumento,
-            MARCA: item.fabricante || null,
-            MODELO: item.modelo || null,
-            SERIE: item.serie || null,
-            CODIGO_INVENTARIO: item.codigo_interno || null,
-            ESTAMPILLA: `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-            activacion: true,
-          })),
-        });
+      // Para el documento definitivo: la Master si existe; si no, la primera OT operativa.
+      if (idOtMaster != null && codigoOtMaster) {
+        idOtFinal = idOtMaster;
+        codigoOTFinal = codigoOtMaster;
+      } else if (resultado.ots[0]) {
+        idOtFinal = resultado.ots[0].id;
+        codigoOTFinal = resultado.ots[0].codigo;
       }
     });
 
     // ================================================================
     // 9. GUARDAR EXCEL DEFINITIVO EN S3
     // ================================================================
-    const primeraOT = otsProcesadas[0];
-    if (primeraOT) {
-      codigoOTFinal = primeraOT.codigo;
-      idOtFinal = primeraOT.id;
-    }
-
     const s3KeyDefinitiva = `importaciones_ote/${codigoOTFinal}.xlsx`;
 
     await s3Client.send(
@@ -886,7 +868,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
               tipo: 1,
               id_registro: idCotizacionFinal,
               codigo_actual: codigoCotizacionFinal,
-              action: 'cot_aprove',
+              action: 'cot_create',
             }
           : null,
         ...otsProcesadas.map((o) => ({

@@ -204,6 +204,7 @@ export interface ImportarOTEPayload {
   id_cotizacion?: number;   // Opcional: Define si es flujo normal o anormal
   idUsuario: number;
   id_job: string;           // ID de la tabla Quote para hacer polling
+  tipoFlujo?: 'estandar' | 'inverso';
 }
 
 // 3. Singleton para la cola de correos

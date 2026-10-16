@@ -235,6 +235,7 @@ model OrdenTrabajo {
   codigo                 String                @unique @map("CODIGO_OT")
   idCotizacion           Int?                  @map("ID_COTIZACION_FK")
   idCliente              Int?                  @map("ID_CLIENTE_FK")
+  idOrdenTrabajoPadre    Int?                  @map("ID_OT_PADRE_FK")
   correoCertificado      String?               @map("CORREO_CERTIFICADO")
   correoFactura          String?               @map("CORREO_FACTURA")
   fechaLimiteFacturacion DateTime?             @map("FECHA_LIMITE_FACTURACION")
@@ -291,6 +292,8 @@ telefonoContacto_solcitante       String?               @map("TELEFONO_CONTACTO_
  
   cliente                Cliente?              @relation(fields: [idCliente], references: [idCliente])
   cotizacion             Cotizacion?           @relation(fields: [idCotizacion], references: [idCotizacion])
+  ordenTrabajoPadre      OrdenTrabajo?         @relation("OTPadre", fields: [idOrdenTrabajoPadre], references: [idOrdenTrabajo])
+  ordenTrabajoHijas      OrdenTrabajo[]        @relation("OTPadre")
   recepciones            RecepcionEquipo[]
   facturas               Factura[]
 
@@ -338,6 +341,7 @@ model OrdenTrabajoDetalle {
   limiteControlEMC       String?      @map("LIMITE_CONTROL_EMC")
   docEspecificacion      String?      @map("DOC_ESPECIFICACION")
   reglaDecision          String?      @map("REGLA_DECISION")
+  sitioCalibracion       sitio_calibracion? @default(LABORATORIO) @map("sitio_calibracion")
   ordenTrabajo           OrdenTrabajo @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo], onDelete:Cascade)
 
 
