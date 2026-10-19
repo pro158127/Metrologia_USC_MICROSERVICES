@@ -66,6 +66,8 @@ interface ModuloActivoProps {
   onSelectCliente: (id: number) => void;   // ← navega a perfil
   onVolver: () => void;     
   onNavigarte: (modulo: ModuleKey) =>void;               // ← vuelve a lista
+  otToOpen: number | null;                 // ← OT a preseleccionar en Órdenes
+  onOpenOt: (id: number) => void;          // ← abre una OT desde importación
 }
 
 const ModuloActivo = ({
@@ -73,7 +75,9 @@ const ModuloActivo = ({
   clienteId, 
   onSelectCliente, 
   onVolver ,
-  onNavigarte
+  onNavigarte,
+  otToOpen,
+  onOpenOt,
 }: ModuloActivoProps)=> {
   switch (modulo) {
     case "administracion":
@@ -89,11 +93,11 @@ const ModuloActivo = ({
       return <Cotizaciones />;
 
     case "ordenes":
-      return <OrdenesTrabajo />;
+      return <OrdenesTrabajo otToOpen={otToOpen} />;
     case "recepcion":
       return <MainRenderers />;
     case "importarOrden":
-      return <MainRenderer2 />;
+      return <MainRenderer2 onOpenOt={onOpenOt} />;
     case "revision":
       return <RevisionCertificados/>
     case "dashboard":
@@ -119,6 +123,7 @@ export const MainRenderer = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
   const [cliente, setCliente] = useState<number | null>(null);
+  const [otToOpen, setOtToOpen] = useState<number | null>(null);
 
 
   useEffect(() => {
@@ -139,6 +144,11 @@ export const MainRenderer = () => {
 
 const handleVolverClientes = useCallback(() => {
   setActiveModule("clientes");
+}, []);
+
+const handleOpenOt = useCallback((id: number) => {
+  setOtToOpen(id);
+  setActiveModule("ordenes");
 }, []);
 
   const handleLogout = () => {
@@ -174,7 +184,8 @@ const handleVolverClientes = useCallback(() => {
         <main className="flex-1 overflow-auto bg-[#eff5ff]">
           <ModuloActivo modulo={activeModule}   clienteId={cliente}
   onSelectCliente={handleSelectCliente}
-  onVolver={handleVolverClientes}  onNavigarte={(m:ModuleKey) => setActiveModule(m)} />
+  onVolver={handleVolverClientes}  onNavigarte={(m:ModuleKey) => setActiveModule(m)}
+  otToOpen={otToOpen} onOpenOt={handleOpenOt} />
         </main>
       </div>
 

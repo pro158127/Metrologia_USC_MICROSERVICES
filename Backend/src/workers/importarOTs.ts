@@ -565,14 +565,76 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
         idCotizacionFinal = nuevaCotizacion.ID_COTIZACION;
       } else {
+        // ==============================================================
+        // FLUJO 2: importación ligada a una cotización existente.
+        // Reglas de negocio (bloquean antes de insertar):
+        //   1. El NIT del archivo debe coincidir con el cliente de la cotización.
+        //   2. Los instrumentos deben coincidir en cantidad exacta con los
+        //      detalles de la cotización.
+        // Esto también evita importar una OT Master "diferente" a una cotización
+        // que ya tiene OTs: cualquier contenido distinto falla aquí.
+        // ==============================================================
         const cotizacionExistente = await tx.cotizaciones.findUnique({
           where: { ID_COTIZACION: idCotizacionFinal },
-          select: { ID_COTIZACION: true, CODIGO_COTIZACION: true },
+          include: {
+            clientes: true,
+            cotizacion_detalles: { where: { activacion: true } },
+          },
         });
 
         if (!cotizacionExistente) {
           throw new Error(`La cotización '${idCotizacionFinal}' no existe.`);
         }
+
+        // 1. NIT del cliente.
+        const nitCotizacion = (cotizacionExistente.clientes?.NIT || '').trim().toLowerCase();
+        if (nitCotizacion && nitCotizacion !== nitLimpio.trim().toLowerCase()) {
+          throw new Error(
+            `Validación fallida: el NIT del archivo ('${nitLimpio}') no coincide con el cliente de la cotización '${cotizacionExistente.CODIGO_COTIZACION}' ('${cotizacionExistente.clientes?.NIT}').`,
+          );
+        }
+
+        // 2. Instrumentos con cantidad exacta.
+        const claveDetalle = (instrumento: string, tipo: string) =>
+          `${instrumento.trim().toLowerCase()}|${(tipo || '').trim().toLowerCase()}`;
+
+        const cantidadCotizada = new Map<string, number>();
+        for (const d of cotizacionExistente.cotizacion_detalles) {
+          const k = claveDetalle(d.EQUIPO_DESCRIPCION, d.TIPO_SERVICIO);
+          cantidadCotizada.set(k, (cantidadCotizada.get(k) ?? 0) + (d.CANTIDAD || 0));
+        }
+
+        const cantidadImportada = new Map<string, number>();
+        for (const item of datosExtraidos.tablas) {
+          const k = claveDetalle(
+            item.instrumento,
+            item.tipo_servicio_real || item.tipo_servicio || '',
+          );
+          cantidadImportada.set(k, (cantidadImportada.get(k) ?? 0) + 1);
+        }
+
+        const discrepancias: {
+          instrumento: string;
+          tipoServicio: string;
+          esperado: number;
+          encontrado: number;
+        }[] = [];
+        const claves = new Set([...cantidadCotizada.keys(), ...cantidadImportada.keys()]);
+        for (const k of claves) {
+          const esperado = cantidadCotizada.get(k) ?? 0;
+          const encontrado = cantidadImportada.get(k) ?? 0;
+          if (esperado !== encontrado) {
+            const [instrumento, tipoServicio] = k.split('|');
+            discrepancias.push({ instrumento, tipoServicio, esperado, encontrado });
+          }
+        }
+
+        if (discrepancias.length > 0) {
+          throw new Error(
+            `Validación fallida: los instrumentos del archivo no coinciden con la cotización '${cotizacionExistente.CODIGO_COTIZACION}'. Detalle: ${JSON.stringify(discrepancias)}`,
+          );
+        }
+
         codigoCotizacionFinal = cotizacionExistente.CODIGO_COTIZACION;
       }
       // ==============================================================

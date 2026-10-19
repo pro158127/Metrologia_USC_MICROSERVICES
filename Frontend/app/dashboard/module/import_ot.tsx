@@ -18,6 +18,7 @@
     status: "Pendiente" | "En proceso" | "Completada" | string;
     cotizacionReferencia?: string; 
     sitio?: string;
+    isMaster?: boolean;
   }
 
   interface RecepcionPorCotizacion {
@@ -126,7 +127,7 @@
   );
 
   // 🔥 COMPONENTE REFABRICADO CON FILTROS Y SCROLL RESPONSIVO
-  const OTTableSection: React.FC<{ generatedOTs: GeneratedOT[] }> = ({ generatedOTs }) => {
+  const OTTableSection: React.FC<{ generatedOTs: GeneratedOT[]; onOpenOt: (id: number) => void }> = ({ generatedOTs, onOpenOt }) => {
     const [filterOT, setFilterOT] = useState("");
     const [filterClient, setFilterClient] = useState("");
     const [filterDate, setFilterDate] = useState("");
@@ -216,8 +217,8 @@
                       <td className="px-5 py-3 font-medium text-slate-400 font-mono">{ot.date}</td>
                       <td className="px-5 py-3 text-center"><span className="bg-slate-100 px-2 py-0.5 rounded text-slate-600 font-bold">{ot.equipmentCount}</span></td>
                       <td className="px-5 py-3">
-                        <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase">
-                          {ot.sitio === "CLIENTE" ? "En sitio" : "Laboratorio"}
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${ot.isMaster ? "bg-amber-50 text-amber-700 border border-amber-100" : "bg-indigo-50 text-indigo-700 border border-indigo-100"}`}>
+                          {ot.isMaster ? "Unificada / Master" : ot.sitio === "CLIENTE" ? "En sitio" : "Laboratorio"}
                         </span>
                       </td>
                       <td className="px-5 py-3">
@@ -231,7 +232,7 @@
                         <span className="bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase">{ot.status}</span>
                       </td>
                       <td className="px-5 py-3 text-center">
-                        <button className="bg-slate-100 text-slate-700 font-bold px-3 py-1 rounded-xl text-[11px] hover:bg-slate-200 border-none cursor-pointer transition">
+                        <button onClick={() => onOpenOt(ot.id)} className="bg-slate-100 text-slate-700 font-bold px-3 py-1 rounded-xl text-[11px] hover:bg-slate-200 border-none cursor-pointer transition">
                           Ver
                         </button>
                       </td>
@@ -247,7 +248,7 @@
   };
 
   // 3. Componente Padre Principal
-  export const MainRenderer2: React.FC = () => {
+  export const MainRenderer2: React.FC<{ onOpenOt: (id: number) => void }> = ({ onOpenOt }) => {
     const [isMounted, setIsMounted] = useState(false);
 
     const { cotizaciones, ordenes_trabajo, loadTable } = useDbStore();
@@ -290,16 +291,20 @@
         equiposContados: c.detalles?.length || 0
       }));
 
-    const generatedOTs = (ordenes_trabajo || []).map((ot: any) => ({
-      id: ot.idOrdenTrabajo,
-      number: ot.codigo,
-      client: ot.cliente?.razonSocial || "Sin cliente",
-      date: ot.createdAt ? String(ot.createdAt).substring(0, 10) : "-",
-      equipmentCount: ot.instrumentos?.length || 0,
-      status: ot.estado || "Pendiente",
-      cotizacionReferencia: ot.cotizacion?.codigo || undefined,
-      sitio: ot.sitioCalibracion || (ot.esEnSitio ? "CLIENTE" : "LABORATORIO")
-    }));
+    const generatedOTs = (ordenes_trabajo || []).map((ot: any) => {
+      const isMaster = ot.sitioCalibracion == null;
+      return {
+        id: ot.idOrdenTrabajo,
+        number: ot.codigo,
+        client: ot.cliente?.razonSocial || "Sin cliente",
+        date: ot.createdAt ? String(ot.createdAt).substring(0, 10) : "-",
+        equipmentCount: ot.instrumentos?.length || 0,
+        status: ot.estado || "Pendiente",
+        cotizacionReferencia: ot.cotizacion?.codigo || undefined,
+        sitio: isMaster ? "" : (ot.sitioCalibracion === "CLIENTE" ? "CLIENTE" : "LABORATORIO"),
+        isMaster,
+      };
+    });
 
     const handleCotizacionChange = (cotiz: string) => {
       setCotizacionSeleccionada(cotiz);
@@ -356,7 +361,8 @@
             clearInterval(interval);
             setToast("✅ OT importada y reglas validadas con éxito.");
             setIsProcessing(false);
-            loadTable('ordenes_trabajo'); 
+            loadTable('ordenes_trabajo', true); 
+            loadTable('cotizaciones', true); 
             setFile(null); setShowForm(false); setClient(""); setCotizacionSeleccionada("");
           } else if (jobStatus.status === 'FAILED') {
             clearInterval(interval);
@@ -390,7 +396,7 @@
             ))}
           </div>
         ) : (
-          <OTTableSection generatedOTs={generatedOTs} />
+          <OTTableSection generatedOTs={generatedOTs} onOpenOt={onOpenOt} />
         )}
       </div>
     );

@@ -7,7 +7,7 @@ export const generarExcelBodySchema = z.object({
   codigo_actual: z.string().optional(), // 🔥 Opcional
   tipo_entry:z.enum(['test','prod']),
   id_job: z.string().optional(), // 🔥 Opcional
-  action:z.enum(["cot_create,cot_update","ot_create"]).optional(),
+  action:z.enum(["cot_create","cot_update","aprove","estado_cambio","ot_create","ot_update","rec_create","rec_update"]).optional(),
   id_usuario:z.number().optional()
 });
 export type GenerarExcelBody = z.infer<typeof generarExcelBodySchema>;

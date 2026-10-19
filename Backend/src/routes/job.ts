@@ -22,11 +22,12 @@ export default async function jobsRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Retornamos el estado actual (ej. PENDING, COMPLETED, FAILED)
+        // Retornamos el estado actual (ej. PENDING, COMPLETED, FAILED).
+        // `data` se devuelve tal cual (no anidado) para que el frontend
+        // pueda leer `data.error` directamente.
         return reply.code(200).send({
           status: job.status,
-          // Si guardas logs de error en alguna columna, la envías aquí:
-          data: { error: job.data || null } 
+          data: job.data ?? null,
         });
 
       } catch (error) {

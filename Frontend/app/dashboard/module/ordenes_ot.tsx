@@ -1267,7 +1267,7 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
 // ==========================================
 import { obtenerDatosIniciales } from "@/app/action_module/ordenes";
 import { useDbTable, useDbActions, useDbLoading, OrdenTrabajoModel, UsuarioModel, CotizacionModel, RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";
-export const OrdenesTrabajo = () => {
+export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
   const usuarios = useDbTable("usuarios");
   const roles = useDbTable("roles");
@@ -1465,6 +1465,17 @@ const instrumentos_cot = useMemo(() => {
     setInstrumentDrafts(defaultInstrumentos);
     setActiveMachine(null);
   };
+
+  // Preselección de OT proveniente del módulo de importación ("Ver").
+  const lastOpenedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (otToOpen == null || lastOpenedRef.current === otToOpen) return;
+    const ot = ordenesTrabajo.find((o) => o.idOrdenTrabajo === otToOpen);
+    if (ot) {
+      lastOpenedRef.current = otToOpen;
+      openOT({ id: String(otToOpen) });
+    }
+  }, [otToOpen, ordenesTrabajo]);
 
   // Handlers para la sección de asignación de técnicos/máquinas
 
