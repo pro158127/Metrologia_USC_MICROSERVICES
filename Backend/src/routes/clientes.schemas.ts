@@ -28,6 +28,7 @@ export const crearClienteBodySchema = z.object({
   tipoCliente: tipoClienteEnum.optional(),
   ciudad: z.string().nullish(),
   idRutDocumento: z.number().nullish(),
+  dirrecion: z.string().nullish(),
 });
 export type CrearClienteBody = z.infer<typeof crearClienteBodySchema>;
 
@@ -502,7 +503,7 @@ export const recepcionEquipoRawToDtoSchema = z
     ID_ORDEN_TRABAJO_FK: z.number().nullish(),
     SOLICITANTE: z.string(),
     NOMBRE_ENTREGA: z.string().nullish(),
-    SITIO_CALIBRACION: z.string(),
+    SITIO_CALIBRACION: z.string().nullish(),
     FECHA_RECEPCION: z.coerce.date(),
     FECHA_SALIDA: z.coerce.date().nullish(),
     NOMBRE_RECIBE: z.string().nullish(),
@@ -524,7 +525,7 @@ export const recepcionEquipoRawToDtoSchema = z
     idOrdenTrabajo: raw.ID_ORDEN_TRABAJO_FK ?? null,
     solicitante: raw.SOLICITANTE,
     nombreEntrega: raw.NOMBRE_ENTREGA ?? null,
-    sitioCalibracion: raw.SITIO_CALIBRACION,
+    sitioCalibracion: raw.SITIO_CALIBRACION ??'sin sitio',
     fechaRecepcion: raw.FECHA_RECEPCION,
     fechaSalida: raw.FECHA_SALIDA ?? null,
     nombreRecibe: raw.NOMBRE_RECIBE ?? null,

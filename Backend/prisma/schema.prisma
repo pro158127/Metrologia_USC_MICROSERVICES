@@ -349,7 +349,7 @@ model recepciones_equipo {
   ID_ORDEN_TRABAJO_FK       Int?
   SOLICITANTE               String
   NOMBRE_ENTREGA            String?
-  SITIO_CALIBRACION         sitio_calibracion        @default(LABORATORIO)
+  SITIO_CALIBRACION         sitio_calibracion?        @default(LABORATORIO)
   FECHA_RECEPCION           DateTime                    @default(now())
   FECHA_SALIDA              DateTime?
   NOMBRE_RECIBE             String?

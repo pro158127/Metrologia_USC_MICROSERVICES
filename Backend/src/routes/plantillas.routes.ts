@@ -9,6 +9,7 @@ import {
   getRedisConnection,
   getTarifasQueue,
 } from '../lib/queue/queue.js';
+import { asegurarBucketExiste } from '../lib/s3Client.js';
 import {
   actualizarMappingBodySchema,
   consolidarTarifasBodySchema,
@@ -42,6 +43,8 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  
 
   app.post(
     '/api/v1/plantillas',
@@ -365,6 +368,10 @@ app.post(
       if (templateType && typeof inputSchema === 'object' && inputSchema !== null) {
         (inputSchema as any).templateType = templateType;
       }
+      asegurarBucketExiste().catch((err) => {
+        request.log.error(err, 'Error al asegurar que el bucket exista');
+        throw new AppError(500, 'Error interno al preparar el almacenamiento de archivos.');
+      });
 
       // 💡 2. Usamos safeFileName en lugar de fileName para la ruta de S3
       const s3Key = `documentos/templates/${Date.now()}_${safeFileName}`;

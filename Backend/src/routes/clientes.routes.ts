@@ -71,6 +71,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
           TIPO_CLIENTE: body.tipoCliente ?? 'NATURAL',
           ciudad: body.ciudad ?? 'Cali',
           ID_RUT_DOCUMENTO_FK: body.idRutDocumento ?? null,
+          dirrecion: body.dirrecion ?? "sin dirreciion",
         },
       });
 

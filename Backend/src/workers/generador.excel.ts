@@ -165,7 +165,7 @@ const scalarMap: Record<string, any> = {
     calib_laboratorio_permanente: ordenTrabajo.ES_LAB_PERMANENTE ? 'X' : '',
     
     // ✅ CORRECCIÓN 1: Usar la hora real del evento de calibración
-    calib_hora: ordenTrabajo.HORA_CALIBRACION || ordenTrabajo.hora, 
+    calib_hora: ordenTrabajo.FECHA_CALIBRACION_DILIGENCIAMENTO, 
     
     // ✅ CORRECCIÓN 2: Usar el campo exclusivo del solicitante
     solicitante_razon_social: ordenTrabajo.razon_social_solicitante, 
@@ -175,7 +175,7 @@ const scalarMap: Record<string, any> = {
     // Nota técnica: Priorizamos CODIGO_OT que es el Unique ID formal de tu Prisma
     no_orden_trabajo: ordenTrabajo.CODIGO_OT || ordenTrabajo.no_orden_trabajo, 
     
-    no_cotizacion: ordenTrabajo.no_cotizacion,
+    no_cotizacion: ordenTrabajo.no_cotizacion  ,
     solicitante_direccion: ordenTrabajo.dirrecion_solcitante,
     solicitante_ciudad: ordenTrabajo.ciudad_solcitante,
     responsable: ordenTrabajo.RESPONSABLE,
@@ -255,6 +255,7 @@ if (Array.isArray(col.columnsList) && col.columnsList.length > 0) {
           case 'item': rawValue = item.ITEM; break;
           case 'tipo_servicio': rawValue = item.TIPO_SERVICIO; break;
           case 'instrumento': rawValue = item.INSTRUMENTO; break;
+          case 'sitio_calibracion': rawValue = item.sitio_calibracion; break;
           case 'fabricante': 
           case 'marca': rawValue = item.FABRICANTE; break; 
           case 'modelo': rawValue = item.MODELO; break;
@@ -604,14 +605,32 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
   
   if (tipo === 1) {
     const { scalars, tables } = resolverDatosCotizacionConCeldas(cotizacion, mappingConfig);
-    
+         console.log("buscando fila para visualizar")
+     const key_filas=["descuento","viaticos","monto_total","total_cantidad_servicios","total_servicio"]
     for (const scalar of scalars) {
+
       const sheet = workbook.getWorksheet(scalar.sheet || 1) || workbook.worksheets[0];
-      if (sheet) inyectarValorSeguro(sheet.getCell(scalar.cell), scalar.value);
+     
+      if (sheet){ 
+        
+        const cell = sheet.getCell(scalar.cell);
+          
+          // 🌟 VERIFICAR SI EL ESCALAR ESTÁ EN LA LISTA DE CLAVES IMPORTANTES
+          if (key_filas.includes(scalar.key)) {
+            // Forzamos la visibilidad de su fila y de su columna
+            sheet.getRow(Number(cell.row)).hidden = false;
+            sheet.getColumn(Number(cell.col)).hidden = false;
+            console.log("Forzando visibilidad para clave:", scalar.key, "Fila:", cell.row, "Columna:", cell.col);
+          }
+        
+        
+        inyectarValorSeguro(sheet.getCell(scalar.cell), scalar.value);}
     }
     
     for (const tabla of tables) {
       const sheet = workbook.getWorksheet(tabla.sheetName) || workbook.worksheets[0];
+      const filaModelo = sheet.getRow(tabla.startRow);
+      const alturaModelo = filaModelo.height;
       if (!sheet) continue;
       const columnasTabla = [...new Set(tabla.rowCells.map(c => c.column))];
       const FILA_LIMITE = 50; 
@@ -619,17 +638,33 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
       for (let r = tabla.startRow; r <= FILA_LIMITE; r++) {
         const row = sheet.getRow(r);
         row.hidden = r > tabla.endRow; 
+        if (r > tabla.startRow && r <= tabla.endRow && alturaModelo) {
+          row.height = alturaModelo;
+        }
         for (const col of columnasTabla) {
            sheet.getCell(`${col}${r}`).value = null; 
+           const cell = sheet.getCell(`${col}${r}`);
+           cell.value = null;
+           if (r > tabla.startRow && r <= tabla.endRow) {
+             const cellModelo = sheet.getCell(`${col}${tabla.startRow}`);
+             
+    
+             cell.border = cellModelo.border ? JSON.parse(JSON.stringify(cellModelo.border)) : undefined;
+             cell.fill = cellModelo.fill ? JSON.parse(JSON.stringify(cellModelo.fill)) : undefined;
+             cell.numFmt = cellModelo.numFmt;
+           }
         }
       }
-
+      
       const filasAgrupadas = tabla.rowCells.reduce((acc, cellData) => {
         if (!acc[cellData.row]) acc[cellData.row] = [];
         acc[cellData.row].push(cellData);
         return acc;
       }, {} as Record<number, typeof tabla.rowCells>);
 
+ 
+     
+    
       for (const filaNumStr of Object.keys(filasAgrupadas)) {
         const filaNum = Number(filaNumStr);
         for (const celdaData of filasAgrupadas[filaNum]) {
@@ -638,6 +673,9 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
         }
       }
     }
+
+    
+
 
     const totalCalculado = Number(cotizacion.MONTO_TOTAL || 0) + Number(cotizacion.viaticos || 0);
     

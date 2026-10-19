@@ -134,6 +134,7 @@ export async function crearCliente(input: CrearClienteInput) {
           tipoCliente: input.tipoCliente ?? 'NATURAL',
           ciudad: input.ciudad ?? 'Cali',
           idRutDocumento: input.idRutDocumento ?? null,
+          dirrecion: input.dirrecion ?? "sin dirreciion", 
         },
       }
     );

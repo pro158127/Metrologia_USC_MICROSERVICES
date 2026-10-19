@@ -66,7 +66,8 @@ export default async function documentosRoutes(fastify: FastifyInstance) {
       'image/jpeg',
       'image/jpg',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
+       'application/wps-office.xlsx'
+,      'application/vnd.ms-excel',
       'application/octet-stream',
     ];
     if (!ALLOWED.includes(data.mimetype)) {

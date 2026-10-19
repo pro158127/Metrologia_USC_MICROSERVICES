@@ -1,4 +1,4 @@
-import { S3Client } from '@aws-sdk/client-s3';
+import { S3Client,HeadBucketCommand,CreateBucketCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 
 // 1. CLIENTE INTERNO (Workers/Backend -> MinIO dentro de la red de Docker)
@@ -23,6 +23,20 @@ export const s3ClientPublic = new S3Client({
   forcePathStyle: true, // ✅ Obligatorio en MinIO para rutas tipo /bucket/archivo
 });
 
+async function asegurarBucketExiste(s3ClientParam: S3Client = s3Client, bucketName:string = "documentos-metrologia") {
+  try {
+    await s3ClientParam.send(new HeadBucketCommand({ Bucket: bucketName }));
+  } catch (error: any) {
+    if (error.$metadata?.httpStatusCode === 404 || error.name === "NotFound") {
+      console.log(`El bucket ${bucketName} no existe. Creándolo automáticamente...`);
+      await s3ClientParam.send(new CreateBucketCommand({ Bucket: bucketName }));
+      console.log("¡Bucket creado con éxito!");
+    } else {
+      throw error;
+    }
+  }
+}
+export { asegurarBucketExiste };
 export const BUCKET_NAME = process.env.MINIO_BUCKET_NAME || 'documentos-metrologia';
 
 export async function streamToBuffer(stream: Readable): Promise<Buffer> {

@@ -47,7 +47,7 @@ export async function subirArchivoDocumento(
       url?: string;
       data?: { rutaUrl?: string };
     }>(session, '/api/v1/documentos/upload', { method: 'POST', body: form });
-
+    console.log('Respuesta de la API de subida de archivo:', res);
     const rutaUrl = res.rutaUrl ?? res.url ?? res.data?.rutaUrl;
     return { ok: true, rutaUrl };
   } catch (error) {

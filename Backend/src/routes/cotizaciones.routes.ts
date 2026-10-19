@@ -677,13 +677,22 @@ const trackingJobs: Record<string, string> = {};
               const codigoOT = await generarConsecutivo(tx, 'OT');
               ot = await tx.ordenes_trabajo.create({
                 data: {
+                  
                   CODIGO_OT: codigoOT,
-                  ID_COTIZACION_FK: idCotizacion,
-                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
-                  Razon_social: cotizacionActualizada.clientes?.RAZON_SOCIAL,
-                  NIT: cotizacionActualizada.clientes?.NIT,
-                  dirrecion: cotizacionActualizada.clientes?.dirrecion,
-                  ciudad: cotizacionActualizada.clientes?.ciudad,
+                  
+                  // ✅ REEMPLAZO AQUÍ (Elimina ID_COTIZACION_FK y ID_CLIENTE_FK)
+                  cotizaciones: {
+                    connect: { ID_COTIZACION: cotizacionActualizada.ID_COTIZACION }
+                  },
+                  clientes: {
+                    connect: { ID_CLIENTE: Number(cotizacionActualizada.ID_CLIENTE_FK) }
+                  },
+
+                  razon_social_solicitante: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? '',
+                  no_cotizacion: cotizacionActualizada.CODIGO_COTIZACION,
+                  NIT_solicitante: cotizacionActualizada.clientes?.NIT ?? '',
+                  dirrecion_solcitante: cotizacionActualizada.clientes?.dirrecion ?? '',
+                  ciudad_solcitante: cotizacionActualizada.clientes?.ciudad ?? '',
                   estado: 'Creada',
                   SITIO_CALIBRACION: null,
                   ES_EN_SITIO: false,
@@ -737,16 +746,21 @@ const trackingJobs: Record<string, string> = {};
               ot = await tx.ordenes_trabajo.create({
                 data: {
                   CODIGO_OT: codigoOT,
-                  ID_COTIZACION_FK: idCotizacion,
-                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
-                  Razon_social: cotizacionActualizada.clientes?.RAZON_SOCIAL,
-                  NIT: cotizacionActualizada.clientes?.NIT,
-                  dirrecion: cotizacionActualizada.clientes?.dirrecion,
-                  ciudad: cotizacionActualizada.clientes?.ciudad,
+                  cotizaciones: {
+                    connect: { ID_COTIZACION: cotizacionActualizada.ID_COTIZACION }
+                  },
+                  clientes: {
+                    connect: { ID_CLIENTE: Number(cotizacionActualizada.ID_CLIENTE_FK) }
+                  },
+                  razon_social_solicitante: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? '',
+                  no_cotizacion: cotizacionActualizada.CODIGO_COTIZACION,
+                  NIT_solicitante: cotizacionActualizada.clientes?.NIT ?? '',
+                  dirrecion_solcitante: cotizacionActualizada.clientes?.dirrecion ?? '',
+                  ciudad_solcitante: cotizacionActualizada.clientes?.ciudad,
                   estado: 'Creada',
-                  SITIO_CALIBRACION: sitio,
-                  ES_EN_SITIO: esSitio,
-                  ES_LAB_PERMANENTE: !esSitio,
+                  SITIO_CALIBRACION: null,
+                  ES_EN_SITIO: false,
+                  ES_LAB_PERMANENTE: false,
                   ES_INTERNO_USC: false,
                   orden_trabajo_detalles: { create: detallesOT },
                 },
