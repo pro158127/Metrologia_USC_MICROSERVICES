@@ -3,6 +3,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
+import { registrarBitacora } from '../services/bitacora.service.js';
 import { uploadBuffer } from '../lib/minioClient.js';
 
 const idInstrumentoParamsSchema = z.object({ idInstrumento: z.coerce.number() });
@@ -261,6 +262,19 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
       });
 
       if (ot) await evaluarTransicionesOT(fastify.prisma, ot.ID_ORDEN_TRABAJO);
+
+      await registrarBitacora(fastify.prisma, {
+        action: 'UPLOAD_CERTIFICADO',
+        tableName: 'calibraciones',
+        recordId: calibracion.ID_CALIBRACION,
+        userId: idUsuario,
+        ip: request.ip,
+        details: {
+          idInstrumento,
+          idCertificado: certId,
+          codigoOT: ot?.CODIGO_OT ?? null,
+        },
+      });
 
       return {
         ok: true as const,

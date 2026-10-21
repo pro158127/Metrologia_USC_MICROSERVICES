@@ -13,6 +13,8 @@ interface SessionLike {
     id?: string | number;
     id_user?: string | number;
     email?: string | null;
+    name?: string | null;
+    role?: string;
     permissions?: { permisos?: Record<string, unknown> } | null;
   } | null;
 }
@@ -39,9 +41,12 @@ export async function fastifyRequest<T = unknown>(
   const token = await generarTokenBackend({
     sub: String(id),
     email: session.user.email ?? '',
+    name: session.user.name ?? '',
+    role: session.user.role ?? '',
     user: {
       id: String(id),
       email: session.user.email ?? '',
+      nombreCompleto: session.user.name ?? '',
       permissions: { permisos: session.user.permissions?.permisos ?? {} },
     },
   });

@@ -6,7 +6,8 @@ import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
 import { uploadBuffer } from '../lib/minioClient.js';
 import { getEmailQueue } from '../lib/queue/queue.js';
-import { transicionarOT } from '../services/ot-fsm.service.js';
+import { transicionarOT, evaluarTransicionesOT } from '../services/ot-fsm.service.js';
+import { registrarBitacora } from '../services/bitacora.service.js';
 
 const otParamsSchema = z.object({ id: z.coerce.number() });
 
@@ -216,6 +217,18 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         data: { estado_pago: 'PAGADO' },
       });
 
+      // El pago registrado dispara automáticamente el estado "Certificado_enviado".
+      await evaluarTransicionesOT(fastify.prisma, idOT);
+
+      await registrarBitacora(fastify.prisma, {
+        action: 'MARCAR_PAGADA',
+        tableName: 'ordenes_trabajo',
+        recordId: idOT,
+        userId: Number(request.user?.sub ?? 0),
+        ip: request.ip,
+        details: { codigoOT: ot.CODIGO_OT, idDocumento: documento.ID_DOCUMENTO },
+      });
+
       return {
         ok: true as const,
         data: {
@@ -259,6 +272,15 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       // Transición explícita al estado de envío.
       await transicionarOT(fastify.prisma, idOT, EstadoOT.Certificado_enviado, {
         permitirRetroceso: true,
+      });
+
+      await registrarBitacora(fastify.prisma, {
+        action: 'ENVIAR_CERTIFICADOS',
+        tableName: 'ordenes_trabajo',
+        recordId: idOT,
+        userId: Number(request.user?.sub ?? 0),
+        ip: request.ip,
+        details: { codigoOT: ot.CODIGO_OT, totalCertificados: certificados.length },
       });
 
       const links = [

@@ -18,6 +18,7 @@ import {
   evaluarTransicionesOT,
   validarAsignacionPermitida,
 } from '../services/ot-fsm.service.js';
+import { registrarBitacora } from '../services/bitacora.service.js';
 export default async function ordenesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
@@ -259,6 +260,19 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           // E. Recalcular el estado automático de la OT (FSM) tras aplicar los cambios.
           const fsm = await evaluarTransicionesOT(tx, id);
           estadoFinal = fsm.estadoNuevo;
+
+          await registrarBitacora(tx, {
+            action: 'UPDATE',
+            tableName: 'ordenes_trabajo',
+            recordId: id,
+            userId: idUsuario,
+            ip: request.ip,
+            details: {
+              codigo: otActualizada.CODIGO_OT,
+              estadoAnterior: otActualizada.estado,
+              estadoNuevo: estadoFinal,
+            },
+          });
 
           // 2. Registrar el tracker de generación documental (dentro de la tx)
           const quoteJob = await tx.quote.create({ data: { status: 'PENDING' } });

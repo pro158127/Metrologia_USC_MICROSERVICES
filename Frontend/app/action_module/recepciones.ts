@@ -149,6 +149,30 @@ export async function eliminarInstrumentoRecepcion(
   }
 }
 
+export interface MotivoSoftDelete {
+  descripcion: string;
+  aprobo: string;
+  observaciones?: string | null;
+}
+
+export async function eliminarInstrumentoRecepcionConMotivo(
+  idRecepcion: number,
+  idInstrumento: number,
+  motivo: MotivoSoftDelete
+): Promise<RespuestaSoftDelete> {
+  try {
+    const session = await auth();
+    return await fastifyRequest<RespuestaSoftDelete>(
+      session,
+      `/api/v1/recepciones/${idRecepcion}/instrumentos/${idInstrumento}`,
+      { method: 'DELETE', body: motivo }
+    );
+  } catch (error) {
+    console.error('Error al eliminar instrumento con motivo:', error);
+    return { ok: false, error: (error as Error).message || 'Error al eliminar el instrumento' };
+  }
+}
+
 export interface HistorialCambioItem {
   id: string;
   numeroVersion: string;

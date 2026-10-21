@@ -5,6 +5,7 @@ import { AppError } from '../lib/errors.js';
 import { getCertificatePdfQueue } from '../lib/queue/queue.js';
 import { esAcreditado, inferirPlantillaSello } from '../services/certificatePdf.service.js';
 import { evaluarTransicionesOT, transicionarOT } from '../services/ot-fsm.service.js';
+import { registrarBitacora } from '../services/bitacora.service.js';
 import {
   aprobarCertificadoBodySchema,
   calibracionRawToDtoSchema,
@@ -206,6 +207,20 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
           include: { certificado_sellos: true },
         });
         if (ot) await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
+
+        await registrarBitacora(tx, {
+          action: 'APROBAR',
+          tableName: 'certificados',
+          recordId: idCertificado,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: cert.CODIGO_CERTIFICADO,
+            idOrdenTrabajo: ot?.ID_ORDEN_TRABAJO ?? null,
+            idPlantillaSello: plantilla?.ID_PLANTILLA_SELLO ?? null,
+          },
+        });
+
         return upd;
       });
 
@@ -281,6 +296,19 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
             permitirRetroceso: true,
           });
         }
+
+        await registrarBitacora(tx, {
+          action: 'RECHAZAR',
+          tableName: 'certificados',
+          recordId: idCertificado,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: cert.CODIGO_CERTIFICADO,
+            idOrdenTrabajo: ot?.ID_ORDEN_TRABAJO ?? null,
+            motivo: request.body.descripcion,
+          },
+        });
 
         return upd;
       });

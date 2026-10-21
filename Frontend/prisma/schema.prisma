@@ -284,7 +284,7 @@ telefonoContacto_solcitante       String?               @map("TELEFONO_CONTACTO_
   estadoRevision         String?                @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
   motivoRechazo          String?               @map("MOTIVO_RECHAZO")
   createdAt              DateTime?             @default(now()) @map("CREATED_AT")
-  estado_pago            estadopay?             @default(PAGADO)
+  estado_pago            estadopay?             @default(PENDINDE)
   alertamessag           String?               @default("sin novedades")
   
   documentos     Documento[] @relation("OrdenDocumentos")

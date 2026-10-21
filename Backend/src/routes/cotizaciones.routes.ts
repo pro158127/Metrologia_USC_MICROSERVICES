@@ -15,6 +15,7 @@ import {
 } from './cotizaciones.schemas.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
+import { registrarBitacora } from '../services/bitacora.service.js';
 const transicionesValidas: Record<Estados, Estados[]> = {
   BORRADOR: [Estados.ENVIADA],
   ENVIADA: [Estados.APROBADA, Estados.RECHAZADA],
@@ -167,7 +168,20 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         
         // 2. CORRECCIÓN: Convertir a String explícitamente para cumplir con Zod
         id_jobs = String(trabajo.id); 
-        
+
+        await registrarBitacora(tx, {
+          action: 'CREATE',
+          tableName: 'cotizaciones',
+          recordId: nuevaCotizacion.ID_COTIZACION,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: nuevaCotizacion.CODIGO_COTIZACION,
+            estado: nuevaCotizacion.ESTADO,
+            montoTotal: Number(nuevaCotizacion.MONTO_TOTAL ?? 0),
+          },
+        });
+
         return { nuevaCotizacion, trabajo };
       });
 
@@ -485,6 +499,20 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         });
       }
 
+      await registrarBitacora(tx, {
+        action: 'UPDATE',
+        tableName: 'cotizaciones',
+        recordId: idCotizacion,
+        userId: idUsuario,
+        ip: request.ip,
+        details: {
+          codigo: cotizacionActualizada.CODIGO_COTIZACION,
+          estado: cotizacionActualizada.ESTADO,
+          montoTotal: Number(cotizacionActualizada.MONTO_TOTAL ?? 0),
+          ...(cambios ? { motivo: cambios.descripcion } : {}),
+        },
+      });
+
       return cotizacionActualizada;
     });
 
@@ -770,6 +798,19 @@ const trackingJobs: Record<string, string> = {};
             dataOTs.push(ot);
           }
         }
+
+        await registrarBitacora(tx, {
+          action: 'CAMBIO_ESTADO',
+          tableName: 'cotizaciones',
+          recordId: idCotizacion,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: cotizacionActualizada.CODIGO_COTIZACION,
+            estadoAnterior: actual.ESTADO,
+            estadoNuevo: nuevoEstado,
+          },
+        });
 
         return { cotizacion: cotizacionActualizada, ots: dataOTs, recs: dataRecs };
       });

@@ -785,6 +785,13 @@ export const recepcionInstrumentoParamsSchema = z.object({
   idInstrumento: z.coerce.number(),
 });
 
+export const softDeleteInstrumentoBodySchema = z.object({
+  descripcion: z.string().optional(),
+  observaciones: z.string().nullish(),
+  aprobo: z.string().optional(),
+});
+export type SoftDeleteInstrumentoBody = z.infer<typeof softDeleteInstrumentoBodySchema>;
+
 export const respuestaRecepcionMutacionSchema = z.object({
   ok: z.literal(true),
   data: recepcionEquipoDtoSchema,

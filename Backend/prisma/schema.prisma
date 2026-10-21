@@ -211,7 +211,7 @@ model ordenes_trabajo {
   CREATED_AT                                         DateTime?                @default(now())
   hora                                               DateTime?                @default(now())
   estado                                             EstadoOT?                @default(Creada)
-  estado_pago                                        estadopay?               @default(PAGADO)
+  estado_pago                                        estadopay?               @default(PENDINDE)
   ESTADO_REVISION                                    String?                  @default("PENDIENTE_REVISION")
   MOTIVO_RECHAZO                                     String?
   alertamessag                                       String?                  @default("sin novedades")

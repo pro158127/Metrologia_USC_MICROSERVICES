@@ -25,6 +25,9 @@ import {
 
 // Importar el contexto y los tipos
 import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables_recharge";
+import { useSession } from "next-auth/react";
+import { VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
+import type { QuoteItem, TarifaOption, cambiospayload } from "@/tipos/cotizacion";
 import type {
   FilaInstrumento,
   FormularioRecepcion,
@@ -274,8 +277,9 @@ const DatosGeneralesSection = ({
   // Función de actualización
   isNew, // 🟢 Nueva propiedad
   bloqueado = false,
+  nombreRecibeBloqueado = false,
   onUpdateGeneral,
-}: DatosGeneralesSectionProps & { isNew: boolean }) => {
+}: DatosGeneralesSectionProps & { isNew: boolean; nombreRecibeBloqueado?: boolean }) => {
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
   const camposRaizBloqueados = isNew || bloqueado;
   // Listas para datalist
@@ -418,8 +422,13 @@ const DatosGeneralesSection = ({
           </label>
           <input
             value={nombreQuienRecibe}
+            disabled={nombreRecibeBloqueado}
             onChange={(e) => onUpdateGeneral("nombreQuienRecibe", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${
+              nombreRecibeBloqueado
+                ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium"
+                : "bg-white border-slate-200"
+            }`}
           />
         </div>
         <div className="md:col-span-2">
@@ -839,7 +848,7 @@ import {
   getInitialData,
   crearRecepcion,
   actualizarRecepcion,
-  eliminarInstrumentoRecepcion,
+  eliminarInstrumentoRecepcionConMotivo,
   getHistorialRecepcion,
   type HistorialCambioItem,
 } from "@/app/action_module/recepciones";
@@ -852,6 +861,8 @@ export function MainRenderers() {
   const tarifasStore = useDbTable("tarifas");
   const { mergeTable, setTableLoading } = useDbActions();
   const loadingRecepciones = useDbLoading("recepciones_equipo");
+  const { data: session } = useSession();
+  const nombreUsuarioSesion = session?.user?.name ?? "";
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
@@ -890,11 +901,69 @@ export function MainRenderers() {
   const [historialItems, setHistorialItems] = useState<HistorialCambioItem[]>([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
 
+  // Soft delete con versionado (reutiliza el VersionModal de Cotizaciones)
+  const [isDeleteVersionOpen, setDeleteVersionOpen] = useState(false);
+  const [deleteModalItems, setDeleteModalItems] = useState<QuoteItem[]>([]);
+  const [deleteInstrumento, setDeleteInstrumento] = useState<{ idInstrumento: number; index: number } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
   const esEdicionAtada =
     selectedRecepcionId !== null &&
     selectedRecepcionId !== "NUEVA" &&
     !!recepcionActual?.idOrdenTrabajo;
+
+  // --- Helpers para el VersionModal (soft delete) ---
+  const tarifasOptions: TarifaOption[] = useMemo(() => {
+    return (tarifasStore ?? []).map((t) => {
+      const historial = t.historial || [];
+      const activo = historial.find((h) => !h.fechaFin) || historial[0];
+      const precio = activo ? Number(activo.precioU) : 0;
+      return {
+        tipoServicio: t.tipoServicio || "ACREDITADO",
+        magnitud: t.magnitud || "",
+        instrumento: t.Instrumento || "Genérico",
+        norma: t.Norma || "N/A",
+        precio,
+      };
+    });
+  }, [tarifasStore]);
+
+  const getMagnitudesByTipo = useCallback(
+    (tipo: string): string[] => {
+      const unique = new Set<string>();
+      tarifasOptions.forEach((t) => {
+        if (t.tipoServicio === tipo) unique.add(t.magnitud);
+      });
+      return Array.from(unique).filter(Boolean);
+    },
+    [tarifasOptions]
+  );
+
+  const getInstrumentosByMagnitudAndTipo = useCallback(
+    (magnitud: string, tipo: string): TarifaOption[] =>
+      tarifasOptions.filter((t) => t.magnitud === magnitud && t.tipoServicio === tipo),
+    [tarifasOptions]
+  );
+
+  const calculateTotal = useCallback(
+    (listaItems: QuoteItem[], desc: number, viat: number) => {
+      const subtotal = listaItems.reduce(
+        (acc, item) => acc + item.cantidad * item.valorUnitario,
+        0
+      );
+      return (subtotal + viat) * (1 - desc / 100);
+    },
+    []
+  );
+
+  const formatCurrency = (value: number) =>
+    value.toLocaleString("es-CO", {
+      style: "currency",
+      currency: "COP",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
 
   // --- Helpers ---
   const showToast = useCallback((msg: string) => {
@@ -1015,20 +1084,28 @@ useEffect(() => {
   }, [showToast]);
 
   const eliminarFilaInstrumento = useCallback(
-    async (index: number) => {
+    (index: number) => {
       const fila = formulario.instrumentos[index];
 
-      // Si el instrumento ya existe en BD, se desactiva con soft delete real.
+      // Si el instrumento ya existe en BD, se abre el modal de versionado
+      // (el mismo de Cotizaciones) para capturar el motivo del soft delete.
       if (fila?.idInstrumento && recepcionActual?.idRecepcion) {
-        const res = await eliminarInstrumentoRecepcion(
-          recepcionActual.idRecepcion,
-          fila.idInstrumento
-        );
-        if (!res.ok) {
-          showToast(res.error || "No se pudo desactivar el instrumento.");
-          return;
-        }
-        showToast("🗑️ Instrumento desactivado (soft delete) en recepción, OT y cotización.");
+        const mapeados: QuoteItem[] = formulario.instrumentos
+          .filter((_, i) => i !== index)
+          .map((inst) => ({
+            id: Number(inst.idInstrumento ?? 0) || Math.floor(Math.random() * 1e9),
+            tipoServicio: "",
+            magnitud: "",
+            instrumento: inst.instrumento || "",
+            norma: "N/A",
+            cantidad: 1,
+            valorUnitario: 0,
+            lugarCalibracion: "Laboratorio",
+          }));
+        setDeleteModalItems(mapeados);
+        setDeleteInstrumento({ idInstrumento: fila.idInstrumento, index });
+        setDeleteVersionOpen(true);
+        return;
       }
 
       setFormulario((prev) => {
@@ -1041,6 +1118,98 @@ useEffect(() => {
       });
     },
     [formulario.instrumentos, recepcionActual, showToast]
+  );
+
+  // --- Confirmación del soft delete (motivo capturado en el VersionModal) ---
+  const confirmarEliminarInstrumento = useCallback(
+    async (auditForm: cambiospayload) => {
+      if (!deleteInstrumento || !recepcionActual?.idRecepcion) return;
+
+      setIsDeleting(true);
+      try {
+        const res = await eliminarInstrumentoRecepcionConMotivo(
+          recepcionActual.idRecepcion,
+          deleteInstrumento.idInstrumento,
+          {
+            descripcion: auditForm.descripcion,
+            aprobo: auditForm.aprobo,
+            observaciones: auditForm.observaciones ?? null,
+          }
+        );
+        if (!res.ok) {
+          showToast(res.error || "No se pudo desactivar el instrumento.");
+          return;
+        }
+        showToast("🗑️ Instrumento desactivado (soft delete) y cotización versionada.");
+
+        setFormulario((prev) => {
+          if (prev.instrumentos.length <= 1) {
+            return prev;
+          }
+          const filtrados = prev.instrumentos.filter(
+            (_, idx) => idx !== deleteInstrumento.index
+          );
+          return { ...prev, instrumentos: filtrados };
+        });
+
+        // Refrescar datos de trazabilidad
+        setTableLoading("recepciones_equipo", true);
+        try {
+          const data = await getInitialData();
+          mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+          mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+          mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+        } finally {
+          setTableLoading("recepciones_equipo", false);
+        }
+      } finally {
+        setIsDeleting(false);
+        setDeleteVersionOpen(false);
+        setDeleteInstrumento(null);
+        setDeleteModalItems([]);
+      }
+    },
+    [deleteInstrumento, recepcionActual, showToast, mergeTable, setTableLoading]
+  );
+
+  // --- Operaciones de ítems dentro del VersionModal (solo contexto) ---
+  const agregarFilaModal = useCallback((_target: "create" | "modal") => {
+    setDeleteModalItems((prev) => [
+      ...prev,
+      {
+        id: Math.floor(Math.random() * 1e9),
+        tipoServicio: "",
+        magnitud: "",
+        instrumento: "",
+        norma: "N/A",
+        cantidad: 1,
+        valorUnitario: 0,
+        lugarCalibracion: "Laboratorio",
+      },
+    ]);
+  }, []);
+
+  const eliminarFilaModal = useCallback(
+    (idParaEliminar: number, _target: "create" | "modal") => {
+      setDeleteModalItems((prev) => prev.filter((f) => f.id !== idParaEliminar));
+    },
+    []
+  );
+
+  const manejarCambioModalFila = useCallback(
+    <K extends keyof QuoteItem>(
+      index: number,
+      propiedad: K,
+      valor: QuoteItem[K],
+      _target: "create" | "modal"
+    ) => {
+      setDeleteModalItems((prev) => {
+        const actualizados = [...prev];
+        actualizados[index] = { ...actualizados[index], [propiedad]: valor } as QuoteItem;
+        return actualizados;
+      });
+    },
+    []
   );
 
   // --- Cargar una recepción existente para editar ---
@@ -1207,7 +1376,7 @@ const handleGenerarActa = useCallback(async () => {
         sitioCalibracion: formulario.sitioCalibracion,
         fechaRecepcion: formulario.fechaRecepcion,
         fechaSalida: formulario.fechaSalida || undefined,
-        nombreRecibe: formulario.nombreQuienRecibe || undefined,
+        nombreRecibe: nombreUsuarioSesion || formulario.nombreQuienRecibe || undefined,
         nombreEmpaca: formulario.nombreQuienEmpaca || undefined,
         accesorios: formulario.accesorios || undefined,
         pruebasCompletas: formulario.pruebasCompletas,
@@ -1289,7 +1458,7 @@ const handleGenerarActa = useCallback(async () => {
     } finally {
       setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, mergeTable, setTableLoading]);
+  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion]);
 
   // --- Trazabilidad: cargar historial de cambios de la cotización ---
   const abrirHistorial = useCallback(async () => {
@@ -1313,6 +1482,31 @@ const handleGenerarActa = useCallback(async () => {
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification message={toast} />
+
+      <VersionModal
+        usu_rol={nombreUsuarioSesion || "no hay"}
+        isOpen={isDeleteVersionOpen}
+        onClose={() => {
+          setDeleteVersionOpen(false);
+          setDeleteInstrumento(null);
+          setDeleteModalItems([]);
+        }}
+        modalItems={deleteModalItems}
+        modalDescuento={0}
+        setModalDescuento={() => {}}
+        modalViaticos={0}
+        setModalViaticos={() => {}}
+        agregarFila={agregarFilaModal}
+        eliminarFila={eliminarFilaModal}
+        manejarCambioFila={manejarCambioModalFila}
+        calculateTotal={calculateTotal}
+        formatCurrency={formatCurrency}
+        saveNewVersion={confirmarEliminarInstrumento}
+        isSaving={isDeleting}
+        tarifasOptions={tarifasOptions}
+        getMagnitudesByTipo={getMagnitudesByTipo}
+        getInstrumentosByMagnitudAndTipo={getInstrumentosByMagnitudAndTipo}
+      />
 
       <HeaderSection
         selectedRecepcionId={selectedRecepcionId}
@@ -1384,6 +1578,7 @@ const handleGenerarActa = useCallback(async () => {
           <DatosGeneralesSection
              isNew={selectedRecepcionId === "NUEVA"}
             bloqueado={esEdicionAtada}
+            nombreRecibeBloqueado
             solicitante={formulario.solicitante}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}
@@ -1391,7 +1586,7 @@ const handleGenerarActa = useCallback(async () => {
             sitioCalibracion={formulario.sitioCalibracion}
             fechaRecepcion={formulario.fechaRecepcion}
             fechaSalida={formulario.fechaSalida}
-            nombreQuienRecibe={formulario.nombreQuienRecibe}
+            nombreQuienRecibe={nombreUsuarioSesion || formulario.nombreQuienRecibe}
             nombreQuienEmpaca={formulario.nombreQuienEmpaca}
             clientes={clientesStore || []}
             cotizaciones={cotizaciones}

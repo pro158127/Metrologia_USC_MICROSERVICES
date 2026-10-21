@@ -69,17 +69,36 @@ export interface ResultadoFSM {
   condiciones: {
     recepcionOk: boolean;
     todosConTecnico: boolean;
-    algunaEstampilla: boolean;
-    todasEstampilla: boolean;
+    algunaCalibracionYEstampilla: boolean;
     algunCertificadoAprobado: boolean;
+    todosCertificadosAprobados: boolean;
+    pagoRealizado: boolean;
   };
 }
 
 type PrismaTx = Prisma.TransactionClient;
 
+const nombreLleno = (v: string | null | undefined): boolean =>
+  v != null && String(v).trim() !== '';
+
+const tieneEstampilla = (d: { ESTAMPILLA: string | null }): boolean => {
+  const v = d.ESTAMPILLA;
+  if (v == null || String(v).trim() === '') return false;
+  // Los placeholders heredados `TEMP-*` no cuentan como estampilla real.
+  return !String(v).toUpperCase().startsWith('TEMP-');
+};
+
 /**
  * Recalcula y, si corresponde, avanza el estado de la OT según sus datos.
  * Debe invocarse dentro de la misma transacción que mutó recepción/instrumentos.
+ *
+ * Ciclo de vida (monotónico):
+ *   En_recepción            -> cabecera (fecha recepción + entrega + recibe) y ≥1 IBC de entrada.
+ *   Asignada                -> recepción OK y todos los instrumentos con técnico.
+ *   En_calibración          -> recepción OK y ≥1 instrumento con PDF (calibración) + estampilla.
+ *   Certificado_en_revisión -> recepción OK y ≥1 certificado APROBADO.
+ *   Certificado_aprobado    -> recepción OK y 100% instrumentos con certificado APROBADO.
+ *   Certificado_enviado     -> 100% aprobado y estado de pago PAGADO.
  */
 export async function evaluarTransicionesOT(
   tx: PrismaTx,
@@ -97,7 +116,13 @@ export async function evaluarTransicionesOT(
 
   const estadoActual = (ot.estado ?? EstadoOT.Creada) as EstadoOT;
   const recepcion = ot.recepciones_equipo[0] ?? null;
-  const recDetalles = recepcion?.recepcion_equipo_detalles ?? [];
+  const recDetalles = (recepcion?.recepcion_equipo_detalles ?? []).filter(
+    (d) => d.activacion !== false
+  );
+
+  const otDetallesActivos = ot.orden_trabajo_detalles.filter(
+    (d) => d.activacion !== false
+  );
 
   const match = (otDet: { ITEM: number; INSTRUMENTO: string }) => {
     if (otDet.ITEM != null) {
@@ -107,66 +132,93 @@ export async function evaluarTransicionesOT(
     return recDetalles.find((r) => r.INSTRUMENTO === otDet.INSTRUMENTO) ?? null;
   };
 
-  const pares = ot.orden_trabajo_detalles.map((otDet) => ({
+  const pares = otDetallesActivos.map((otDet) => ({
     otDet,
     recDet: match(otDet),
   }));
 
-  const hayInstrumentos = ot.orden_trabajo_detalles.length > 0;
+  const hayInstrumentos = otDetallesActivos.length > 0;
 
   const recepcionOk =
     !!recepcion &&
     recepcion.FECHA_RECEPCION != null &&
+    nombreLleno(recepcion.NOMBRE_ENTREGA) &&
+    nombreLleno(recepcion.NOMBRE_RECIBE) &&
     hayInstrumentos &&
-    pares.every((p) => p.recDet != null) &&
-    pares.every((p) => instrumentoRecepcionCompleto(p.recDet!)) &&
-    pares.some((p) => entradaIbcPresente(p.recDet!.ESTADO_IBC));
+    pares.some((p) => p.recDet != null && entradaIbcPresente(p.recDet.ESTADO_IBC));
 
   const todosConTecnico =
     hayInstrumentos &&
-    ot.orden_trabajo_detalles.every((d) => d.asignado != null && d.asignado > 0);
+    otDetallesActivos.every((d) => d.asignado != null && d.asignado > 0);
 
   const recDetallesValidos = pares
     .map((p) => p.recDet)
     .filter((d): d is NonNullable<typeof d> => d != null);
 
-  const tieneEstampilla = (d: { ESTAMPILLA: string | null }) => {
-    const v = d.ESTAMPILLA;
-    if (v == null || String(v).trim() === '') return false;
-    // Los placeholders heredados `TEMP-*` no cuentan como estampilla real.
-    return !String(v).toUpperCase().startsWith('TEMP-');
-  };
-
-  const algunaEstampilla = recDetallesValidos.some(tieneEstampilla);
-  const todasEstampilla =
-    recDetallesValidos.length > 0 && recDetallesValidos.every(tieneEstampilla);
-
-  let algunCertificadoAprobado = false;
   const instrumentoIds = recDetallesValidos.map((d) => d.ID_INSTRUMENTO);
+
+  const conCalibracion = new Set<number>();
+  const conCertificadoAprobado = new Set<number>();
   if (instrumentoIds.length > 0) {
-    const aprobados = await tx.certificados.count({
-      where: {
-        ESTADO_REVISION: 'APROBADO',
-        calibraciones: { is: { ID_INSTRUMENTO_FK: { in: instrumentoIds } } },
-      },
+    const [calibraciones, certificadosAprobados] = await Promise.all([
+      tx.calibraciones.findMany({
+        where: { ID_INSTRUMENTO_FK: { in: instrumentoIds } },
+        select: { ID_INSTRUMENTO_FK: true },
+      }),
+      tx.certificados.findMany({
+        where: {
+          ESTADO_REVISION: 'APROBADO',
+          calibraciones: { ID_INSTRUMENTO_FK: { in: instrumentoIds } },
+        },
+        select: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
+      }),
+    ]);
+
+    calibraciones.forEach((c) => conCalibracion.add(c.ID_INSTRUMENTO_FK));
+    certificadosAprobados.forEach((c) => {
+      const idInst = c.calibraciones?.ID_INSTRUMENTO_FK;
+      if (idInst != null) conCertificadoAprobado.add(idInst);
     });
-    algunCertificadoAprobado = aprobados > 0;
   }
+
+  const algunaCalibracionYEstampilla = recDetallesValidos.some(
+    (d) => conCalibracion.has(d.ID_INSTRUMENTO) && tieneEstampilla(d)
+  );
+
+  const algunCertificadoAprobado = recDetallesValidos.some((d) =>
+    conCertificadoAprobado.has(d.ID_INSTRUMENTO)
+  );
+
+  const todosCertificadosAprobados =
+    hayInstrumentos &&
+    pares.every(
+      (p) =>
+        p.recDet != null && conCertificadoAprobado.has(p.recDet.ID_INSTRUMENTO)
+    );
+
+  const pagoRealizado = ot.estado_pago === 'PAGADO';
 
   const condiciones = {
     recepcionOk,
     todosConTecnico,
-    algunaEstampilla,
-    todasEstampilla,
+    algunaCalibracionYEstampilla,
     algunCertificadoAprobado,
+    todosCertificadosAprobados,
+    pagoRealizado,
   };
 
   const cumplidos: EstadoOT[] = [];
   if (recepcionOk) cumplidos.push(EstadoOT.En_recepción);
   if (recepcionOk && todosConTecnico) cumplidos.push(EstadoOT.Asignada);
-  if (recepcionOk && algunaEstampilla) cumplidos.push(EstadoOT.En_calibración);
-  if (recepcionOk && todasEstampilla && algunCertificadoAprobado) {
+  if (recepcionOk && algunaCalibracionYEstampilla) cumplidos.push(EstadoOT.En_calibración);
+  if (recepcionOk && algunCertificadoAprobado) {
     cumplidos.push(EstadoOT.Certificado_en_revisión);
+  }
+  if (recepcionOk && todosCertificadosAprobados) {
+    cumplidos.push(EstadoOT.Certificado_aprobado);
+  }
+  if (recepcionOk && todosCertificadosAprobados && pagoRealizado) {
+    cumplidos.push(EstadoOT.Certificado_enviado);
   }
 
   const objetivo = cumplidos.reduce(

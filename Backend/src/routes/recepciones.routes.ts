@@ -4,6 +4,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { AppError } from '../lib/errors.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
+import { registrarBitacora } from '../services/bitacora.service.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
 import {
   clienteRawToDtoSchema,
@@ -20,6 +21,7 @@ import {
   respuestaHistorialRecepcionSchema,
   respuestaRecepcionMutacionSchema,
   respuestaSoftDeleteSchema,
+  softDeleteInstrumentoBodySchema,
   tarifaRawToDtoSchema,
 } from './recepciones.schemas.js';
 
@@ -44,6 +46,13 @@ function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' {
 function parseVersion(numeroVersion?: string | null): number {
   const match = numeroVersion?.match(/V?(\d+)/i);
   return match ? Number(match[1]) : 0;
+}
+
+/** Nombre del usuario autenticado (para autocompletar NOMBRE_RECIBE). */
+function nombreUsuarioActual(request: {
+  user?: { name?: string; user?: { nombreCompleto?: string } } | null;
+}): string {
+  return request.user?.name ?? request.user?.user?.nombreCompleto ?? '';
 }
 
 function mapDetalleCreate(inst: InstrumentoInput, item: number) {
@@ -280,7 +289,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             SITIO_CALIBRACION: normalizarSitio(body.sitioCalibracion),
             FECHA_RECEPCION: new Date(body.fechaRecepcion),
             FECHA_SALIDA: body.fechaSalida ? new Date(body.fechaSalida) : null,
-            NOMBRE_RECIBE: body.nombreRecibe ?? null,
+            NOMBRE_RECIBE: nombreUsuarioActual(request) || body.nombreRecibe || null,
             NOMBRE_EMPACA: body.nombreEmpaca ?? null,
             NOMBRE_CALIBRA: body.nombreCalibra ?? null,
             NOMBRE_RECIBE_SERVICIO: body.nombreRecibeServicio ?? null,
@@ -296,6 +305,20 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         });
 
         await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
+
+        await registrarBitacora(tx, {
+          action: 'CREATE',
+          tableName: 'recepciones_equipo',
+          recordId: nueva.ID_RECEPCION,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: nueva.CODIGO_RECEPCION,
+            idCotizacion: cotizacion.ID_COTIZACION,
+            idOrdenTrabajo: ot.ID_ORDEN_TRABAJO,
+          },
+        });
+
         return nueva;
       });
 
@@ -357,7 +380,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             SITIO_CALIBRACION: normalizarSitio(body.sitioCalibracion),
             FECHA_RECEPCION: new Date(body.fechaRecepcion),
             FECHA_SALIDA: body.fechaSalida ? new Date(body.fechaSalida) : null,
-            NOMBRE_RECIBE: body.nombreRecibe ?? null,
+            NOMBRE_RECIBE: nombreUsuarioActual(request) || body.nombreRecibe || null,
             NOMBRE_EMPACA: body.nombreEmpaca ?? null,
             NOMBRE_CALIBRA: body.nombreCalibra ?? null,
             NOMBRE_RECIBE_SERVICIO: body.nombreRecibeServicio ?? null,
@@ -474,6 +497,20 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           where: { ID_RECEPCION: id },
           include: REC_INCLUDE,
         });
+
+        await registrarBitacora(tx, {
+          action: 'UPDATE',
+          tableName: 'recepciones_equipo',
+          recordId: id,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: final!.CODIGO_RECEPCION,
+            idCotizacion: actual.ID_COTIZACION_FK,
+            idOrdenTrabajo: actual.ID_ORDEN_TRABAJO_FK,
+          },
+        });
+
         return final!;
       });
 
@@ -518,6 +555,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       preHandler: [fastify.authenticate],
       schema: {
         params: recepcionInstrumentoParamsSchema,
+        body: softDeleteInstrumentoBodySchema,
         response: { 200: respuestaSoftDeleteSchema },
       },
     },
@@ -525,6 +563,13 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       const { id, idInstrumento } = request.params;
       const idUsuario = Number(request.user?.sub ?? 0);
       const ip = request.ip;
+      const motivo = request.body?.descripcion ?? null;
+      const observaciones = request.body?.observaciones ?? null;
+      const aprobo = request.body?.aprobo ?? String(idUsuario);
+
+      let idCotizacionFinal: number | null = null;
+      let idOrdenTrabajoFinal: number | null = null;
+      let codigoRecepcion = '';
 
       await fastify.prisma.$transaction(async (tx) => {
         const rec = await tx.recepciones_equipo.findUnique({
@@ -594,29 +639,28 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
           await tx.cotizaciones.update({
             where: { ID_COTIZACION: cotizacionId },
-            data: { MONTO_TOTAL: montoTotal },
+            data: { MONTO_TOTAL: montoTotal, UPDATED_AT: new Date() },
           });
         }
 
-        // 4. Auditoría
-        await tx.audit_logs.create({
-          data: {
-            action: 'SOFT_DELETE',
-            tableName: 'recepcion_equipo_detalles',
-            recordId: String(idInstrumento),
-            USER_ID: idUsuario,
-            details: {
-              before: {
-                instrumento: detalle.INSTRUMENTO,
-                activacion: detalle.activacion,
-              },
-              after: { activacion: false },
+        // 4. Auditoría (bitácora compartida)
+        await registrarBitacora(tx, {
+          action: 'SOFT_DELETE',
+          tableName: 'recepcion_equipo_detalles',
+          recordId: idInstrumento,
+          userId: idUsuario,
+          ip,
+          details: {
+            before: {
+              instrumento: detalle.INSTRUMENTO,
+              activacion: detalle.activacion,
             },
-            ip,
+            after: { activacion: false },
+            motivo: motivo ?? 'Sin motivo especificado',
           },
         });
 
-        // 5. Historial de cambios de la cotización
+        // 5. Historial de cambios de la cotización (con el motivo capturado)
         if (cotizacionId) {
           const ultimo = await tx.historial_cambios.findFirst({
             where: { id_cotizacion: cotizacionId },
@@ -628,16 +672,75 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               id: crypto.randomUUID(),
               numero_version: `V${nextVersion}`,
               fecha_cambio: new Date(),
-              descripcion: `Eliminación (soft delete) del equipo "${detalle.INSTRUMENTO}" de la recepción ${rec.CODIGO_RECEPCION}.`,
+              descripcion:
+                motivo ??
+                `Eliminación (soft delete) del equipo "${detalle.INSTRUMENTO}" de la recepción ${rec.CODIGO_RECEPCION}.`,
               requiere_validacion_hoja: false,
-              observaciones: null,
-              aprobo: String(idUsuario),
+              observaciones,
+              aprobo,
               id_cotizacion: cotizacionId,
               created_at: new Date(),
               updated_at: new Date(),
             },
           });
+
+          // Versionar el consecutivo de la cotización (acción originada en recepción).
+          const cotActual = await tx.cotizaciones.findUnique({
+            where: { ID_COTIZACION: cotizacionId },
+            select: { CODIGO_COTIZACION: true },
+          });
+          if (cotActual) {
+            await tx.cotizaciones.update({
+              where: { ID_COTIZACION: cotizacionId },
+              data: {
+                CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotActual.CODIGO_COTIZACION),
+              },
+            });
+          }
         }
+
+        // 6. Recalcular el estado automático de la OT tras el soft delete.
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          await evaluarTransicionesOT(tx, rec.ID_ORDEN_TRABAJO_FK);
+        }
+
+        idCotizacionFinal = cotizacionId;
+        idOrdenTrabajoFinal = rec.ID_ORDEN_TRABAJO_FK ?? null;
+        codigoRecepcion = rec.CODIGO_RECEPCION;
+      });
+
+      // 7. Regenerar documentos dependientes (nueva versión visible en Gestión de Clientes).
+      const excelQueue = getGenerationExcelQueue();
+      if (idCotizacionFinal) {
+        const jobCot = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+        await excelQueue.add('actualizacion_cotizacion', {
+          tipo: 1,
+          id_registro: idCotizacionFinal,
+          codigo_actual: null,
+          tipo_entry: 'prod',
+          id_job: jobCot.id,
+          id_usuario: idUsuario,
+        });
+      }
+      if (idOrdenTrabajoFinal) {
+        const jobOt = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+        await excelQueue.add('actualizacion_orden', {
+          tipo: 2,
+          id_registro: idOrdenTrabajoFinal,
+          codigo_actual: null,
+          tipo_entry: 'prod',
+          id_job: jobOt.id,
+          id_usuario: idUsuario,
+        });
+      }
+      const jobRec = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+      await excelQueue.add('actualizacion_recepcion', {
+        tipo: 3,
+        id_registro: id,
+        codigo_actual: codigoRecepcion,
+        tipo_entry: 'prod',
+        id_job: jobRec.id,
+        id_usuario: idUsuario,
       });
 
       return {
