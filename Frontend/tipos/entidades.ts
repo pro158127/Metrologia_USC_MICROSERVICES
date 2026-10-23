@@ -218,6 +218,12 @@ export interface OrdenTrabajoModel {
   codigo: string;
   idCotizacion: number | null;
   idCliente: number | null;
+  idOrdenTrabajoPadre: number | null;
+  idOtRaiz: number | null;
+  version: number;
+  vigente: boolean;
+  tieneHijas: boolean;
+  sitioCalibracion: string | null;
   correoCertificado: string | null;
   correoFactura: string | null;
   fechaLimiteFacturacion: Date | string | null;
@@ -277,6 +283,9 @@ export interface RecepcionEquipoModel {
   codigo: string;
   idCotizacion: number | null;
   idOrdenTrabajo: number | null;
+  idRecepcionRaiz: number | null;
+  version: number;
+  vigente: boolean;
   solicitante: string;
   nombreEntrega: string | null;
   sitioCalibracion: string;

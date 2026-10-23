@@ -261,6 +261,8 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
 // 3.5 DatosGeneralesSection (con búsqueda de cotización y OT)
 const DatosGeneralesSection = ({
   // Valores del formulario
+  idCliente,
+  clienteNombre,
   solicitante,
   nombreQuienEntrega,
   cotizacionCodigo,
@@ -279,9 +281,15 @@ const DatosGeneralesSection = ({
   bloqueado = false,
   nombreRecibeBloqueado = false,
   onUpdateGeneral,
-}: DatosGeneralesSectionProps & { isNew: boolean; nombreRecibeBloqueado?: boolean }) => {
+  onUpdateCliente,
+}: DatosGeneralesSectionProps & {
+  isNew: boolean;
+  nombreRecibeBloqueado?: boolean;
+  onUpdateCliente: (id: number | null) => void;
+}) => {
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
   const camposRaizBloqueados = isNew || bloqueado;
+  const clienteBloqueado = bloqueado;
   // Listas para datalist
   const clientesList = useMemo(
     () => clientes.map((c) => c.razonSocial).filter(Boolean),
@@ -302,6 +310,31 @@ const DatosGeneralesSection = ({
         Datos Generales del Formato (Recepción)
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
+            Cliente
+          </label>
+          {clienteBloqueado ? (
+            <input
+              value={clienteNombre || solicitante}
+              disabled
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-100 text-slate-400 text-xs cursor-not-allowed font-medium"
+            />
+          ) : (
+            <select
+              value={idCliente ?? ""}
+              onChange={(e) => onUpdateCliente(e.target.value ? Number(e.target.value) : null)}
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
+            >
+              <option value="">Seleccionar cliente...</option>
+              {clientes.map((c) => (
+                <option key={c.idCliente} value={c.idCliente}>
+                  {c.razonSocial} — {c.nitCedula}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
         <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Solicitante
@@ -335,7 +368,7 @@ const DatosGeneralesSection = ({
           </label>
           <input
             list={!camposRaizBloqueados ? "cotizaciones-datalist" : undefined}
-            value={camposRaizBloqueados ? "Automático (Al guardar)" : cotizacionCodigo}
+            value={camposRaizBloqueados ? "Automático" : cotizacionCodigo}
             disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("cotizacionCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
@@ -353,7 +386,7 @@ const DatosGeneralesSection = ({
           </label>
           <input
             list={!camposRaizBloqueados ? "ordenes-datalist" : undefined}
-            value={camposRaizBloqueados ? "Automático (Al guardar)" : ordenTrabajoCodigo}
+            value={camposRaizBloqueados ? "Automático" : ordenTrabajoCodigo}
             disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
@@ -849,6 +882,7 @@ import {
   crearRecepcion,
   actualizarRecepcion,
   eliminarInstrumentoRecepcionConMotivo,
+  eliminarRecepcion,
   getHistorialRecepcion,
   type HistorialCambioItem,
 } from "@/app/action_module/recepciones";
@@ -867,6 +901,8 @@ export function MainRenderers() {
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
   const [formulario, setFormulario] = useState<FormularioRecepcion>({
+    idCliente: null,
+    clienteNombre: "",
     solicitante: "",
     nombreQuienEntrega: "",
     cotizacionCodigo: "",
@@ -906,6 +942,10 @@ export function MainRenderers() {
   const [deleteModalItems, setDeleteModalItems] = useState<QuoteItem[]>([]);
   const [deleteInstrumento, setDeleteInstrumento] = useState<{ idInstrumento: number; index: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Soft delete de la recepción completa (modal de confirmación)
+  const [deleteRecepcionOpen, setDeleteRecepcionOpen] = useState(false);
+  const [deleteRecepcionMotivo, setDeleteRecepcionMotivo] = useState("");
 
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
   const esEdicionAtada =
@@ -1064,6 +1104,15 @@ useEffect(() => {
     }));
   }, []);
 
+  const handleUpdateCliente = useCallback((idCliente: number | null) => {
+    setFormulario((prev) => ({
+      ...prev,
+      idCliente,
+      clienteNombre:
+        clientesStore.find((c) => c.idCliente === idCliente)?.razonSocial ?? "",
+    }));
+  }, [clientesStore]);
+
   const handleFilaChange = useCallback(
     (index: number, propiedad: keyof FilaInstrumento, valor: FilaInstrumento[keyof FilaInstrumento]) => {
       setFormulario((prev) => {
@@ -1219,6 +1268,8 @@ useEffect(() => {
       // Mapear a formulario
       const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
       const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
+      const clienteVinculado =
+        recepcion.cotizacion?.cliente ?? recepcion.ordenTrabajo?.cliente ?? null;
       // Instrumentos
      const instrumentos = (recepcion.instrumentos || []).map((det) => {
         // Parseamos el JSON asumiendo que tiene la nueva estructura { entrada: {}, salida: {} }
@@ -1260,6 +1311,8 @@ useEffect(() => {
       });
 
       setFormulario({
+        idCliente: clienteVinculado?.idCliente ?? null,
+        clienteNombre: clienteVinculado?.razonSocial ?? "",
         solicitante: recepcion.solicitante || "",
         nombreQuienEntrega: recepcion.nombreEntrega || "",
         cotizacionCodigo,
@@ -1292,6 +1345,8 @@ useEffect(() => {
     const hoy = new Date().toISOString().split("T")[0];
     setSelectedRecepcionId("NUEVA");
     setFormulario({
+      idCliente: null,
+      clienteNombre: "",
       solicitante: "",
       nombreQuienEntrega: "",
       cotizacionCodigo: "",
@@ -1317,6 +1372,8 @@ useEffect(() => {
   const volverALista = useCallback(() => {
     setSelectedRecepcionId(null);
     setFormulario({
+      idCliente: null,
+      clienteNombre: "",
       solicitante: "",
       nombreQuienEntrega: "",
       cotizacionCodigo: "",
@@ -1367,6 +1424,7 @@ const handleGenerarActa = useCallback(async () => {
         // Indicador dinámico para tu Backend
         estado: estadoCalculado, 
         isNueva: selectedRecepcionId === "NUEVA",
+        idCliente: formulario.idCliente,
         
         // Cabecera
         solicitante: formulario.solicitante,
@@ -1475,6 +1533,39 @@ const handleGenerarActa = useCallback(async () => {
     }
   }, [recepcionActual, showToast]);
 
+  // --- Soft delete de la recepción completa ---
+  const confirmarEliminarRecepcion = useCallback(async () => {
+    if (!recepcionActual?.idRecepcion || !deleteRecepcionMotivo.trim()) return;
+    setIsDeleting(true);
+    try {
+      const res = await eliminarRecepcion(recepcionActual.idRecepcion, {
+        descripcion: deleteRecepcionMotivo.trim(),
+        aprobo: nombreUsuarioSesion || "Sistema",
+        observaciones: null,
+      });
+      if (!res.ok) {
+        showToast(res.error || "No se pudo desactivar la recepción.");
+        return;
+      }
+      showToast("🗑️ Recepción desactivada (soft delete).");
+      setDeleteRecepcionOpen(false);
+      setDeleteRecepcionMotivo("");
+
+      setTableLoading("recepciones_equipo", true);
+      try {
+        const data = await getInitialData();
+        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+      } finally {
+        setTableLoading("recepciones_equipo", false);
+      }
+      volverALista();
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [recepcionActual, deleteRecepcionMotivo, nombreUsuarioSesion, showToast, mergeTable, setTableLoading, volverALista]);
+
   // ============================================================
   // RENDER
   // ============================================================
@@ -1566,12 +1657,20 @@ const handleGenerarActa = useCallback(async () => {
                   ? "Edición atada a OT — campos raíz bloqueados"
                   : `Editando recepción ${recepcionActual.codigo}`}
               </span>
-              <button
-                onClick={abrirHistorial}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer border-none"
-              >
-                <History size={14} /> Ver trazabilidad
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={abrirHistorial}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer border-none"
+                >
+                  <History size={14} /> Ver trazabilidad
+                </button>
+                <button
+                  onClick={() => { setDeleteRecepcionMotivo(""); setDeleteRecepcionOpen(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 cursor-pointer border-none"
+                >
+                  <Trash2 size={14} /> Eliminar
+                </button>
+              </div>
             </div>
           )}
 
@@ -1579,6 +1678,8 @@ const handleGenerarActa = useCallback(async () => {
              isNew={selectedRecepcionId === "NUEVA"}
             bloqueado={esEdicionAtada}
             nombreRecibeBloqueado
+            idCliente={formulario.idCliente}
+            clienteNombre={formulario.clienteNombre}
             solicitante={formulario.solicitante}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}
@@ -1592,6 +1693,7 @@ const handleGenerarActa = useCallback(async () => {
             cotizaciones={cotizaciones}
             ordenesTrabajo={ordenesTrabajo}
             onUpdateGeneral={handleUpdateGeneral}
+            onUpdateCliente={handleUpdateCliente}
           />
 
           <TablaInstrumentos
@@ -1657,6 +1759,41 @@ const handleGenerarActa = useCallback(async () => {
                   ))}
                 </ul>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteRecepcionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-100 p-6">
+            <div className="text-sm font-bold text-slate-700 mb-2">
+              Desactivar Recepción {recepcionActual?.codigo}
+            </div>
+            <p className="text-xs text-slate-500 mb-3">
+              Esta acción desactivará la recepción (soft delete). Es obligatorio indicar el motivo.
+            </p>
+            <textarea
+              value={deleteRecepcionMotivo}
+              onChange={(e) => setDeleteRecepcionMotivo(e.target.value)}
+              rows={3}
+              placeholder="Motivo del borrado..."
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-rose-400 resize-none"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setDeleteRecepcionOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarEliminarRecepcion}
+                disabled={isDeleting || !deleteRecepcionMotivo.trim()}
+                className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50"
+              >
+                {isDeleting ? "Desactivando..." : "Confirmar eliminación"}
+              </button>
             </div>
           </div>
         </div>

@@ -83,6 +83,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             clientes: true,
             cotizaciones: { include: { clientes: true } },
             orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
+            _count: { select: { orden_trabajo_hijas: true } },
           },
           orderBy: { CREATED_AT: 'desc' },
         }),

@@ -42,6 +42,8 @@ export interface FilaInstrumento {
 
 // Estado completo del formulario de recepción
 export interface FormularioRecepcion {
+  idCliente: number | null;
+  clienteNombre: string;
   solicitante: string;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
@@ -91,6 +93,8 @@ export interface RecepcionCardProps {
 }
 
 export interface DatosGeneralesSectionProps {
+  idCliente: number | null;
+  clienteNombre: string;
   solicitante: string;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;

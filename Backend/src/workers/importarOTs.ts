@@ -16,6 +16,7 @@ import {
   InstrumentoResuelto,
   SitioCalibracion,
 } from '../services/ot-split.service.js';
+import { reimportarFamiliaOTVersionada } from '../services/ot-versionado.service.js';
 import { Worker, Job } from 'bullmq';
 import { getRedisConnection, IMPORTAR_QUEUE } from '../lib/queue/queue.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
@@ -711,6 +712,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
     let codigoCotizacionFinal = '';
 
     let idOtFinal = 0;
+    let sinCambios = false;
+    let esReimportacion = false;
 
     const otsProcesadas: { id: number; codigo: string; esNueva: boolean }[] = [];
     const advertencias: string[] = [];
@@ -1092,7 +1095,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       let codigoOtMaster: string | null = null;
       if (id_cotizacion != null && esHeterogenea) {
         const master = await tx.ordenes_trabajo.findFirst({
-          where: { ID_COTIZACION_FK: idCotizacionFinal, SITIO_CALIBRACION: null },
+          where: { ID_COTIZACION_FK: idCotizacionFinal, SITIO_CALIBRACION: null, VIGENTE: true },
         });
         if (master) {
           idOtMaster = master.ID_ORDEN_TRABAJO;
@@ -1103,14 +1106,55 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       const solicitante =
         getString(datosExtraidos, 'solicitante_razon_social') || cliente.RAZON_SOCIAL;
 
-      const resultado = await splitHeterogeneousOT(tx, instrumentosResueltos, {
-        idCotizacion: idCotizacionFinal,
-        idCliente: cliente.ID_CLIENTE,
-        idUsuario,
-        idOtMaster,
-        datosOT,
-        solicitante,
-      });
+      let resultado: { ots: { id: number; codigo: string; esNueva: boolean }[]; recepciones: { id: number; codigo: string; esNueva: boolean }[] };
+      let sinCambiosLocal = false;
+
+      // ¿Existe ya una familia vigente de OTs para esta cotización?
+      const familiaExistente = id_cotizacion != null
+        ? await tx.ordenes_trabajo.findFirst({
+            where: { ID_COTIZACION_FK: idCotizacionFinal, VIGENTE: true },
+          })
+        : null;
+
+      esReimportacion = familiaExistente != null;
+
+      if (id_cotizacion != null && familiaExistente) {
+        // ==============================================================
+        // RE-IMPORTACIÓN (Flujo 2): diff + versionado si hay cambios.
+        // La cotización permanece intacta. Si no hay cambios, no se toca nada.
+        // ==============================================================
+        const versionado = await reimportarFamiliaOTVersionada(tx, {
+          idCotizacion: idCotizacionFinal,
+          idCliente: cliente.ID_CLIENTE,
+          idUsuario,
+          datosOT,
+          instrumentosResueltos,
+          solicitante,
+        });
+
+        if (!versionado.cambio) {
+          sinCambiosLocal = true;
+          resultado = { ots: [], recepciones: [] };
+        } else {
+          resultado = { ots: versionado.ots, recepciones: versionado.recepciones };
+        }
+      } else {
+        // ==============================================================
+        // IMPORTACIÓN INICIAL (Flujo 1, o Flujo 2 sin OT aún):
+        // split por sitio (crea familia nueva).
+        // ==============================================================
+        const split = await splitHeterogeneousOT(tx, instrumentosResueltos, {
+          idCotizacion: idCotizacionFinal,
+          idCliente: cliente.ID_CLIENTE,
+          idUsuario,
+          idOtMaster,
+          datosOT,
+          solicitante,
+        });
+        resultado = { ots: split.ots, recepciones: split.recepciones };
+      }
+
+      sinCambios = sinCambiosLocal;
 
       for (const o of resultado.ots) {
         otsProcesadas.push({ id: o.id, codigo: o.codigo, esNueva: o.esNueva });
@@ -1120,9 +1164,9 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       }
 
       // ==============================================================
-      // 7. HISTORIAL DE CAMBIOS (solo en división heterogénea de Flujo 2)
+      // 7. HISTORIAL DE CAMBIOS (solo en re-importación con cambios)
       // ==============================================================
-      if (esHeterogenea && idOtMaster != null) {
+      if (esReimportacion && !sinCambios) {
         const ultimaVersion = await tx.historial_cambios.findFirst({
           where: { id_cotizacion: idCotizacionFinal },
           orderBy: { created_at: 'desc' },
@@ -1140,7 +1184,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
             numero_version: `V${siguienteNum}`,
             fecha_cambio: new Date(),
             descripcion:
-              'División de Orden de Trabajo por sitio de calibración (importación de OT).',
+              'Re-importación de Orden de Trabajo con detección de cambios (nueva versión de la OT).',
             observaciones: null,
             aprobo: 'Sistema',
             id_cotizacion: idCotizacionFinal,
@@ -1149,8 +1193,15 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         });
       }
 
-      // Para el documento definitivo: la Master si existe; si no, la primera OT operativa.
-      if (idOtMaster != null && codigoOtMaster) {
+      // Para el documento definitivo: en re-importación se ancla a la nueva OT
+      // (Master o primera OT creada); en importación inicial, a la Master existente
+      // o a la primera OT operativa.
+      if (esReimportacion) {
+        if (resultado.ots[0]) {
+          idOtFinal = resultado.ots[0].id;
+          codigoOTFinal = resultado.ots[0].codigo;
+        }
+      } else if (idOtMaster != null && codigoOtMaster) {
         idOtFinal = idOtMaster;
         codigoOTFinal = codigoOtMaster;
       } else if (resultado.ots[0]) {
@@ -1158,6 +1209,26 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         codigoOTFinal = resultado.ots[0].codigo;
       }
     });
+
+    // ================================================================
+    // Si no hubo cambios en la re-importación, no se regeneran documentos.
+    // ================================================================
+    if (sinCambios) {
+      await prisma.quote.update({
+        where: { id: id_job },
+        data: {
+          status: 'COMPLETED',
+          data: { sinCambios: true, advertencias },
+        },
+      });
+      return {
+        success: true,
+        sinCambios: true,
+        idUsuario,
+        advertencias,
+        triggers: [],
+      };
+    }
 
     // ================================================================
     // 9. GUARDAR EXCEL DEFINITIVO EN S3

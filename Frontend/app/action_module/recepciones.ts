@@ -69,6 +69,7 @@ export interface InstrumentoRecepcionPayload {
 export interface RecepcionMutationPayload {
   estado?: string;
   isNueva?: boolean;
+  idCliente?: number | null;
   solicitante: string;
   nombreEntrega?: string;
   cotizacionCodigo?: string;
@@ -170,6 +171,24 @@ export async function eliminarInstrumentoRecepcionConMotivo(
   } catch (error) {
     console.error('Error al eliminar instrumento con motivo:', error);
     return { ok: false, error: (error as Error).message || 'Error al eliminar el instrumento' };
+  }
+}
+
+/** Soft delete de la recepción completa (activacion=false). */
+export async function eliminarRecepcion(
+  idRecepcion: number,
+  motivo: MotivoSoftDelete
+): Promise<RespuestaSoftDelete> {
+  try {
+    const session = await auth();
+    return await fastifyRequest<RespuestaSoftDelete>(
+      session,
+      `/api/v1/recepciones/${idRecepcion}`,
+      { method: 'DELETE', body: motivo }
+    );
+  } catch (error) {
+    console.error('Error al eliminar recepción:', error);
+    return { ok: false, error: (error as Error).message || 'Error al eliminar la recepción' };
   }
 }
 

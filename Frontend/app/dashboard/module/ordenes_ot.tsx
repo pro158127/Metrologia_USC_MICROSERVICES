@@ -131,7 +131,7 @@ const HeaderSection = ({
             />
           </div>
           <div className="flex rounded-xl overflow-hidden border border-slate-200 bg-white p-0.5">
-            {(["kanban", "list"] as ViewMode[]).map((m) => (
+            {(["kanban", "tree", "list"] as ViewMode[]).map((m) => (
               <button
                 key={m}
                 onClick={() => setViewMode(m)}
@@ -139,7 +139,7 @@ const HeaderSection = ({
                   viewMode === m ? "bg-slate-900 text-white shadow-sm" : "bg-transparent text-slate-500 hover:text-slate-800"
                 }`}
               >
-                {m === "kanban" ? "Tablero" : "Lista"}
+                {m === "kanban" ? "Tablero" : m === "tree" ? "Árbol" : "Lista"}
               </button>
             ))}
           </div>
@@ -1171,7 +1171,8 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
     return otsList.filter(
       (ot) =>
         ot.codigo?.toLowerCase().includes(lowerSearch) ||
-        ot.cliente?.toLowerCase().includes(lowerSearch)
+        ot.cliente?.toLowerCase().includes(lowerSearch) ||
+        ot.cotizacionCodigo?.toLowerCase().includes(lowerSearch)
     );
   }, [otsList, search]);
 
@@ -1257,6 +1258,78 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+};
+
+// ==========================================
+// 2.5 Vista de Árbol (jerárquica Master → hijas)
+// ==========================================
+export const TreeView: React.FC<{
+  treeNodes: { node: Partial<OTBase>; children: Partial<OTBase>[] }[];
+  onOpenOT: (ot: Partial<OTBase>) => void;
+}> = ({ treeNodes, onOpenOT }) => {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const renderNode = (ot: Partial<OTBase>, depth: number) => (
+    <div
+      key={ot.id}
+      onClick={() => onOpenOT(ot)}
+      className="flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors"
+      style={{ paddingLeft: `${12 + depth * 20}px` }}
+    >
+      <span className="text-xs font-mono font-bold text-blue-600">{ot.codigo}</span>
+      <span className="text-xs font-semibold text-slate-700 truncate">{ot.cliente}</span>
+      <span className="text-[10px] text-slate-400 font-medium ml-auto whitespace-nowrap">
+        {ot.equipos} equipo{ot.equipos !== 1 ? "s" : ""}
+      </span>
+      <span className="inline-block px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap">
+        {(ot.estado?.toString() ?? "Sin estado").replace(/_/g, " ")}
+      </span>
+    </div>
+  );
+
+  if (treeNodes.length === 0) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-400">
+        No hay órdenes de trabajo.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+          Jerarquía de Órdenes de Trabajo
+        </span>
+      </div>
+      <div className="p-2 divide-y divide-slate-50">
+        {treeNodes.map(({ node, children }) => {
+          const hasChildren = children.length > 0;
+          const isOpen = expanded[node.id!] ?? false;
+          return (
+            <div key={node.id}>
+              {hasChildren ? (
+                <button
+                  onClick={() => setExpanded((p) => ({ ...p, [node.id!]: !isOpen }))}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer hover:bg-slate-50 transition-colors text-left"
+                >
+                  <span className="text-slate-400">{isOpen ? "−" : "+"}</span>
+                  <span className="text-xs font-mono font-bold text-slate-700">{node.codigo}</span>
+                  <span className="text-xs font-semibold text-slate-600 truncate">{node.cliente}</span>
+                  <span className="text-[10px] text-slate-400 ml-auto">{children.length} hija(s)</span>
+                </button>
+              ) : (
+                renderNode(node, 0)
+              )}
+              {hasChildren && isOpen && (
+                <div className="pb-1">{children.map((child) => renderNode(child, 1))}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1675,30 +1748,26 @@ const saveOrderEdits = async () => {
    * esperan los componentes Kanban/Lista (Partial<OTBase>).
    * Además, calcula las advertencias individuales de cada orden.
    */
-  const otss: Partial<OTBase>[] = useMemo(() => {
-    return ordenesTrabajo.map((orden) => {
+  /**
+   * Mapea una OrdenTrabajo (raw) a su vista resumida para Kanban/Lista/Árbol.
+   */
+  const mapearOTResumen = useCallback(
+    (orden: OrdenTrabajoModel): Partial<OTBase> => {
       const cliente = clientes.find((c) => c.idCliente === orden.idCliente);
       const ordenWarnings: Warning[] = [];
 
-      // Retraso basado en fecha límite de facturación
       const ahora = new Date();
       const fechaLimite = orden.fechaLimiteFacturacion
         ? new Date(orden.fechaLimiteFacturacion)
         : new Date();
       const estaVencida = ahora >= fechaLimite;
-      if (estaVencida) {
-        ordenWarnings.push({ tipo: "retraso", mensaje: "Vencida" });
-      }
-
-      if (!orden.responsable || orden.responsable == "Sin asignar") {
+      if (estaVencida) ordenWarnings.push({ tipo: "retraso", mensaje: "Vencida" });
+      if (!orden.responsable || orden.responsable === "Sin asignar")
         ordenWarnings.push({ tipo: "sin_responsable", mensaje: "Sin responsable" });
-      }
-      if (!orden.fechaCalibracion) {
+      if (!orden.fechaCalibracion)
         ordenWarnings.push({ tipo: "sin_fecha", mensaje: "Sin fecha calibración" });
-      }
-      if (orden.estadoRevision === "PENDIENTE_REVISION") {
+      if (orden.estadoRevision === "PENDIENTE_REVISION")
         ordenWarnings.push({ tipo: "pendiente_revision", mensaje: "Pendiente revisión" });
-      }
 
       return {
         id: orden.idOrdenTrabajo.toString(),
@@ -1710,12 +1779,50 @@ const saveOrderEdits = async () => {
         codigo: orden.codigo,
         retraso: estaVencida,
         warns: ordenWarnings,
+        idOrdenTrabajoPadre: orden.idOrdenTrabajoPadre,
+        idOtRaiz: orden.idOtRaiz,
+        sitioCalibracion: orden.sitioCalibracion,
+        tieneHijas: orden.tieneHijas,
+        version: orden.version,
+        cotizacionCodigo: orden.cotizacion?.codigo ?? undefined,
       };
-    });
-  }, [ordenesTrabajo, clientes]);
+    },
+    [clientes]
+  );
+
+  const otss: Partial<OTBase>[] = useMemo(() => {
+    return ordenesTrabajo
+      .filter((orden) => orden.vigente !== false)
+      .filter((orden) => !(orden.sitioCalibracion == null && orden.tieneHijas))
+      .map((orden) => mapearOTResumen(orden));
+  }, [ordenesTrabajo, mapearOTResumen]);
 
   /**
-   * Filtra las órdenes según el texto de búsqueda (código o cliente).
+   * Árbol jerárquico (Master → hijas) para la vista Tree.
+   * La Master se muestra como nodo padre (encabezado de grupo) solo si tiene hijas.
+   */
+  const treeNodes = useMemo(() => {
+    const vigentes = ordenesTrabajo
+      .filter((orden) => orden.vigente !== false)
+      .map((orden) => mapearOTResumen(orden));
+
+    const porId = new Map(vigentes.map((n) => [n.id, n]));
+
+    return vigentes
+      .filter((n) => {
+        const padreId = n.idOrdenTrabajoPadre != null ? String(n.idOrdenTrabajoPadre) : null;
+        return padreId == null || !porId.has(padreId);
+      })
+      .map((raiz) => ({
+        node: raiz,
+        children: vigentes.filter(
+          (n) => n.idOrdenTrabajoPadre != null && String(n.idOrdenTrabajoPadre) === String(raiz.id)
+        ),
+      }));
+  }, [ordenesTrabajo, mapearOTResumen]);
+
+  /**
+   * Filtra las órdenes según el texto de búsqueda (código, cliente o cotización).
    */
   const filtered = useMemo(() => {
     if (!search) return otss;
@@ -1723,7 +1830,8 @@ const saveOrderEdits = async () => {
     return otss.filter(
       (ot) =>
         ot.codigo?.toLowerCase().includes(lowerSearch) ||
-        ot.cliente?.toLowerCase().includes(lowerSearch)
+        ot.cliente?.toLowerCase().includes(lowerSearch) ||
+        ot.cotizacionCodigo?.toLowerCase().includes(lowerSearch)
     );
   }, [search, otss]);
 // Agregar instrumento (campos del schema OrdenTrabajoDetalle)
@@ -1830,6 +1938,18 @@ const handleRemoveInstrument = (id: string) => {
             onOpenOT={openOT}
             warnigs={warnings} 
           />
+        )
+      )}
+
+      {!selectedOT && viewMode === "tree" && (
+        loadingOrdenes ? (
+          <div className="space-y-2 animate-pulse">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div key={n} className="h-10 rounded-lg bg-slate-200" />
+            ))}
+          </div>
+        ) : (
+          <TreeView treeNodes={treeNodes} onOpenOT={openOT} />
         )
       )}
 

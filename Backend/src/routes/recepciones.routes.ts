@@ -106,6 +106,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     },
     async () => {
       const recepciones = await fastify.prisma.recepciones_equipo.findMany({
+        where: { VIGENTE: true, activacion: { not: false } },
         include: {
           recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
           cotizaciones: { include: { clientes: true } },
@@ -158,6 +159,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       const [recepciones, clientes, cotizaciones, ordenes, tarifas] =
         await fastify.prisma.$transaction([
           fastify.prisma.recepciones_equipo.findMany({
+            where: { VIGENTE: true, activacion: { not: false } },
             include: {
               recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
               cotizaciones: { include: { clientes: true } },
@@ -227,6 +229,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           cotizacion = await tx.cotizaciones.create({
             data: {
               CODIGO_COTIZACION: codigoCot,
+              ID_CLIENTE_FK: body.idCliente ?? null,
               ESTADO: 'BORRADOR',
               MONTO_TOTAL: 0,
               cotizacion_detalles: {
@@ -257,7 +260,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             data: {
               CODIGO_OT: codigoOT,
               ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
-              ID_CLIENTE_FK: cotizacion.ID_CLIENTE_FK,
+              ID_CLIENTE_FK: body.idCliente ?? cotizacion.ID_CLIENTE_FK,
               no_cotizacion: cotizacion.CODIGO_COTIZACION,
               estado: 'Creada',
               orden_trabajo_detalles: {
@@ -746,6 +749,83 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       return {
         ok: true as const,
         message: 'Instrumento desactivado (soft delete) en recepción, OT y cotización.',
+      };
+    }
+  );
+
+  // ==========================================================================
+  // DELETE (soft) /api/v1/recepciones/:id — Soft delete de la Recepción completa
+  // ==========================================================================
+  app.delete(
+    '/api/v1/recepciones/:id',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: recepcionParamsSchema,
+        body: softDeleteInstrumentoBodySchema.optional(),
+        response: { 200: respuestaSoftDeleteSchema },
+      },
+    },
+    async (request) => {
+      const idUsuario = Number(request.user?.sub ?? 0);
+      const ip = request.ip;
+      const motivo = request.body?.descripcion ?? null;
+      const observaciones = request.body?.observaciones ?? null;
+      const aprobo = request.body?.aprobo ?? String(idUsuario);
+
+      await fastify.prisma.$transaction(async (tx) => {
+        const rec = await tx.recepciones_equipo.findUnique({
+          where: { ID_RECEPCION: request.params.id },
+        });
+        if (!rec) throw new AppError(404, 'Recepción no encontrada');
+
+        // Soft delete de la recepción (no se borra físicamente).
+        await tx.recepciones_equipo.update({
+          where: { ID_RECEPCION: rec.ID_RECEPCION },
+          data: { activacion: false, VIGENTE: false },
+        });
+
+        await registrarBitacora(tx, {
+          action: 'SOFT_DELETE',
+          tableName: 'recepciones_equipo',
+          recordId: rec.ID_RECEPCION,
+          userId: idUsuario,
+          ip,
+          details: {
+            before: { codigo: rec.CODIGO_RECEPCION, activacion: true },
+            after: { activacion: false },
+            motivo: motivo ?? 'Sin motivo especificado',
+          },
+        });
+
+        // Trazabilidad sobre la cotización vinculada (si existe).
+        if (rec.ID_COTIZACION_FK) {
+          const ultimo = await tx.historial_cambios.findFirst({
+            where: { id_cotizacion: rec.ID_COTIZACION_FK },
+            orderBy: { created_at: 'desc' },
+          });
+          const nextVersion = parseVersion(ultimo?.numero_version) + 1;
+          await tx.historial_cambios.create({
+            data: {
+              id: crypto.randomUUID(),
+              numero_version: `V${nextVersion}`,
+              fecha_cambio: new Date(),
+              descripcion:
+                motivo ?? `Eliminación (soft delete) de la recepción ${rec.CODIGO_RECEPCION}.`,
+              requiere_validacion_hoja: false,
+              observaciones,
+              aprobo,
+              id_cotizacion: rec.ID_COTIZACION_FK,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          });
+        }
+      });
+
+      return {
+        ok: true as const,
+        message: 'Recepción desactivada (soft delete).',
       };
     }
   );

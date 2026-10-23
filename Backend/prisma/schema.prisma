@@ -269,6 +269,9 @@ model ordenes_trabajo {
   ID_COTIZACION_FK                                   Int?
   ID_CLIENTE_FK                                      Int?
   ID_OT_PADRE_FK                                     Int?
+  ID_OT_RAIZ                                         Int?
+  VERSION                                            Int                       @default(1)
+  VIGENTE                                            Boolean                   @default(true)
   
   clientes                                           clientes?                @relation(fields: [ID_CLIENTE_FK], references: [ID_CLIENTE])
   cotizaciones                                       cotizaciones?            @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION])
@@ -288,6 +291,8 @@ model ordenes_trabajo {
   // ---------------------------------------------------------
   @@index([CODIGO_OT])
   @@index([FECHA_CALIBRACION])
+  @@index([ID_OT_RAIZ, VERSION])
+  @@index([ID_COTIZACION_FK, VIGENTE])
 }
 model parametros_sistema {
   ID_PARAMETRO      Int                 @id @default(autoincrement())
@@ -350,6 +355,9 @@ model recepciones_equipo {
   CODIGO_RECEPCION          String                      @unique
   ID_COTIZACION_FK          Int?
   ID_ORDEN_TRABAJO_FK       Int?
+  ID_RECEPCION_RAIZ         Int?
+  VERSION                   Int                         @default(1)
+  VIGENTE                   Boolean                     @default(true)
   SOLICITANTE               String
   NOMBRE_ENTREGA            String?
   SITIO_CALIBRACION         sitio_calibracion?        @default(LABORATORIO)
@@ -370,6 +378,7 @@ model recepciones_equipo {
   ordenes_trabajo           ordenes_trabajo?            @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO])
   activacion            Boolean            @default(true)
   @@index([CREATED_AT])
+  @@index([ID_RECEPCION_RAIZ, VERSION])
 }
 
 model roles {

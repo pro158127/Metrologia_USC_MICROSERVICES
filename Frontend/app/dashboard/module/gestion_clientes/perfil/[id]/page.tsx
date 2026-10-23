@@ -7,11 +7,9 @@ import {
   FileText,
   ArrowLeft,
   Search,
-  File,
   FileSpreadsheet,
   Eye,
   Filter,
-  Calendar,
   Building2,
   Mail,
   Phone,
@@ -291,157 +289,150 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
     : (cotizacion.documentos?.length ?? 0);
 
   return (
-    <div className="group rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-200 flex flex-col justify-between">
-      <div>
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <span className="text-[11px] font-semibold tracking-wider font-mono text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-md">
-            {cotizacion.codigo}
-          </span>
-          <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold border ${status.style}`}>
-            {status.label}
-          </span>
-        </div>
-
-        <h3 className="font-semibold text-sm text-slate-800 group-hover:text-blue-600 transition-colors leading-snug mb-3">
-          {cotizacion.titulo}
-        </h3>
-
-        <div className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mb-4">
-          <Calendar size={13} className="text-slate-400" />
-          <span>
-            Finaliza: <strong className="text-slate-700 font-semibold">{cotizacion.fechaFin}</strong>
-          </span>
-        </div>
-      </div>
-
-      {/* Árbol de documentos (acordeón de carpetas) */}
-      <div className="border-t border-slate-100 pt-3 mt-2">
-        <button
-          onClick={toggleFiles}
-          className="flex items-center justify-between w-full text-xs font-semibold text-slate-600 hover:text-blue-600 transition-colors"
-        >
-          <span className="flex items-center gap-1.5">
-            <File size={14} className="text-slate-400" />
-            Documentos ({totalDocs})
-          </span>
+    <div className="rounded-xl border border-slate-200/80 bg-white overflow-hidden">
+      <button
+        onClick={toggleFiles}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer"
+      >
+        <span className="text-slate-400 shrink-0">
           {showFiles ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </button>
+        </span>
+        {showFiles ? (
+          <FolderOpen size={15} className="text-blue-500 shrink-0" />
+        ) : (
+          <Folder size={15} className="text-slate-400 shrink-0" />
+        )}
+        <span className="text-[11px] font-semibold tracking-wide font-mono text-blue-600 shrink-0">
+          {cotizacion.codigo}
+        </span>
+        <span className="text-xs text-slate-700 truncate flex-1 min-w-0 font-medium">
+          {cotizacion.titulo}
+        </span>
+        <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border shrink-0 ${status.style}`}>
+          {status.label}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0 hidden sm:inline">
+          {cotizacion.fechaFin}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0">
+          {totalDocs} docs
+        </span>
+      </button>
 
-        {showFiles && (
-          <div className="mt-3 p-2 bg-slate-50/80 rounded-xl border border-slate-100">
-            {cargando ? (
-              <div className="text-[11px] text-slate-400 py-4 text-center">Cargando documentos...</div>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {CARPETA_FOLDERS.map((f) => {
-                  const items = docs ? docs[f.key] : [];
-                  const abierto = openFolder === f.key;
-                  return (
-                    <div key={f.key} className="rounded-lg border border-slate-100 bg-white">
-                      <button
-                        onClick={() => setOpenFolder(abierto ? null : f.key)}
-                        className="flex items-center justify-between w-full px-2.5 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600 hover:text-blue-600 transition-colors"
-                      >
-                        <span className="flex items-center gap-1.5">
-                          {abierto ? (
-                            <FolderOpen size={14} className="text-blue-500 shrink-0" />
-                          ) : (
-                            <Folder size={14} className="text-slate-400 shrink-0" />
-                          )}
-                          {f.label}
-                          {docs ? ` (${items.length})` : ""}
-                        </span>
-                        {abierto ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                      </button>
+      {showFiles && (
+        <div className="p-2 bg-slate-50/60 border-t border-slate-100">
+          {cargando ? (
+            <div className="text-[11px] text-slate-400 py-4 text-center">Cargando documentos...</div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {CARPETA_FOLDERS.map((f) => {
+                const items = docs ? docs[f.key] : [];
+                const abierto = openFolder === f.key;
+                return (
+                  <div key={f.key} className="rounded-lg border border-slate-100 bg-white">
+                    <button
+                      onClick={() => setOpenFolder(abierto ? null : f.key)}
+                      className="flex items-center justify-between w-full px-2.5 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {abierto ? (
+                          <FolderOpen size={14} className="text-blue-500 shrink-0" />
+                        ) : (
+                          <Folder size={14} className="text-slate-400 shrink-0" />
+                        )}
+                        {f.label}
+                        {docs ? ` (${items.length})` : ""}
+                      </span>
+                      {abierto ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    </button>
 
-                      {abierto &&
-                        (items.length === 0 ? (
-                          <div className="text-[11px] text-slate-400 py-3 text-center">
-                            No hay documentos en esta carpeta.
-                          </div>
-                        ) : f.key === "certificados" ? (
-                          <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
-                            {(items as DocumentoCertificadoItem[]).map((cert) => (
+                    {abierto &&
+                      (items.length === 0 ? (
+                        <div className="text-[11px] text-slate-400 py-3 text-center">
+                          No hay documentos en esta carpeta.
+                        </div>
+                      ) : f.key === "certificados" ? (
+                        <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
+                          {(items as DocumentoCertificadoItem[]).map((cert) => (
+                            <div
+                              key={cert.idCertificado}
+                              className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md hover:bg-slate-50"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileText size={14} className="text-rose-500 shrink-0" />
+                                <span className="truncate text-xs text-slate-700 font-medium">
+                                  {cert.nombre}
+                                </span>
+                                <span className="text-[10px] text-slate-400 shrink-0">
+                                  {cert.versiones[0] ? `v${cert.versiones[0].version}` : ""}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => setTimeline(cert)}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
+                              >
+                                <History size={12} /> Trazabilidad
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
+                          {(items as DocumentoItem[]).map((doc) => {
+                            const excel = esExcel(doc.nombre, doc.mimeType, doc.rutaUrl);
+                            const pdf = esPdf(doc.nombre, doc.mimeType, doc.rutaUrl);
+                            return (
                               <div
-                                key={cert.idCertificado}
+                                key={doc.idDocumento}
                                 className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md hover:bg-slate-50"
                               >
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <FileText size={14} className="text-rose-500 shrink-0" />
+                                  {excel ? (
+                                    <FileSpreadsheet size={14} className="text-emerald-600 shrink-0" />
+                                  ) : (
+                                    <FileText size={14} className="text-rose-500 shrink-0" />
+                                  )}
                                   <span className="truncate text-xs text-slate-700 font-medium">
-                                    {cert.nombre}
+                                    {doc.nombre}
                                   </span>
                                   <span className="text-[10px] text-slate-400 shrink-0">
-                                    {cert.versiones[0] ? `v${cert.versiones[0].version}` : ""}
+                                    v{doc.versionActual}
                                   </span>
                                 </div>
-                                <button
-                                  onClick={() => setTimeline(cert)}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
-                                >
-                                  <History size={12} /> Trazabilidad
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
-                            {(items as DocumentoItem[]).map((doc) => {
-                              const excel = esExcel(doc.nombre, doc.mimeType, doc.rutaUrl);
-                              const pdf = esPdf(doc.nombre, doc.mimeType, doc.rutaUrl);
-                              return (
-                                <div
-                                  key={doc.idDocumento}
-                                  className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md hover:bg-slate-50"
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    {excel ? (
-                                      <FileSpreadsheet size={14} className="text-emerald-600 shrink-0" />
-                                    ) : (
-                                      <FileText size={14} className="text-rose-500 shrink-0" />
-                                    )}
-                                    <span className="truncate text-xs text-slate-700 font-medium">
-                                      {doc.nombre}
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 shrink-0">
-                                      v{doc.versionActual}
-                                    </span>
-                                  </div>
 
-                                  {excel ? (
-                                    <button
-                                      onClick={() => descargarArchivo(doc.rutaUrl, doc.nombre)}
-                                      disabled={descargando === doc.rutaUrl}
-                                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-emerald-700 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 disabled:opacity-50 shrink-0"
-                                    >
-                                      <Download size={12} />
-                                      {descargando === doc.rutaUrl ? "..." : "Descargar"}
-                                    </button>
-                                  ) : pdf ? (
-                                    <button
-                                      onClick={() => abrirPdf(doc.rutaUrl, doc.nombre)}
-                                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
-                                    >
-                                      <Eye size={12} /> Ver
-                                    </button>
-                                  ) : (
-                                    <span className="text-[10px] text-slate-400 shrink-0">
-                                      No previsualizable
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ))}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+                                {excel ? (
+                                  <button
+                                    onClick={() => descargarArchivo(doc.rutaUrl, doc.nombre)}
+                                    disabled={descargando === doc.rutaUrl}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-emerald-700 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 disabled:opacity-50 shrink-0"
+                                  >
+                                    <Download size={12} />
+                                    {descargando === doc.rutaUrl ? "..." : "Descargar"}
+                                  </button>
+                                ) : pdf ? (
+                                  <button
+                                    onClick={() => abrirPdf(doc.rutaUrl, doc.nombre)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
+                                  >
+                                    <Eye size={12} /> Ver
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 shrink-0">
+                                    No previsualizable
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Visor de PDF (mismo componente FileViewer que el RUT) */}
       {viewer && (
@@ -835,7 +826,7 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
             No se encontraron cotizaciones con los criterios seleccionados.
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="flex flex-col gap-2">
             {filteredCotizaciones?.map((cot) => (
               <CotizacionCard key={cot.idCotizacion} cotizacion={cot} />
             ))}

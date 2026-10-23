@@ -116,7 +116,7 @@ export type TarifaOptionBase = {
 // 3. TIPOS DEL MÓDULO ÓRDENES DE TRABAJO
 // ============================================================
 
-export type ViewMode = "kanban" | "list";
+export type ViewMode = "kanban" | "tree" | "list";
 
 export type WarningTipo =
   | "retraso"
@@ -147,6 +147,12 @@ export type OTBase = {
   retraso: boolean;
   equipos: number;
   warns: Warning[];
+  idOrdenTrabajoPadre?: number | null;
+  idOtRaiz?: number | null;
+  sitioCalibracion?: string | null;
+  tieneHijas?: boolean;
+  version?: number;
+  cotizacionCodigo?: string;
 };
 
 /** DTO del formulario R-CM05 (valores string para bindeo de inputs). */
