@@ -28,6 +28,7 @@ model Usuario {
   plantilla_version VersionPlantilla[]
   historial_estados HistorialEstadoCotizacion[]
   instrumentos_asignados OrdenTrabajoDetalle[]
+  seguimientos      SeguimientoComercial[]
 
   @@map("usuarios")
 }
@@ -47,12 +48,12 @@ model AuditLog {
   action    String
   tableName String
   recordId  String
-  userId    Int      @map("USER_ID")
+  userId    Int?     @map("USER_ID")
   createdAt DateTime @default(now())
   details   Json
   ip        String
   id        Int      @id @default(autoincrement()) @map("ID_AUDIT")
-  user      Usuario  @relation(fields: [userId], references: [idUsuario])
+  user      Usuario? @relation(fields: [userId], references: [idUsuario])
 
   @@map("audit_logs")
 }
@@ -158,6 +159,7 @@ model Cotizacion {
   updatedAt    DateTime?           @updatedAt @map("UPDATED_AT")
   viaticos     Decimal?            @default(0) @db.Decimal(12, 2)
   estado       Estados             @default(BORRADOR) @map("ESTADO")
+  motivoRechazo String?            @map("MOTIVO_RECHAZO")
   enviar       Boolean        @default(false)
   descuento    Int?                @default(0)
   detalles     CotizacionDetalle[]
@@ -167,6 +169,7 @@ model Cotizacion {
   recepciones  RecepcionEquipo[]
   Historiacambios HistorialCambios[]
   historialEstados HistorialEstadoCotizacion[]
+  seguimientos SeguimientoComercial[]
 
   @@index([createdAt])
   @@map("cotizaciones")
@@ -195,7 +198,8 @@ model HistorialEstadoCotizacion {
   idCotizacion   Int        @map("ID_COTIZACION_FK")
   estadoAnterior Estados?   @map("ESTADO_ANTERIOR")
   estadoNuevo    Estados    @map("ESTADO_NUEVO") @default(APROBADA)
-  idUsuario      Int        @map("ID_USUARIO_FK") 
+  idUsuario      Int?       @map("ID_USUARIO_FK")
+  motivo         String?    @map("MOTIVO")
   createdAt      DateTime   @default(now()) @map("CREATED_AT")
 
   cotizacion     Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
@@ -203,6 +207,24 @@ model HistorialEstadoCotizacion {
 
   @@index([idCotizacion])
   @@map("historial_estado_cotizacion")
+}
+
+model SeguimientoComercial {
+  idSeguimiento  Int        @id @default(autoincrement()) @map("ID_SEGUIMIENTO")
+  idCotizacion   Int        @map("ID_COTIZACION_FK")
+  tipo           String     @map("TIPO")
+  descripcion    String     @map("DESCRIPCION")
+  fechaGestion   DateTime   @default(now()) @map("FECHA_GESTION")
+  proximaGestion DateTime?  @map("PROXIMA_GESTION")
+  resultado      String?    @map("RESULTADO")
+  idUsuario      Int?       @map("ID_USUARIO_FK")
+  createdAt      DateTime   @default(now()) @map("CREATED_AT")
+
+  cotizacion     Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
+  usuario        Usuario?   @relation(fields: [idUsuario], references: [idUsuario])
+
+  @@index([idCotizacion])
+  @@map("seguimientos_comerciales")
 }
 
 
@@ -307,15 +329,18 @@ model Factura {
   numero         String        @unique @map("NUMERO_FACTURA")
   idOrdenTrabajo Int?          @map("ID_ORDEN_TRABAJO_FK")
   idCliente      Int?          @map("ID_CLIENTE_FK")
+  idDocumento    Int?          @unique @map("ID_DOCUMENTO_FK")
   fecha          DateTime      @default(now()) @map("FECHA")
   valor          Decimal       @map("VALOR") @db.Decimal(12, 2)
   estado         String        @default("EMITIDA") @map("ESTADO")
   observacion    String?       @map("OBSERVACION")
   ordenTrabajo   OrdenTrabajo? @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo])
   cliente        Cliente?      @relation(fields: [idCliente], references: [idCliente])
+  documento      Documento?    @relation(fields: [idDocumento], references: [idDocumento])
 
   @@index([idOrdenTrabajo])
   @@index([idCliente])
+  @@index([idDocumento])
   @@map("facturas")
 }
 
@@ -446,6 +471,7 @@ model Documento {
   cotizacion      Cotizacion?             @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
   orden          OrdenTrabajo? @relation("OrdenDocumentos", fields: [idOrdenTrabajo], references: [idOrdenTrabajo])
   recepcion       RecepcionEquipo?        @relation(fields: [idRecepcion], references: [idRecepcion], onDelete: Cascade)
+  factura         Factura?
   sellos          Sello[]
   versiones       VersionDocumento[]
   platillaVersion VersionPlantilla[]

@@ -15,6 +15,8 @@ export const CERTIFICATE_PDF_QUEUE = 'certificate-pdf-queue';
 
 export const TARIFAS_QUEUE = 'tarifas-queue';
 
+export const CRON_QUEUE = 'cron-queue';
+
 export const  GENERATION_EXCEL='generation-excel-queue';
 const EMAIL_QUEUE_NAME = 'email_queue_jobs';
 
@@ -26,6 +28,7 @@ let tarifasQueue: Queue | null = null;
 let generationExcelQueue: Queue | null = null;
 let certificatePdfQueue: Queue | null = null;
 let importQueue: Queue | null = null;
+let cronQueue: Queue | null = null;
 
 /**
  * Conexión Redis compartida (singleton) para colas y worker.
@@ -242,5 +245,26 @@ export function getimportOT(): Queue {
     });
   }
   return importQueue;
+}
+
+export interface CronJobData {
+  tarea: string;
+}
+
+/**
+ * Cola de tareas programadas (cron). El worker `cron.worker.ts` registra aquí
+ * los jobs repetibles (p. ej. el barrido diario de cotizaciones vencidas).
+ */
+export function getCronQueue(): Queue {
+  if (!cronQueue) {
+    cronQueue = new Queue<CronJobData>(CRON_QUEUE, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        removeOnComplete: { age: 60 * 60 * 24 },
+        removeOnFail: { age: 60 * 60 * 24 * 7 },
+      },
+    });
+  }
+  return cronQueue;
 }
 

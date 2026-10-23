@@ -7,6 +7,7 @@ import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { promisify } from 'util';
 import { urls_schema,url } from '../routes/schema-checkStatus.js'; 
+import { firmarTokenAprobacion } from '../lib/approval-token.js';
 
 // 1. Declaramos el módulo con la ruta exacta para satisfacer al linter de TypeScript
 declare module 'libreoffice-convert/index.js';
@@ -521,6 +522,8 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
     fechaVencimientoObj.setDate(fechaVencimientoObj.getDate() + 30);
     const totalEquipos = cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0) || 0;
     const codigoOT = cotizacion.ordenes_trabajo && cotizacion.ordenes_trabajo.length > 0 ? cotizacion.ordenes_trabajo[0].CODIGO_OT : 'Pendiente de asignación';
+    const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
+    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
 
     datosPlantillaCorreo = {
       nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
@@ -528,7 +531,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
       fechaEmision: fechaEmisionStr,
       fechaVencimiento: fechaVencimientoObj.toLocaleDateString('es-CO'),
       valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(totalCalculado),
-      linkAprobacion: `${process.env.FRONTEND_URL}/cotizaciones/aprobar/${cotizacion.ID_COTIZACION}`, 
+      linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar/${tokenAprobacion}`,
       emailDestino: cotizacion.clientes?.CORREO,
       cantidadEquipos: totalEquipos,
       numeroOT: codigoOT
@@ -692,6 +695,8 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
     const codigoOT = cotizacion.ordenes_trabajo && cotizacion.ordenes_trabajo.length > 0 
                      ? cotizacion.ordenes_trabajo[0].CODIGO_OT 
                      : 'Pendiente de asignación';
+    const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
+    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
     // Mapeo exacto a las variables de tu HTML {{...}}
 datosPlantillaCorreo = {
       nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
@@ -699,7 +704,7 @@ datosPlantillaCorreo = {
       fechaEmision: fechaEmisionStr,
       fechaVencimiento: fechaVencimientoStr,
       valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(totalCalculado),
-      linkAprobacion: `${process.env.FRONTEND_URL}/cotizaciones/aprobar/${cotizacion.ID_COTIZACION}`, 
+      linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar/${tokenAprobacion}`,
       emailDestino: cotizacion.clientes?.CORREO,
       
       // ✅ VARIABLES FALTANTES PARA EL SEGUNDO HTML

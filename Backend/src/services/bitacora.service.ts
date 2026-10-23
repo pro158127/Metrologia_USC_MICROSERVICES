@@ -10,7 +10,7 @@ export interface BitacoraInput {
   action: string;
   tableName: string;
   recordId: string | number;
-  userId: number;
+  userId: number | null;
   ip?: string;
   details?: Prisma.InputJsonValue;
 }

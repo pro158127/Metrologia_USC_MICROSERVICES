@@ -18,6 +18,7 @@ x-backend-env: &backend-env
   MINIO_BUCKET_NAME: "documentos-metrologia"
   OUTLOOK_USER: "cris271581@gmail.com"
   OUTLOOK_APP_PASSWORD: "jjrsqofbiykexwgg" # Sin espacios
+  FRONTEND_URL: "https://qcwngnfx-3000.use2.devtunnels.ms"
 
 services:
   postgres_db:
@@ -173,6 +174,24 @@ services:
       resources:
         limits:
           memory: 1G
+    environment:
+      <<: *backend-env
+    volumes:
+      - ./:/workspace
+      - shared_node_modules:/workspace/Backend/node_modules
+    depends_on:
+      backend:
+        condition: service_started
+      redis_cache:
+        condition: service_healthy
+    networks:
+      - metrologia_net
+
+  worker_cron:
+    build: { context: ./Backend, dockerfile: DockerFile.backend }
+    working_dir: /workspace/Backend
+    command: sh -c "cd /workspace/Backend && pnpm worker:cron"
+    restart: unless-stopped
     environment:
       <<: *backend-env
     volumes:

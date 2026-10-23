@@ -16,9 +16,17 @@ import {
 import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
+import {
+  resolverUsuarioCreadorCotizacion,
+  notificarUsuario,
+} from '../services/notificacion.service.js';
+import { generarOrdenesTrabajoAprobacion } from '../services/cotizacion-aprobacion.service.js';
+import { firmarTokenAprobacion, verificarTokenAprobacion } from '../lib/approval-token.js';
 const transicionesValidas: Record<Estados, Estados[]> = {
   BORRADOR: [Estados.ENVIADA],
-  ENVIADA: [Estados.APROBADA, Estados.RECHAZADA],
+  // La aprobación ya no está disponible desde la interfaz: se realiza
+  // exclusivamente mediante el enlace externo enviado por correo.
+  ENVIADA: [Estados.RECHAZADA],
   APROBADA: [Estados.EN_SEGUIMIENTO],
   RECHAZADA: [],
   EN_SEGUIMIENTO: [],
@@ -578,8 +586,15 @@ const trackingJobs: Record<string, string> = {};
   async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const idCotizacion = Number(id);
-    const { nuevoEstado } = request.body as { nuevoEstado: Estados }; // Usa tu type 'Estados'
+    const { nuevoEstado, motivoRechazo } = request.body as {
+      nuevoEstado: Estados;
+      motivoRechazo?: string | null;
+    };
     const idUsuario = Number(request.user?.sub ?? 0);
+
+    if (nuevoEstado === Estados.RECHAZADA && !motivoRechazo?.trim()) {
+      throw new AppError(400, 'Debe indicar el motivo del rechazo.');
+    }
 
     try {
       const resultado = await fastify.prisma.$transaction(async (tx) => {
@@ -599,7 +614,10 @@ const trackingJobs: Record<string, string> = {};
         // 2. Actualizar estado
         const cotizacionActualizada = await tx.cotizaciones.update({
           where: { ID_COTIZACION: idCotizacion },
-          data: { ESTADO:nuevoEstado },
+          data: {
+            ESTADO: nuevoEstado,
+            MOTIVO_RECHAZO: nuevoEstado === Estados.RECHAZADA ? motivoRechazo?.trim() ?? null : null,
+          },
           include: { clientes: true, cotizacion_detalles: true }
         });
 
@@ -610,6 +628,7 @@ const trackingJobs: Record<string, string> = {};
             ESTADO_ANTERIOR: actual.ESTADO,
             ESTADO_NUEVO: nuevoEstado,
             ID_USUARIO_FK: idUsuario,
+            MOTIVO: nuevoEstado === Estados.RECHAZADA ? motivoRechazo?.trim() ?? null : null,
           }
         });
 
@@ -809,8 +828,27 @@ const trackingJobs: Record<string, string> = {};
             codigo: cotizacionActualizada.CODIGO_COTIZACION,
             estadoAnterior: actual.ESTADO,
             estadoNuevo: nuevoEstado,
+            ...(nuevoEstado === Estados.RECHAZADA ? { motivoRechazo: motivoRechazo?.trim() } : {}),
           },
         });
+
+        // Notificar al usuario creador/dueño de la cotización.
+        const creador = await resolverUsuarioCreadorCotizacion(tx, idCotizacion);
+        if (nuevoEstado === Estados.RECHAZADA) {
+          await notificarUsuario(tx, {
+            idUsuario: creador,
+            mensaje: `La cotización ${cotizacionActualizada.CODIGO_COTIZACION} fue rechazada${motivoRechazo?.trim() ? `: ${motivoRechazo.trim()}` : ''}.`,
+            modulo: 'COTIZACIONES',
+            nivelPrioridad: 'ALTA',
+          });
+        } else if (nuevoEstado === Estados.EN_SEGUIMIENTO) {
+          await notificarUsuario(tx, {
+            idUsuario: creador,
+            mensaje: `La cotización ${cotizacionActualizada.CODIGO_COTIZACION} pasó a seguimiento comercial.`,
+            modulo: 'COTIZACIONES',
+            nivelPrioridad: 'NORMAL',
+          });
+        }
 
         return { cotizacion: cotizacionActualizada, ots: dataOTs, recs: dataRecs };
       });
@@ -874,6 +912,174 @@ const trackingJobs: Record<string, string> = {};
     }
   }
 );
+
+  // ==========================================================================
+  // GET /api/v1/cotizaciones/aprobar/:token  (PÚBLICO)
+  // Aprobación de cotización mediante enlace externo enviado por correo.
+  // No requiere autenticación: la seguridad reside en el token firmado.
+  // ==========================================================================
+  const renderHtmlAprobacion = (
+    titulo: string,
+    mensaje: string,
+    exito: boolean
+  ): string => `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${titulo}</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 40px 20px; }
+    .card { max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
+    .header { padding: 28px 24px; text-align: center; color: #ffffff; background-color: ${exito ? '#15803D' : '#B91C1C'}; }
+    .header h2 { margin: 0; font-size: 20px; }
+    .content { padding: 28px 24px; color: #333; line-height: 1.6; }
+    .footer { background: #eeeeee; text-align: center; padding: 16px; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header"><h2>${titulo}</h2></div>
+    <div class="content"><p>${mensaje}</p></div>
+    <div class="footer"><strong>Laboratorio de Calibración y Ensayo - USC</strong><br/>Mensaje automático del sistema MetroSoft.</div>
+  </div>
+</body>
+</html>`;
+
+  app.get(
+    '/api/v1/cotizaciones/aprobar/:token',
+    {
+      schema: { params: z.object({ token: z.string() }) },
+    },
+    async (request, reply) => {
+      const { token } = request.params as { token: string };
+
+      const verificado = verificarTokenAprobacion(token);
+      if (!verificado) {
+        return reply
+          .type('text/html')
+          .code(200)
+          .send(renderHtmlAprobacion('Enlace inválido', 'El enlace de aprobación no es válido o ha expirado. Por favor contacte al laboratorio.', false));
+      }
+
+      const cotizacion = await fastify.prisma.cotizaciones.findUnique({
+        where: { ID_COTIZACION: verificado.cotizacionId },
+        include: { clientes: true, cotizacion_detalles: true },
+      });
+
+      if (!cotizacion) {
+        return reply
+          .type('text/html')
+          .code(200)
+          .send(renderHtmlAprobacion('Cotización no encontrada', 'No se encontró la cotización solicitada.', false));
+      }
+
+      if (cotizacion.ESTADO !== Estados.ENVIADA) {
+        const estados: Record<string, string> = {
+          APROBADA: 'ya fue aprobada',
+          RECHAZADA: 'fue rechazada',
+          EN_SEGUIMIENTO: 'se encuentra en seguimiento comercial',
+          BORRADOR: 'aún no ha sido enviada',
+        };
+        return reply
+          .type('text/html')
+          .code(200)
+          .send(
+            renderHtmlAprobacion(
+              'Cotización ya procesada',
+              `La cotización ${cotizacion.CODIGO_COTIZACION} ${estados[cotizacion.ESTADO] ?? `se encuentra en estado ${cotizacion.ESTADO}`}.`,
+              false
+            )
+          );
+      }
+
+      let ots: any[] = [];
+
+      const resultado = await fastify.prisma.$transaction(async (tx) => {
+        const actualizada = await tx.cotizaciones.update({
+          where: { ID_COTIZACION: cotizacion.ID_COTIZACION },
+          data: { ESTADO: Estados.APROBADA, MOTIVO_RECHAZO: null },
+          include: { clientes: true, cotizacion_detalles: true },
+        });
+
+        await tx.historial_estado_cotizacion.create({
+          data: {
+            ID_COTIZACION_FK: actualizada.ID_COTIZACION,
+            ESTADO_ANTERIOR: Estados.ENVIADA,
+            ESTADO_NUEVO: Estados.APROBADA,
+            ID_USUARIO_FK: null,
+            MOTIVO: null,
+          },
+        });
+
+        const generacion = await generarOrdenesTrabajoAprobacion(tx, actualizada);
+        ots = generacion.ots;
+
+        await registrarBitacora(tx, {
+          action: 'APROBACION_ENLACE',
+          tableName: 'cotizaciones',
+          recordId: actualizada.ID_COTIZACION,
+          userId: null,
+          ip: request.ip,
+          details: {
+            codigo: actualizada.CODIGO_COTIZACION,
+            estadoAnterior: Estados.ENVIADA,
+            estadoNuevo: Estados.APROBADA,
+            sistema: true,
+            origen: 'enlace_correo_cliente',
+          },
+        });
+
+        const creador = await resolverUsuarioCreadorCotizacion(tx, actualizada.ID_COTIZACION);
+        await notificarUsuario(tx, {
+          idUsuario: creador,
+          mensaje: `El cliente aprobó la cotización ${actualizada.CODIGO_COTIZACION} mediante el enlace enviado por correo.`,
+          modulo: 'COTIZACIONES',
+          nivelPrioridad: 'ALTA',
+        });
+
+        return actualizada;
+      });
+
+      // Detonar generación de Excel/PDF y correo de confirmación (mismo flujo que la aprobación interna).
+      try {
+        const quoteTrackerCot = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+        await excelquue.add('actualizacion_estado_cot', {
+          id_job: quoteTrackerCot.id,
+          tipo_entry: 'prod',
+          id_registro: resultado.ID_COTIZACION,
+          action: 'aprove',
+          codigo_actual: resultado.CODIGO_COTIZACION,
+          tipo: 1,
+        });
+
+        for (const ot of ots) {
+          const quoteTrackerOT = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+          await excelquue.add('generar_ot_excel', {
+            id_job: quoteTrackerOT.id,
+            tipo_entry: 'prod',
+            id_registro: ot.ID_ORDEN_TRABAJO,
+            action: 'ot_create',
+            codigo_actual: ot.CODIGO_OT,
+            tipo: 2,
+          });
+        }
+      } catch (error) {
+        fastify.log.error(error, 'Error encolando generación documental tras aprobación por enlace');
+      }
+
+      return reply
+        .type('text/html')
+        .code(200)
+        .send(
+          renderHtmlAprobacion(
+            'Cotización aprobada',
+            `La cotización ${resultado.CODIGO_COTIZACION} ha sido aprobada correctamente. Nuestro equipo continuará con la recepción de sus equipos y la ejecución del servicio.`,
+            true
+          )
+        );
+    }
+  );
 
   app.get(
     '/api/v1/cotizaciones',

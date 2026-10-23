@@ -75,6 +75,7 @@ export const facturaDtoSchema = z.object({
   numero: z.string(),
   idOrdenTrabajo: z.number().nullable(),
   idCliente: z.number().nullable(),
+  idDocumento: z.number().nullable(),
   fecha: z.coerce.date(),
   valor: z.number(),
   estado: z.string(),
@@ -83,6 +84,28 @@ export const facturaDtoSchema = z.object({
   cliente: clienteDtoSchema.nullable(),
 });
 export type FacturaDto = z.infer<typeof facturaDtoSchema>;
+
+// ============================================================
+// INPUTS
+// ============================================================
+export const archivoFacturaInputSchema = z.object({
+  nombre: z.string(),
+  rutaUrl: z.string(),
+  mimeType: z.string(),
+});
+export type ArchivoFacturaInput = z.infer<typeof archivoFacturaInputSchema>;
+
+export const crearFacturaBodySchema = z.object({
+  numero: z.string(),
+  idOrdenTrabajo: z.number().nullish(),
+  idCliente: z.number().nullish(),
+  fecha: z.coerce.date().optional(),
+  valor: z.number(),
+  observacion: z.string().nullish(),
+  estado: z.string().optional(),
+  archivo: archivoFacturaInputSchema.nullish(),
+});
+export type CrearFacturaBody = z.infer<typeof crearFacturaBodySchema>;
 
 // ============================================================
 // TRANSFORMS (RAW DB -> DTO camelCase) — reemplazan a serialize*
@@ -207,6 +230,7 @@ export const facturaRawToDtoSchema = z
     NUMERO_FACTURA: z.string(),
     ID_ORDEN_TRABAJO_FK: z.number().nullish(),
     ID_CLIENTE_FK: z.number().nullish(),
+    ID_DOCUMENTO_FK: z.number().nullish(),
     FECHA: z.coerce.date(),
     VALOR: z.coerce.number(),
     ESTADO: z.string(),
@@ -219,6 +243,7 @@ export const facturaRawToDtoSchema = z
     numero: raw.NUMERO_FACTURA,
     idOrdenTrabajo: raw.ID_ORDEN_TRABAJO_FK ?? null,
     idCliente: raw.ID_CLIENTE_FK ?? null,
+    idDocumento: raw.ID_DOCUMENTO_FK ?? null,
     fecha: raw.FECHA,
     valor: raw.VALOR ? Number(raw.VALOR) : 0,
     estado: raw.ESTADO,
@@ -231,6 +256,12 @@ export type FacturaRaw = z.input<typeof facturaRawToDtoSchema>;
 // ============================================================
 // RESPONSES
 // ============================================================
+export const respuestaFacturaSchema = z.object({
+  ok: z.literal(true),
+  data: facturaDtoSchema,
+});
+export type RespuestaFactura = z.infer<typeof respuestaFacturaSchema>;
+
 export const respuestaFacturasSchema = z.object({
   ok: z.literal(true),
   data: z.array(facturaDtoSchema),

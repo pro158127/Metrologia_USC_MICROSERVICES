@@ -20,6 +20,7 @@ import tarifasRoutes from './routes/tarifas.routes.js';
 import sellosRoutes from './routes/sellos.routes.js';
 import parametrosSistemaRoutes from './routes/parametros_sistema.routes.js';
 import facturasRoutes from './routes/facturas.routes.js';
+import seguimientoRoutes from './routes/seguimiento.routes.js';
 import certificadosRoutes from './routes/certificados.routes.js';
 import certificateGeneratorRoutes from './routes/certificate-generator.routes.js';
 import reportesRoutes from './routes/reportes.routes.js';
@@ -74,6 +75,7 @@ async function bootstrap() {
   await fastify.register(sellosRoutes);
   await fastify.register(parametrosSistemaRoutes);
   await fastify.register(facturasRoutes);
+  await fastify.register(seguimientoRoutes);
   await fastify.register(certificadosRoutes);
   await fastify.register(certificateGeneratorRoutes);
   await fastify.register(reportesRoutes);

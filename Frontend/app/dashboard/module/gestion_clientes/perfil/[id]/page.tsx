@@ -42,6 +42,8 @@ import {
   type DocumentosCotizacionCategorias,
 } from "@/app/action_module/modulo_cliente";
 import { generarUrlArchivo } from "@/app/action_module/archivos";
+import { subirArchivoDocumento } from "@/app/action_module/archivos";
+import { crearFactura, obtenerFacturas, type FacturaModel } from "@/app/action_module/facturas";
 
 // ========== ESTADOS DE FILTRO ==========
 const estadoOptions = [
@@ -503,6 +505,114 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
 import { obtenerTrazabilidadCliente } from "@/app/action_module/modulo_cliente";
 import FileViewer from "@/app/utils/FileViewer";
 
+const FacturaModal = ({
+  isOpen,
+  idCliente,
+  onClose,
+  onCreated,
+}: {
+  isOpen: boolean;
+  idCliente: number;
+  onClose: () => void;
+  onCreated: () => void;
+}) => {
+  const [numero, setNumero] = useState("");
+  const [fecha, setFecha] = useState("");
+  const [valor, setValor] = useState("");
+  const [observacion, setObservacion] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async () => {
+    if (!numero.trim() || !valor.trim()) {
+      setError("Número y valor son obligatorios.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      let archivo: { nombre: string; rutaUrl: string; mimeType: string } | null = null;
+      if (file) {
+        const up = await subirArchivoDocumento(file);
+        if (!up.ok || !up.rutaUrl) {
+          setError("No se pudo subir el PDF de la factura.");
+          setSaving(false);
+          return;
+        }
+        archivo = { nombre: `Factura_${numero}`, rutaUrl: up.rutaUrl, mimeType: file.type || "application/pdf" };
+      }
+      const res = await crearFactura({
+        numero: numero.trim(),
+        idCliente,
+        fecha: fecha ? new Date(fecha) : undefined,
+        valor: Number(valor),
+        observacion: observacion.trim() || null,
+        archivo,
+      });
+      if (!res.ok) {
+        setError(res.error ?? "Error al crear la factura.");
+        setSaving(false);
+        return;
+      }
+      setNumero("");
+      setFecha("");
+      setValor("");
+      setObservacion("");
+      setFile(null);
+      onCreated();
+      onClose();
+    } catch (e) {
+      setError("Error al crear la factura.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl border border-slate-100">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-bold text-slate-800">Agregar Factura</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+        </div>
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div>
+            <label className="block text-slate-500 font-bold mb-1">Número *</label>
+            <input value={numero} onChange={(e) => setNumero(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none focus:border-[#5680F9]" />
+          </div>
+          <div>
+            <label className="block text-slate-500 font-bold mb-1">Fecha</label>
+            <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none focus:border-[#5680F9]" />
+          </div>
+          <div>
+            <label className="block text-slate-500 font-bold mb-1">Valor *</label>
+            <input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none focus:border-[#5680F9]" />
+          </div>
+          <div>
+            <label className="block text-slate-500 font-bold mb-1">PDF (opcional)</label>
+            <input type="file" accept=".pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="w-full text-[11px]" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-slate-500 font-bold mb-1">Observación</label>
+            <textarea value={observacion} onChange={(e) => setObservacion(e.target.value)} rows={2} className="w-full px-3 py-2 rounded-xl border border-slate-200 outline-none focus:border-[#5680F9] resize-none" />
+          </div>
+        </div>
+        {error && <p className="text-xs text-rose-600 mt-3">{error}</p>}
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50">Cancelar</button>
+          <button onClick={handleSubmit} disabled={saving} className="px-4 py-2 rounded-xl bg-[#5680F9] text-white text-xs font-bold hover:bg-[#4069E2] disabled:opacity-50">
+            {saving ? "Guardando..." : "Guardar factura"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetailPageProps) {
   console.log(id_cliente,"hlaaa")
   const [is_open_documento, setIsOpenDocumento] = useState(false);
@@ -510,6 +620,27 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
   const [trazabilidad, setTrazabilidad] = useState<TrazabilidadCliente | null>(null);
   const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
+  const [isFacturaModalOpen, setIsFacturaModalOpen] = useState(false);
+  const [facturas, setFacturas] = useState<FacturaModel[]>([]);
+
+  const cargarFacturas = useCallback(async () => {
+    if (id_cliente == null) return;
+    const res = await obtenerFacturas();
+    if (res.ok && Array.isArray(res.data)) {
+      setFacturas(res.data.filter((f) => f.idCliente === id_cliente));
+    }
+  }, [id_cliente]);
+
+  useEffect(() => {
+    if (id_cliente == null) return;
+    async function fetchFacturas() {
+      const res = await obtenerFacturas();
+      if (res.ok && Array.isArray(res.data)) {
+        setFacturas(res.data.filter((f) => f.idCliente === id_cliente));
+      }
+    }
+    fetchFacturas();
+  }, [id_cliente]);
 
   useEffect(() => {
     if (id_cliente === null || id_cliente === undefined) return;
@@ -582,6 +713,12 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
         >
           <Eye size={14} className="text-blue-600" />
           Ver RUT del Cliente
+        </button>
+        <button
+          onClick={() => setIsFacturaModalOpen(true)}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#5680F9] text-white hover:bg-[#4069E2] transition-all text-xs font-semibold border border-transparent shadow-sm"
+        >
+          Agregar factura
         </button>
       </div>
 
@@ -705,7 +842,51 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
           </div>
         )}
       </div>
-      
+
+      {/* Facturas del cliente */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+            Facturas Registradas
+          </h2>
+          <span className="text-xs font-semibold text-slate-600 bg-slate-200/60 px-2 py-0.5 rounded-full">
+            {facturas.length}
+          </span>
+        </div>
+        {facturas.length === 0 ? (
+          <div className="text-center py-8 bg-white rounded-2xl border border-slate-200/80 text-slate-400 text-xs">
+            Este cliente no tiene facturas registradas.
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-slate-200/80 bg-white overflow-hidden">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider text-[10px]">
+                  <th className="px-4 py-3">Número</th>
+                  <th className="px-4 py-3">Fecha</th>
+                  <th className="px-4 py-3">Valor</th>
+                  <th className="px-4 py-3">Estado</th>
+                  <th className="px-4 py-3">Observación</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {facturas.map((f) => (
+                  <tr key={f.idFactura}>
+                    <td className="px-4 py-3 font-mono font-bold text-slate-700">{f.numero}</td>
+                    <td className="px-4 py-3 text-slate-500">{new Date(f.fecha).toLocaleDateString("es-CO")}</td>
+                    <td className="px-4 py-3 font-mono text-slate-700">{Number(f.valor).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })}</td>
+                    <td className="px-4 py-3">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">{f.estado}</span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">{f.observacion || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* visor del documento*/}
 {is_open_documento && (
   // 1. Overlay oscuro de fondo que cubre toda la pantalla
@@ -743,6 +924,15 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
     </div>
   </div>
 )}
+
+      {isFacturaModalOpen && id_cliente != null && (
+        <FacturaModal
+          isOpen={isFacturaModalOpen}
+          idCliente={id_cliente}
+          onClose={() => setIsFacturaModalOpen(false)}
+          onCreated={cargarFacturas}
+        />
+      )}
     </div>
     
   );

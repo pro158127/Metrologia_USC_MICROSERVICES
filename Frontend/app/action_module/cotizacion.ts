@@ -143,7 +143,8 @@ export async function actualizarCotizacion(
 // ==========================================
 export async function cambiarEstadoCotizacion(
   idCotizacion: number,
-  nuevoEstado: Estados
+  nuevoEstado: Estados,
+  motivoRechazo?: string
 ): Promise<ActionResponse<CotizacionConDetalles>> {
   const perm = await validarPermiso('aprobar_rechazar');
   if (!perm.autorizado) return { ok: false, error: perm.error };
@@ -156,7 +157,7 @@ export async function cambiarEstadoCotizacion(
     const res = await fastifyRequest<ActionResponse<CotizacionConDetalles>>(
       session,
       `/api/v1/cotizaciones/${idCotizacion}/estado`,
-      { method: 'PATCH', body: { nuevoEstado } }
+      { method: 'PATCH', body: { nuevoEstado, motivoRechazo: motivoRechazo ?? null } }
     );
     return res;
   } catch (error) {

@@ -31,6 +31,7 @@ export const obtenerLlavePrimaria = (tabla: string, dataMapeada: any): { nombreL
     case 'tramites':               return { nombreLlave: 'idTramite', idValor: Number(dataMapeada.idTramite) };
     case 'version_plantillas':     return { nombreLlave: 'idVersionPlantilla', idValor: Number(dataMapeada.idVersionPlantilla) };
     case 'facturas':               return { nombreLlave: 'idFactura', idValor: Number(dataMapeada.idFactura) };
+    case 'seguimientos_comerciales': return { nombreLlave: 'idSeguimiento', idValor: Number(dataMapeada.idSeguimiento) };
    case 'plantillas_sellos': 
       return { 
         // El nombre con el que se guarda en el estado de React/Zustand:
@@ -62,6 +63,7 @@ export const normalizarPayload = (tabla: string, rawData: Record<string, any>): 
     rawData.ID_PLANTILLA_SELLO ?? rawData.idPlantillaSello ?? // ✅ ¡AGREGAR ESTA LÍNEA!
     rawData.ID_VERSION_PLANTILLA ?? rawData.idVersionPlantilla ??
     rawData.ID_FACTURA ?? rawData.idFactura ??
+    rawData.ID_SEGUIMIENTO ?? rawData.idSeguimiento ??
     rawData.idOrdenTrabajo??rawData.ID_VERSION
   );
 
@@ -176,6 +178,7 @@ export const normalizarPayload = (tabla: string, rawData: Record<string, any>): 
         prox_end: rawData.PROX_END_DATE ?? rawData.prox_end,
         viaticos: Number(rawData.VIATICOS ?? rawData.viaticos ?? 0),
         descuento: Number(rawData.DESCUENTO ?? rawData.descuento ?? 0),
+        motivoRechazo: rawData.MOTIVO_RECHAZO ?? rawData.motivoRechazo ?? null,
         detalles: rawData.DETALLES ?? rawData.detalles ?? [],
         cliente: rawData.cliente ?? rawData.CLIENTE ?? null,
         historialEstados: rawData.historialEstados ?? rawData.HISTORIAL_ESTADOS ?? [],
@@ -319,7 +322,8 @@ export const normalizarPayload = (tabla: string, rawData: Record<string, any>): 
         idCotizacion: Number(rawData.ID_COTIZACION_FK ?? rawData.idCotizacion),
         estadoAnterior: rawData.ESTADO_ANTERIOR ?? rawData.estadoAnterior ?? null,
         estadoNuevo: rawData.ESTADO_NUEVO ?? rawData.estadoNuevo ?? "APROBADA",
-        idUsuario: Number(rawData.ID_USUARIO_FK ?? rawData.idUsuario),
+        idUsuario: rawData.ID_USUARIO_FK != null ? Number(rawData.ID_USUARIO_FK) : (rawData.idUsuario != null ? Number(rawData.idUsuario) : null),
+        motivo: rawData.MOTIVO ?? rawData.motivo ?? null,
         createdAt: rawData.CREATED_AT ?? rawData.createdAt,
       };
 
@@ -377,12 +381,27 @@ export const normalizarPayload = (tabla: string, rawData: Record<string, any>): 
         numero: rawData.NUMERO_FACTURA ?? rawData.numero ?? "",
         idOrdenTrabajo: rawData.ID_ORDEN_TRABAJO_FK != null ? Number(rawData.ID_ORDEN_TRABAJO_FK) : (rawData.idOrdenTrabajo != null ? Number(rawData.idOrdenTrabajo) : null),
         idCliente: rawData.ID_CLIENTE_FK != null ? Number(rawData.ID_CLIENTE_FK) : (rawData.idCliente != null ? Number(rawData.idCliente) : null),
+        idDocumento: rawData.ID_DOCUMENTO_FK != null ? Number(rawData.ID_DOCUMENTO_FK) : (rawData.idDocumento != null ? Number(rawData.idDocumento) : null),
         fecha: rawData.FECHA ?? rawData.fecha,
         valor: Number(rawData.VALOR ?? rawData.valor ?? 0),
         estado: rawData.ESTADO ?? rawData.estado ?? "EMITIDA",
         observacion: rawData.OBSERVACION ?? rawData.observacion ?? null,
         ordenTrabajo: rawData.ordenTrabajo ?? rawData.ORDEN_TRABAJO ?? null,
         cliente: rawData.cliente ?? rawData.CLIENTE ?? null,
+      };
+
+    case "seguimientos_comerciales":
+      return {
+        idSeguimiento: Number(rawData.ID_SEGUIMIENTO ?? rawData.idSeguimiento),
+        idCotizacion: Number(rawData.ID_COTIZACION_FK ?? rawData.idCotizacion),
+        tipo: rawData.TIPO ?? rawData.tipo ?? "",
+        descripcion: rawData.DESCRIPCION ?? rawData.descripcion ?? "",
+        fechaGestion: rawData.FECHA_GESTION ?? rawData.fechaGestion,
+        proximaGestion: rawData.PROXIMA_GESTION ?? rawData.proximaGestion ?? null,
+        resultado: rawData.RESULTADO ?? rawData.resultado ?? null,
+        idUsuario: rawData.ID_USUARIO_FK != null ? Number(rawData.ID_USUARIO_FK) : (rawData.idUsuario != null ? Number(rawData.idUsuario) : null),
+        createdAt: rawData.CREATED_AT ?? rawData.createdAt,
+        usuario: rawData.usuario ?? rawData.USUARIO ?? null,
       };
 
     default:

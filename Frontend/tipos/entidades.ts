@@ -60,7 +60,7 @@ export interface AuditLogModel {
   action: string;
   tableName: string;
   recordId: string;
-  userId: number;
+  userId: number | null;
   createdAt: Date | string;
   details: unknown;
   ip: string;
@@ -155,7 +155,8 @@ export interface HistorialEstadoCotizacionModel {
   idCotizacion: number;
   estadoAnterior: Estados | null;
   estadoNuevo: Estados;
-  idUsuario: number;
+  idUsuario: number | null;
+  motivo: string | null;
   createdAt: Date | string;
 }
 
@@ -183,6 +184,7 @@ export interface CotizacionModel {
   estado: Estados;
   enviar: boolean;
   descuento: number | null;
+  motivoRechazo: string | null;
   detalles: CotizacionDetalleModel[];
   cliente: ClienteModel | null;
   historialEstados: HistorialEstadoCotizacionModel[];
@@ -349,12 +351,26 @@ export interface FacturaModel {
   numero: string;
   idOrdenTrabajo: number | null;
   idCliente: number | null;
+  idDocumento: number | null;
   fecha: Date | string;
   valor: number | string;
   estado: string;
   observacion: string | null;
   ordenTrabajo?: OrdenTrabajoModel | null;
   cliente?: ClienteModel | null;
+}
+
+export interface SeguimientoComercialModel {
+  idSeguimiento: number;
+  idCotizacion: number;
+  tipo: string;
+  descripcion: string;
+  fechaGestion: Date | string;
+  proximaGestion: Date | string | null;
+  resultado: string | null;
+  idUsuario: number | null;
+  createdAt: Date | string;
+  usuario?: { idUsuario: number; nombreCompleto: string; correo: string } | null;
 }
 
 export interface TramiteModel {

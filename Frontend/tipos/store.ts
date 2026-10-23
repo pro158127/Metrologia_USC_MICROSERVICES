@@ -31,7 +31,8 @@ import type {
   TramiteModel,
   VersionPlantillaModel,
   FacturaModel,
-  PlantillaSelloModel
+  PlantillaSelloModel,
+  SeguimientoComercialModel
   
 } from './entidades';
 
@@ -63,5 +64,6 @@ export default interface RealtimeTablesState {
   version_plantillas: VersionPlantillaModel[];
   facturas: FacturaModel[];
   plantillas_sellos: PlantillaSelloModel[];
+  seguimientos_comerciales: SeguimientoComercialModel[];
   
 }

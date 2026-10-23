@@ -48,7 +48,8 @@ export interface ObtenerCotizacionesParams {
 /** Transiciones de estado permitidas (única fuente: server actions). */
 export const transicionesValidas: Record<Estados, Estados[]> = {
   BORRADOR: [Estados.ENVIADA],
-  ENVIADA: [Estados.APROBADA, Estados.RECHAZADA],
+  // La aprobación solo se realiza mediante el enlace externo enviado por correo.
+  ENVIADA: [Estados.RECHAZADA],
   APROBADA: [Estados.EN_SEGUIMIENTO],
   RECHAZADA: [],
   EN_SEGUIMIENTO: [],
@@ -89,7 +90,8 @@ export interface HistorialItem {
   id: number;
   estadoAnterior: string | null;
   estadoNuevo: string;
-  idUsuario: number;
+  idUsuario: number | null;
+  motivo?: string | null;
   createdAt: Date | string;
   usuario?: {
     nombreCompleto: string;
@@ -120,6 +122,7 @@ export type CotizacionVista = {
   updatedAt: Date | string | null;
   viaticos: number;
   descuento: number;
+  motivoRechazo: string | null;
   detalles: CotizacionDetalleVista[];
   cliente: {
     idCliente: number | null;

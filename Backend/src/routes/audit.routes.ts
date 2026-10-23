@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
-import { filtrosExportarSchema } from './audit.schemas.js';
+import { filtrosExportarSchema, consultarBitacoraQuerySchema, respuestaBitacoraSchema } from './audit.schemas.js';
 
 function formatearDetalles(details: unknown): string {
   if (!details) return 'Sin detalles adicionales';
@@ -38,6 +38,76 @@ export default async function auditRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // ==========================================================================
+  // GET /api/v1/audit — Bitácora / historial de auditoría (consulta).
+  // ==========================================================================
+  app.get(
+    '/api/v1/audit',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        querystring: consultarBitacoraQuerySchema,
+        response: { 200: respuestaBitacoraSchema },
+      },
+    },
+    async (request) => {
+      const { tableName, recordId, action, userId, desde, hasta } = request.query;
+      const page = request.query.page ?? 1;
+      const limit = request.query.limit ?? 20;
+      const skip = (page - 1) * limit;
+
+      const where: Prisma.audit_logsWhereInput = {
+        ...(tableName && { tableName }),
+        ...(recordId && { recordId }),
+        ...(action && { action }),
+        ...(userId && { USER_ID: userId }),
+        ...((desde || hasta) && {
+          createdAt: {
+            ...(desde && { gte: desde }),
+            ...(hasta && { lte: hasta }),
+          },
+        }),
+      };
+
+      const [total, logs] = await fastify.prisma.$transaction([
+        fastify.prisma.audit_logs.count({ where }),
+        fastify.prisma.audit_logs.findMany({
+          where,
+          take: limit,
+          skip,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            usuarios: {
+              include: { roles: true },
+            },
+          },
+        }),
+      ]);
+
+      return {
+        ok: true as const,
+        data: logs.map((log) => ({
+          id: log.ID_AUDIT,
+          action: log.action,
+          tableName: log.tableName,
+          recordId: log.recordId,
+          userId: log.USER_ID ?? null,
+          createdAt: log.createdAt,
+          details: log.details,
+          ip: log.ip,
+          usuario: log.usuarios
+            ? {
+                idUsuario: log.usuarios.ID_USUARIO_AUTO_INCREMENT,
+                nombreCompleto: log.usuarios.NOMBRE_COMPLETO,
+                rol: log.usuarios.roles.NOMBRE_ROL ?? null,
+              }
+            : null,
+        })),
+        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      };
+    }
+  );
 
   app.post(
     '/api/audit/export',
@@ -130,8 +200,8 @@ export default async function auditRoutes(fastify: FastifyInstance) {
         const row = worksheet.addRow({
           id: log.ID_AUDIT,
           fecha: new Date(log.createdAt).toLocaleString('es-CO', { timeZone: 'America/Bogota' }),
-          usuario: log.usuarios?.NOMBRE_COMPLETO || `Usuario #${log.USER_ID}`,
-          rol: log.usuarios.roles.NOMBRE_ROL || 'Sin rol',
+          usuario: log.usuarios?.NOMBRE_COMPLETO || `Usuario #${log.USER_ID ?? 'Sistema'}`,
+          rol: log.usuarios?.roles?.NOMBRE_ROL || 'Sin rol',
           action: log.action.toUpperCase(),
           tableName: log.tableName,
           recordId: log.recordId || 'N/A',

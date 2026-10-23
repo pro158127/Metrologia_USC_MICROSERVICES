@@ -339,6 +339,12 @@ const QuotationDetailView = ({
             <div className="flex justify-between"><span className="text-slate-400 font-medium">Liquidación total</span><span className="font-bold text-[#5680F9] font-mono">{formatCurrency(selectedQuotation.montoTotal)}</span></div>
             <div className="flex justify-between"><span className="text-slate-400 font-medium">Descuento</span><span className="font-semibold font-mono">{selectedQuotation.descuento}%</span></div>
             <div className="flex justify-between"><span className="text-slate-400 font-medium">Viáticos</span><span className="font-semibold font-mono">{formatCurrency(selectedQuotation.viaticos)}</span></div>
+            {selectedQuotation.motivoRechazo && (
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-400 font-medium">Motivo de rechazo</span>
+                <span className="font-semibold text-rose-600 text-right">{selectedQuotation.motivoRechazo}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -661,6 +667,8 @@ export default function Cotizaciones() {
   const [toast, setToast] = useState("");
   const roles=useDbTable("roles");
   const [isOpenTable,setOpenTable]=useState(false)
+  const [rejectTargetId, setRejectTargetId] = useState<number | null>(null);
+  const [rejectMotivo, setRejectMotivo] = useState("");
 
     const rolesMap = useMemo(() => {
       const map = new Map<number, string>();
@@ -691,6 +699,7 @@ export default function Cotizaciones() {
           updatedAt: c.updatedAt,
           viaticos: Number(c.viaticos ?? 0),
           descuento: Number(c.descuento ?? 0),
+          motivoRechazo: c.motivoRechazo ?? null,
           detalles: (c.detalles ?? []).map((d) => ({
             idDetalle: d.idDetalle,
             idCotizacion: d.idCotizacion,
@@ -839,6 +848,11 @@ export default function Cotizaciones() {
   }, [idClienteSeleccionado, viaticos, descuento, items, showToast, cargarCotizaciones]);
 
   const handleEstadoChange = useCallback(async (id: number, nuevoEstado: Estados) => {
+    if (nuevoEstado === Estados.RECHAZADA) {
+      setRejectTargetId(id);
+      setRejectMotivo("");
+      return;
+    }
     setUpdatingId(id);
     try {
       const res = await cambiarEstadoCotizacion(id, nuevoEstado);
@@ -852,6 +866,24 @@ export default function Cotizaciones() {
       setUpdatingId(null);
     }
   }, [showToast, cargarCotizaciones]);
+
+  const confirmarRechazo = useCallback(async () => {
+    if (!rejectTargetId || !rejectMotivo.trim()) return;
+    setUpdatingId(rejectTargetId);
+    try {
+      const res = await cambiarEstadoCotizacion(rejectTargetId, Estados.RECHAZADA, rejectMotivo.trim());
+      if (res.ok) {
+        showToast(`✅ Cotización rechazada`);
+        cargarCotizaciones();
+        setRejectTargetId(null);
+        setRejectMotivo("");
+      } else {
+        showToast(`❌ Error: ${res.error}`);
+      }
+    } finally {
+      setUpdatingId(null);
+    }
+  }, [rejectTargetId, rejectMotivo, showToast, cargarCotizaciones]);
 
   const saveNewVersion = useCallback(async (_auditForm: cambiospayload) => {
     if (!selectedQuotation) return;
@@ -1140,6 +1172,39 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
 
       {view === "catalog" && <CatalogTableView />}
       <ModalHistorialCambios codigo_cotizacion={selectedQuotation?.codigo??""}historial={historial_talble} isOpen={isOpenTable}onClose={()=>setOpenTable(false)} />
+
+      {rejectTargetId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-100">
+            <h3 className="text-base font-bold text-slate-800">Rechazar cotización</h3>
+            <p className="text-xs text-slate-500 mt-1">Es obligatorio indicar el motivo del rechazo.</p>
+            <textarea
+              value={rejectMotivo}
+              onChange={(e) => setRejectMotivo(e.target.value)}
+              rows={3}
+              placeholder="Describe el motivo del rechazo..."
+              className="w-full mt-4 px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-[#5680F9] focus:ring-2 focus:ring-[#5680F9]/10 resize-none"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => { setRejectTargetId(null); setRejectMotivo(""); }}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!rejectMotivo.trim() || updatingId === rejectTargetId}
+                onClick={confirmarRechazo}
+                className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-colors disabled:opacity-50"
+              >
+                {updatingId === rejectTargetId ? "Rechazando..." : "Confirmar rechazo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AiAgentWidget activeContext={selectedQuotation} />
     </div>

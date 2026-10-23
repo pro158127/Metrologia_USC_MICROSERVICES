@@ -13,6 +13,7 @@ import { obtenerFacturas } from '@/app/action_module/facturas';
 import { obtenerParametrosSistema } from '@/app/action_module/parametros_sistema';
 import { obtenerCertificadosConContexto } from '@/app/action_module/certificados';
 import { obtenerSellos,obtenerPlantillasSellos } from '@/app/action_module/sellos';
+import { obtenerSeguimientos } from '@/app/action_module/seguimiento';
 const initialState: RealtimeTablesState = {
   usuarios: [],
   tarifas: [],
@@ -41,6 +42,7 @@ const initialState: RealtimeTablesState = {
   version_plantillas: [],
   facturas: [],
   plantillas_sellos:[],
+  seguimientos_comerciales: [],
   
 };
 
@@ -167,6 +169,11 @@ updateTable: (table, updater) =>
         }
         case 'facturas': {
           const res = await obtenerFacturas();
+          if (res.ok && Array.isArray(res.data)) data = res.data;
+          break;
+        }
+        case 'seguimientos_comerciales': {
+          const res = await obtenerSeguimientos();
           if (res.ok && Array.isArray(res.data)) data = res.data;
           break;
         }

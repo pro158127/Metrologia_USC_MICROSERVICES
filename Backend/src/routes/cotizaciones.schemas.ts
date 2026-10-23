@@ -36,6 +36,7 @@ export type CrearCotizacionBody = z.infer<typeof crearCotizacionBodySchema>;
 
 export const cambiarEstadoBodySchema = z.object({
   nuevoEstado: estadosEnum,
+  motivoRechazo: z.string().nullish(),
 });
 export type CambiarEstadoBody = z.infer<typeof cambiarEstadoBodySchema>;
 
@@ -93,7 +94,8 @@ export const historialEstadoDtoSchema = z.object({
   idCotizacion: z.number(),
   estadoAnterior: estadosEnum.nullable(),
   estadoNuevo: estadosEnum,
-  idUsuario: z.number(),
+  idUsuario: z.number().nullable(),
+  motivo: z.string().nullable(),
   createdAt: z.coerce.date(),
 });
 export type HistorialEstadoDto = z.infer<typeof historialEstadoDtoSchema>;
@@ -206,6 +208,7 @@ export const cotizacionDtoSchema = z.object({
   estado: estadosEnum,
   enviar: z.boolean(),
   descuento: z.number(),
+  motivoRechazo: z.string().nullable(),
   detalles: z.array(detalleDtoSchema).optional(),
   cliente: clienteDtoSchema.nullable().optional(),
   historialEstados: z.array(historialEstadoDtoSchema).optional(),
@@ -287,7 +290,8 @@ export const historialEstadoRawToDtoSchema = z
     ID_COTIZACION_FK: z.number(),
     ESTADO_ANTERIOR: estadosEnum.nullish(),
     ESTADO_NUEVO: estadosEnum,
-    ID_USUARIO_FK: z.number(),
+    ID_USUARIO_FK: z.number().nullish(),
+    MOTIVO: z.string().nullish(),
     CREATED_AT: z.coerce.date(),
   })
   .transform((raw): HistorialEstadoDto => ({
@@ -295,7 +299,8 @@ export const historialEstadoRawToDtoSchema = z
     idCotizacion: raw.ID_COTIZACION_FK,
     estadoAnterior: raw.ESTADO_ANTERIOR ?? null,
     estadoNuevo: raw.ESTADO_NUEVO,
-    idUsuario: raw.ID_USUARIO_FK,
+    idUsuario: raw.ID_USUARIO_FK ?? null,
+    motivo: raw.MOTIVO ?? null,
     createdAt: raw.CREATED_AT,
   }));
 
@@ -515,6 +520,7 @@ export const cotizacionRawToDtoSchema = z
     UPDATED_AT: z.coerce.date().nullish(),
     viaticos: z.coerce.number().nullish(),
     ESTADO: estadosEnum,
+    MOTIVO_RECHAZO: z.string().nullish(),
     enviar: z.boolean(),
     descuento: z.coerce.number().nullish(),
     cotizacion_detalles: z.array(detalleRawToDtoSchema).nullish(),
@@ -537,6 +543,7 @@ export const cotizacionRawToDtoSchema = z
     estado: raw.ESTADO,
     enviar: raw.enviar,
     descuento: raw.descuento ?? 0,
+    motivoRechazo: raw.MOTIVO_RECHAZO ?? null,
     ...(raw.cotizacion_detalles && { detalles: raw.cotizacion_detalles }),
     ...(raw.clientes && { cliente: raw.clientes }),
     ...(raw.historial_estado_cotizacion && { historialEstados: raw.historial_estado_cotizacion }),

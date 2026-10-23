@@ -9,6 +9,7 @@ import { Administracion } from "./module/Administracion";
 import ClientMainRenderer from "./module/gestion_clientes/page";
 import ClienteDetailPage from "./module/gestion_clientes/perfil/[id]/page";
 import Cotizaciones from "./module/cotizacion";
+import SeguimientoComercial from "./module/seguimiento";
 import Dashboard from "./dashboard";
 import OrdenesTrabajo from "./module/ordenes_ot";
 import  { MainRenderers } from  "./module/recepciones";
@@ -30,6 +31,7 @@ const MODULE_TITLES: Record<ModuleKey, string> = {
   dashboard: "Director Técnico",
   clientes: "Gestión de Clientes",
   cotizaciones: "Cotizaciones",
+  seguimiento: "Seguimiento Comercial",
   ordenes: "Órdenes de Trabajo",
   importarOrden: "Importar OT",
   recepcion: "Recepción de Equipos",
@@ -91,6 +93,9 @@ const ModuloActivo = ({
     
     case "cotizaciones":
       return <Cotizaciones />;
+
+    case "seguimiento":
+      return <SeguimientoComercial />;
 
     case "ordenes":
       return <OrdenesTrabajo otToOpen={otToOpen} />;

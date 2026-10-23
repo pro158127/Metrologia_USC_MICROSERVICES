@@ -24,6 +24,7 @@ export type ModuleKey =
   | "dashboard"
   | "clientes"
   | "cotizaciones"
+  | "seguimiento"
   | "ordenes"
   | "importarOrden"
   | "recepcion"
@@ -61,6 +62,7 @@ const permisionMapping: Record<ModuleKey, string | boolean> = {
   dashboard: true, // Siempre visible
   clientes: "clientes",
   cotizaciones: "cotizaciones",
+  seguimiento: "cotizaciones", // Comparte permiso con Cotizaciones
   recepcion: "recepcion_de_equipos",  
   importarOrden: "ordenesOt", // Comparte permiso con Órdenes
   ordenes: "ordenes_de_trabajo",
@@ -84,6 +86,7 @@ const sections: SidebarSection[] = [
     items: [
       { key: "clientes", label: "Clientes", icon: <Users size={16} /> },
       { key: "cotizaciones", label: "Cotizaciones", icon: <FileText size={16} /> },
+      { key: "seguimiento", label: "Seguimiento Comercial", icon: <ClipboardList size={16} /> },
       { key: "recepcion", label: "Recepción de Equipos", icon: <Package size={16} /> },
       { key: "importarOrden", label: "Importar OT", icon: <FileText size={16} /> },
       { key: "ordenes", label: "Órdenes de Trabajo", icon: <Wrench size={16} /> },

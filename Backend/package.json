@@ -9,6 +9,7 @@
     "//": "--- WORKER PESADO (Soldadora: Python, Pandas, Excels gigantes) ---",
     "worker:documentos": "tsx src/workers/documentos.worker.ts",
     "worker:plantillas": "tsx src/workers/plantillas.worker.ts",
+    "worker:cron": "tsx src/workers/cron.worker.ts",
     "build": "tsc",
     "db:deploy": "prisma migrate deploy && prisma db seed",
     "db:seed": "tsx prisma/seed.ts"
