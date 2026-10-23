@@ -947,12 +947,12 @@ const trackingJobs: Record<string, string> = {};
 </html>`;
 
   app.get(
-    '/api/v1/cotizaciones/aprobar/:token',
+    '/api/v1/cotizaciones/aprobar',
     {
-      schema: { params: z.object({ token: z.string() }) },
+      schema: { querystring:z.object({ token: z.string() }) },
     },
     async (request, reply) => {
-      const { token } = request.params as { token: string };
+      const { token } = request.query as { token: string };
 
       const verificado = verificarTokenAprobacion(token);
       if (!verificado) {
@@ -1007,8 +1007,8 @@ const trackingJobs: Record<string, string> = {};
             ID_COTIZACION_FK: actualizada.ID_COTIZACION,
             ESTADO_ANTERIOR: Estados.ENVIADA,
             ESTADO_NUEVO: Estados.APROBADA,
-            ID_USUARIO_FK: null,
-            MOTIVO: null,
+            ID_USUARIO_FK:1,
+            MOTIVO: "aprobación por enlace de correo",
           },
         });
 

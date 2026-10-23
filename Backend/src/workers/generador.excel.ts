@@ -523,7 +523,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
     const totalEquipos = cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0) || 0;
     const codigoOT = cotizacion.ordenes_trabajo && cotizacion.ordenes_trabajo.length > 0 ? cotizacion.ordenes_trabajo[0].CODIGO_OT : 'Pendiente de asignación';
     const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
-    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'https://qcwngnfx-3000.use2.devtunnels.ms').replace(/\/$/, '');
 
     datosPlantillaCorreo = {
       nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
@@ -531,7 +531,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
       fechaEmision: fechaEmisionStr,
       fechaVencimiento: fechaVencimientoObj.toLocaleDateString('es-CO'),
       valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(totalCalculado),
-      linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar/${tokenAprobacion}`,
+      linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar?token=${tokenAprobacion}`,
       emailDestino: cotizacion.clientes?.CORREO,
       cantidadEquipos: totalEquipos,
       numeroOT: codigoOT
@@ -696,7 +696,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
                      ? cotizacion.ordenes_trabajo[0].CODIGO_OT 
                      : 'Pendiente de asignación';
     const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
-    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'https://qcwngnfx-3000.use2.devtunnels.ms/').replace(/\/$/, '');
     // Mapeo exacto a las variables de tu HTML {{...}}
 datosPlantillaCorreo = {
       nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
@@ -704,7 +704,7 @@ datosPlantillaCorreo = {
       fechaEmision: fechaEmisionStr,
       fechaVencimiento: fechaVencimientoStr,
       valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(totalCalculado),
-      linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar/${tokenAprobacion}`,
+      linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar?token=${tokenAprobacion}`,
       emailDestino: cotizacion.clientes?.CORREO,
       
       // ✅ VARIABLES FALTANTES PARA EL SEGUNDO HTML
