@@ -165,7 +165,7 @@ const scalarMap: Record<string, any> = {
     calib_laboratorio_permanente: ordenTrabajo.ES_LAB_PERMANENTE ? 'X' : '',
     
     // ✅ CORRECCIÓN 1: Usar la hora real del evento de calibración
-    calib_hora: ordenTrabajo.FECHA_CALIBRACION_DILIGENCIAMENTO, 
+    calib_hora: ordenTrabajo.HORA_CALIBRACION, 
     
     // ✅ CORRECCIÓN 2: Usar el campo exclusivo del solicitante
     solicitante_razon_social: ordenTrabajo.razon_social_solicitante, 

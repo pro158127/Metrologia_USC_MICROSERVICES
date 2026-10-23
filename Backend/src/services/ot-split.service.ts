@@ -157,7 +157,7 @@ export async function splitHeterogeneousOT(
         UNIDAD: item.unidad || null,
         INTERVALO_RANGO: item.intervalo_medicion || null,
         RESOLUCION: item.resolucion_division || null,
-        asignado: item.asignado ?? options.idUsuario,
+        asignado: null,
         DECLARACION_CONFORMIDAD: item.declaracion_conformidad ?? false,
         LIMITE_CONTROL_EMC: item.emp_ajuste_control || item.emp_limite_control || null,
         DOC_ESPECIFICACION: item.documento_especificacion || null,
@@ -219,7 +219,7 @@ export async function splitHeterogeneousOT(
         SERIE: item.serie || null,
         CODIGO_INVENTARIO: item.codigo_interno || null,
         RESOLUCION: item.resolucion_division || null,
-        ESTAMPILLA: `TEMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        ESTAMPILLA: null,
         activacion: true,
       })),
     });

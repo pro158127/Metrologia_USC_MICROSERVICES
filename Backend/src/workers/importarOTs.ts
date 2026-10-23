@@ -56,6 +56,7 @@ interface ExtractedInstrument {
   tipo_servicio_real?: string | null;
   valor_estimado?: number;
   sitio?: string | null;
+  instrumento_tarifa?: string | null; // nombre oficial de la tarifa resuelta
 }
 
 interface ExtractedData {
@@ -333,6 +334,331 @@ function decimalOrZero(value: unknown): number {
   return Number.isFinite(number) ? number : 0;
 }
 
+// ============================================================================
+// CONFIGURACIÓN DEL MATCH DE TARIFAS
+// ============================================================================
+
+/**
+ * true  = un instrumento sin tarifa / sin precio / ambiguo detiene el import (comportamiento anterior).
+ * false = se importa igual: queda con la tarifa más probable (o sin tarifa y valor 0) y una advertencia.
+ */
+const ESTRICTO_TARIFAS = false;
+
+/**
+ * true  = en el flujo 2, si las cantidades del archivo no cuadran con la cotización, se detiene.
+ * false = solo deja una advertencia. OJO: el split borra y recrea los detalles de la OT existente;
+ *         con false, un archivo distinto sobre la misma cotización sobrescribe esos detalles.
+ */
+const BLOQUEAR_DISCREPANCIA_COTIZACION = true;
+
+// ============================================================================
+// NORMALIZACIÓN Y RESOLUCIÓN DE TARIFAS (sin tocar la BD)
+// ============================================================================
+
+/** Minúsculas, sin tildes, espacios/saltos de línea/\xa0 colapsados a uno solo. */
+const normalizar = (s?: string | null): string =>
+  (s ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s\u00a0]+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+type CriterioFamilia = 'presion' | 'masa' | 'digital_analogico';
+
+interface FamiliaTarifa {
+  clave: string; // identifica la familia al comparar contra la cotización
+  aliasOT: string[]; // nombres cortos del desplegable de la OT
+  prefijosTarifa: string[]; // cómo empiezan los nombres en la tabla de tarifas
+  criterio: CriterioFamilia; // cómo elegir entre las filas de la familia
+}
+
+const FAMILIAS: FamiliaTarifa[] = [
+  {
+    clave: 'familia:manometros',
+    aliasOT: ['Manómetro analógico o digital'],
+    prefijosTarifa: ['Manómetros analógicos y digitales'],
+    criterio: 'presion',
+  },
+  {
+    clave: 'familia:pesaje',
+    aliasOT: ['Instrumentos de pesaje de funcionamiento no automático'],
+    prefijosTarifa: ['Instrumentos de pesaje de funcionamiento no automático'],
+    criterio: 'masa',
+  },
+  {
+    clave: 'familia:termometros',
+    aliasOT: ['Termómetro digital o analógico'],
+    prefijosTarifa: ['Termómetros digitales', 'Termómetros de indicación analógica'],
+    criterio: 'digital_analogico',
+  },
+  {
+    clave: 'familia:termohigrometros',
+    aliasOT: ['Termohigrómetro Digital o Analógico'],
+    prefijosTarifa: ['Termohigrómetros / Analógicos', 'Termohigrómetros / Digitales'],
+    criterio: 'digital_analogico',
+  },
+];
+
+const FAMILIAS_N = FAMILIAS.map((f) => ({
+  ...f,
+  alias: f.aliasOT.map(normalizar),
+  prefijos: f.prefijosTarifa.map(normalizar),
+}));
+
+/** Clave de comparación: todas las filas de una familia cuentan como un solo instrumento. */
+const familiaDe = (nombre?: string | null): string => {
+  const n = normalizar(nombre);
+  const f = FAMILIAS_N.find((x) => x.alias.includes(n) || x.prefijos.some((p) => n.startsWith(p)));
+  return f?.clave ?? n;
+};
+
+// ---------------------------------------------------------------------------
+// Lectura de rangos (presión -> psi, masa -> g)
+// ---------------------------------------------------------------------------
+interface Dominio {
+  factores: Record<string, number>; // unidad -> unidad base
+  regexUnidad: RegExp;
+}
+
+const DOMINIO_PRESION: Dominio = {
+  factores: {
+    psi: 1,
+    bar: 14.5037738,
+    mbar: 0.0145037738,
+    kpa: 0.145037738,
+    mpa: 145.037738,
+    pa: 0.000145037738,
+    mmhg: 0.0193368,
+    inhg: 0.491154,
+    'kgf/cm2': 14.2233,
+    'kg/cm2': 14.2233,
+    cmh2o: 0.0142233,
+  },
+  regexUnidad: /(?<![a-z])(kgf\/cm[2²]|kg\/cm[2²]|cm\s?h2o|mmhg|inhg|mbar|psi|bar|kpa|mpa|pa)(?![a-z])/i,
+};
+
+const DOMINIO_MASA: Dominio = {
+  factores: { mg: 0.001, g: 1, kg: 1000, lb: 453.592 },
+  regexUnidad: /(?<![a-z])(kg|mg|lb|g)(?![a-z])/i,
+};
+
+const canonUnidad = (u?: string | null): string =>
+  (u ?? '').toLowerCase().replace(/\s+/g, '').replace('²', '2');
+
+/** "1.000" -> 1000, "1,5" -> 1.5, "0.250" -> 0.25 */
+function parseNumero(token: string): number | null {
+  let t = token.replace(/\s/g, '');
+  const tienePunto = t.includes('.');
+  const tieneComa = t.includes(',');
+
+  if (tienePunto && tieneComa) {
+    const dec = t.lastIndexOf('.') > t.lastIndexOf(',') ? '.' : ',';
+    const mil = dec === '.' ? ',' : '.';
+    t = t.split(mil).join('').replace(dec, '.');
+  } else if (tienePunto || tieneComa) {
+    const sep = tienePunto ? '.' : ',';
+    const partes = t.split(sep);
+    const esMiles =
+      partes.length > 2 ||
+      (partes.length === 2 && /^\d{3}$/.test(partes[1]) && /^-?[1-9]\d{0,2}$/.test(partes[0]));
+    t = esMiles ? partes.join('') : t.replace(sep, '.');
+  }
+
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Rango del instrumento en la unidad base del dominio, o null si no se puede leer. */
+function extraerRango(
+  unidad: string | null | undefined,
+  intervalo: string | null | undefined,
+  dom: Dominio,
+): { min: number; max: number } | null {
+  const texto = intervalo ?? '';
+  if (!texto.trim()) return null;
+
+  // Unidad: la celda "unidad" o, si falta/no se reconoce, la escrita dentro del intervalo.
+  let u = canonUnidad(unidad);
+  if (!dom.factores[u]) {
+    const m = texto.match(dom.regexUnidad);
+    u = m ? canonUnidad(m[0]) : '';
+  }
+  const factor = dom.factores[u];
+  if (!factor) return null;
+
+  const limpio = texto
+    .replace(new RegExp(dom.regexUnidad.source, 'gi'), ' ')
+    // un guion entre dos números es separador de rango, no signo: "0-100" -> "0 a 100"
+    .replace(/(\d)\s*[-–—]\s*(?=[-\d])/g, '$1 a ');
+
+  const nums = (limpio.match(/(?<![\d.,])-?\d+(?:[.,]\d+)*/g) ?? [])
+    .map(parseNumero)
+    .filter((n): n is number => n !== null);
+  if (nums.length === 0) return null;
+
+  return { min: Math.min(...nums) * factor, max: Math.max(...nums) * factor };
+}
+
+/** Lee "(0 psi < p ≤ 50 psi)" del nombre de la tarifa, en psi. */
+function rangoTarifaPresion(nombre: string): { lo: number; hi: number } | null {
+  const m = normalizar(nombre).match(
+    /\(\s*(-?\d+(?:[.,]\d+)?)\s*psi\s*[<≤]\s*p\s*≤\s*(-?\d+(?:[.,]\d+)?)\s*psi\s*\)/,
+  );
+  if (!m) return null;
+  const lo = parseNumero(m[1]);
+  const hi = parseNumero(m[2]);
+  return lo === null || hi === null ? null : { lo, hi };
+}
+
+/** Lee "220 g < m ≤ 5000 g" / "5000 g < m ≤ 34 kg" del nombre de la tarifa, en gramos. */
+function rangoTarifaMasa(nombre: string): { lo: number; hi: number } | null {
+  const m = normalizar(nombre).match(
+    /(\d+(?:[.,]\d+)?)\s*(kg|mg|g)\s*<\s*m\s*≤\s*(\d+(?:[.,]\d+)?)\s*(kg|mg|g)/,
+  );
+  if (!m) return null;
+  const lo = parseNumero(m[1]);
+  const hi = parseNumero(m[3]);
+  const fLo = DOMINIO_MASA.factores[m[2]];
+  const fHi = DOMINIO_MASA.factores[m[4]];
+  return lo === null || hi === null ? null : { lo: lo * fLo, hi: hi * fHi };
+}
+
+// ---------------------------------------------------------------------------
+// Elección entre varias filas de una misma familia
+// ---------------------------------------------------------------------------
+interface ItemParaTarifa {
+  instrumento: string;
+  unidad?: string | null;
+  intervalo_medicion?: string | null;
+  fabricante?: string | null;
+  modelo?: string | null;
+  resolucion_division?: string | null;
+  documento_especificacion?: string | null;
+}
+
+interface ResultadoTarifa<T> {
+  tarifa: T | null;
+  advertencia?: string;
+  motivo?: string;
+}
+
+const nombresCortos = <T extends { Instrumento: string }>(c: T[]): string =>
+  c.map((x) => x.Instrumento.replace(/\s+/g, ' ').trim().slice(0, 60)).join(' | ');
+
+function elegirPorRango<T extends { Instrumento: string }>(
+  candidatas: T[],
+  rango: { min: number; max: number } | null,
+  leerTarifa: (nombre: string) => { lo: number; hi: number } | null,
+  unidadBase: string,
+): ResultadoTarifa<T> {
+  const conRango = candidatas
+    .map((t) => ({ t, r: leerTarifa(t.Instrumento) }))
+    .filter((x): x is { t: T; r: { lo: number; hi: number } } => x.r !== null);
+
+  if (conRango.length < 2) {
+    return { tarifa: null, motivo: `Ambiguo: coincide con ${candidatas.length} tarifas (${nombresCortos(candidatas)})` };
+  }
+
+  // Sin rango legible en la OT: la de menor rango positivo, con advertencia.
+  if (!rango) {
+    return {
+      tarifa: (conRango.find((x) => x.r.hi > 0) ?? conRango[0]).t,
+      advertencia: 'rango de medición ilegible o vacío en la OT; se usó la tarifa de menor rango',
+    };
+  }
+
+  const v = rango.max; // límite superior del instrumento
+  const hit =
+    v <= 0
+      ? conRango.find((x) => x.r.hi <= 0) // p. ej. manómetro de vacío
+      : conRango.find((x) => v > x.r.lo && v <= x.r.hi);
+
+  if (!hit) {
+    return { tarifa: null, motivo: `Rango fuera de las tarifas (máximo ${v.toFixed(1)} ${unidadBase})` };
+  }
+  return { tarifa: hit.t };
+}
+
+function elegirDigitalAnalogico<T extends { Instrumento: string }>(
+  candidatas: T[],
+  item: ItemParaTarifa,
+): ResultadoTarifa<T> {
+  // No se mira item.instrumento: el nombre del desplegable dice "digital o analógico".
+  const texto = normalizar(
+    [item.fabricante, item.modelo, item.resolucion_division, item.documento_especificacion].join(' '),
+  );
+  const dice = { analog: /analog/.test(texto), digital: /digital/.test(texto) };
+
+  const tipoDe = (t: T): 'analogico' | 'digital' | null => {
+    const n = normalizar(t.Instrumento);
+    if (/analog/.test(n) && !/digital/.test(n)) return 'analogico';
+    if (/digital/.test(n) && !/analog/.test(n)) return 'digital';
+    return null;
+  };
+
+  const buscar = (tipo: 'analogico' | 'digital') => candidatas.find((t) => tipoDe(t) === tipo);
+
+  if (dice.analog !== dice.digital) {
+    const hit = buscar(dice.analog ? 'analogico' : 'digital');
+    if (hit) return { tarifa: hit };
+  }
+
+  const porDefecto = buscar('digital') ?? candidatas[0];
+  return {
+    tarifa: porDefecto,
+    advertencia: 'no se pudo saber si es digital o analógico (fabricante/modelo/resolución no lo dicen); se asumió digital',
+  };
+}
+
+/**
+ * 1) nombre exacto normalizado  2) alias de la OT / prefijo  3) si hay varias filas, criterio de la familia.
+ * `tarifas` debe venir ordenado por ID_TARIFA asc.
+ */
+function buscarTarifa<T extends { Instrumento: string }>(
+  tarifas: T[],
+  item: ItemParaTarifa,
+): ResultadoTarifa<T> {
+  const n = normalizar(item.instrumento);
+
+  const exacta = tarifas.find((t) => normalizar(t.Instrumento) === n);
+  if (exacta) return { tarifa: exacta };
+
+  const fam = FAMILIAS_N.find((f) => f.alias.includes(n));
+  const candidatas = fam
+    ? tarifas.filter((t) => fam.prefijos.some((p) => normalizar(t.Instrumento).startsWith(p)))
+    : tarifas.filter((t) => normalizar(t.Instrumento).startsWith(n));
+
+  if (candidatas.length === 0) return { tarifa: null, motivo: 'No existe en la matriz de tarifas' };
+  if (candidatas.length === 1) return { tarifa: candidatas[0] };
+
+  if (fam?.criterio === 'presion') {
+    return elegirPorRango(
+      candidatas,
+      extraerRango(item.unidad, item.intervalo_medicion, DOMINIO_PRESION),
+      rangoTarifaPresion,
+      'psi',
+    );
+  }
+  if (fam?.criterio === 'masa') {
+    return elegirPorRango(
+      candidatas,
+      extraerRango(item.unidad, item.intervalo_medicion, DOMINIO_MASA),
+      rangoTarifaMasa,
+      'g',
+    );
+  }
+  if (fam?.criterio === 'digital_analogico') {
+    return elegirDigitalAnalogico(candidatas, item);
+  }
+
+  // Varias coincidencias y sin criterio (texto libre del cliente).
+  const motivo = `Ambiguo: coincide con ${candidatas.length} tarifas (${nombresCortos(candidatas)})`;
+  return ESTRICTO_TARIFAS
+    ? { tarifa: null, motivo }
+    : { tarifa: candidatas[0], advertencia: `${motivo}; se asignó la primera, revisar` };
+}
+
 export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
   const { s3KeyTemp, mappingConfig, id_cotizacion, idUsuario, id_job } = payload;
   const rutaArchivoLocal = path.join(os.tmpdir(), `import-ote-${Date.now()}.xlsx`);
@@ -387,6 +713,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
     let idOtFinal = 0;
 
     const otsProcesadas: { id: number; codigo: string; esNueva: boolean }[] = [];
+    const advertencias: string[] = [];
     const recepcionesProcesadas: { id: number; codigo: string; esNueva: boolean }[] = [];
 
     await prisma.$transaction(async (tx) => {
@@ -417,6 +744,18 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       // ==============================================================
       // 4. VALIDACIÓN DE TARIFAS (reporte agregado, sin insertar nada si falla)
       // ==============================================================
+      const tarifasActivas = await tx.tarifas.findMany({
+        where: { ESTADO: 'ACTIVO' },
+        include: {
+          historial_tarifas: {
+            where: { FECHA_FIN: null },
+            orderBy: { FECHA_INICIO: 'desc' },
+            take: 1,
+          },
+        },
+        orderBy: { ID_TARIFA: 'asc' },
+      });
+
       const instrumentosSinTarifa: {
         item: string | number | null | undefined;
         instrumento: string;
@@ -424,50 +763,46 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       }[] = [];
 
       for (const item of datosExtraidos.tablas) {
-        const tarifa = await tx.tarifas.findFirst({
-          where: {
-            Instrumento: {
-              equals: item.instrumento,
-              mode: 'insensitive',
-            },
-            ESTADO: 'ACTIVO',
-          },
-          // Hacemos el JOIN con historial_tarifas para obtener el precio vigente.
-          include: {
-            historial_tarifas: {
-              where: { FECHA_FIN: null },
-              orderBy: { FECHA_INICIO: 'desc' },
-              take: 1,
-            }
-          },
-          orderBy: {
-            ID_TARIFA: 'asc',
-          },
-        });
+        const etiqueta = `Ítem ${item.item ?? '?'} (${item.instrumento})`;
+        const { tarifa, advertencia, motivo } = buscarTarifa(tarifasActivas, item);
 
         if (!tarifa) {
-          instrumentosSinTarifa.push({
-            item: item.item ?? null,
-            instrumento: item.instrumento,
-            motivo: 'No existe en la matriz de tarifas',
-          });
+          const m = motivo ?? 'No existe en la matriz de tarifas';
+          if (ESTRICTO_TARIFAS) {
+            instrumentosSinTarifa.push({
+              item: item.item ?? null,
+              instrumento: item.instrumento,
+              motivo: m,
+            });
+          } else {
+            advertencias.push(`${etiqueta}: ${m}. Se importó sin tarifa y con valor 0.`);
+          }
           continue;
         }
 
-        if (tarifa.historial_tarifas.length === 0) {
-          instrumentosSinTarifa.push({
-            item: item.item ?? null,
-            instrumento: item.instrumento,
-            motivo: 'Sin precio vigente en su historial de tarifas',
-          });
-          continue;
-        }
+        if (advertencia) advertencias.push(`${etiqueta}: ${advertencia}`);
 
         item.tarifa_id = tarifa.ID_TARIFA;
+        item.instrumento_tarifa = tarifa.Instrumento;
         item.magnitud_real = tarifa.MAGNITUD;
         item.tipo_servicio_real = tarifa.TIPO_SERVICIO;
-        item.valor_estimado = Number(tarifa.historial_tarifas[0].PRECIO_U);
         item.tipo_servicio = item.tipo_servicio_real;
+
+        const vigente = tarifa.historial_tarifas[0];
+        if (!vigente) {
+          if (ESTRICTO_TARIFAS) {
+            instrumentosSinTarifa.push({
+              item: item.item ?? null,
+              instrumento: item.instrumento,
+              motivo: 'Sin precio vigente en su historial de tarifas',
+            });
+          } else {
+            advertencias.push(`${etiqueta}: la tarifa no tiene precio vigente. Se importó con valor 0.`);
+          }
+          continue;
+        }
+
+        item.valor_estimado = Number(vigente.PRECIO_U);
       }
 
       if (instrumentosSinTarifa.length > 0) {
@@ -496,12 +831,9 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         for (const item of datosExtraidos.tablas) {
           const sitio = normalizarSitio(item.sitio);
           item.sitio = sitio;
-          const clave = [
-            item.instrumento?.trim().toLowerCase(),
-            item.tipo_servicio_real?.trim().toLowerCase(),
-            item.magnitud_real?.trim().toLowerCase(),
-            sitio,
-          ].join('|');
+          // Agrupa por tarifa resuelta (filas distintas de una familia = líneas distintas);
+          // los instrumentos sin tarifa se agrupan por su propio nombre.
+          const clave = [item.tarifa_id ?? `sin:${normalizar(item.instrumento)}`, sitio].join('|');
 
           const existente = itemsAgrupados.get(clave);
 
@@ -509,7 +841,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
             existente.cantidad += 1; // Agrupamos repeticiones
           } else {
             itemsAgrupados.set(clave, {
-              instrumento: item.instrumento,
+              instrumento: item.instrumento_tarifa ?? item.instrumento,
               tipo_servicio: item.tipo_servicio_real || 'NO ACREDITADO',
               magnitud: item.magnitud_real || 'N/A',
               sitio,
@@ -596,7 +928,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
         // 2. Instrumentos con cantidad exacta.
         const claveDetalle = (instrumento: string, tipo: string) =>
-          `${instrumento.trim().toLowerCase()}|${(tipo || '').trim().toLowerCase()}`;
+          `${familiaDe(instrumento)}|${normalizar(tipo)}`;
 
         const cantidadCotizada = new Map<string, number>();
         for (const d of cotizacionExistente.cotizacion_detalles) {
@@ -607,7 +939,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         const cantidadImportada = new Map<string, number>();
         for (const item of datosExtraidos.tablas) {
           const k = claveDetalle(
-            item.instrumento,
+            item.instrumento_tarifa ?? item.instrumento,
             item.tipo_servicio_real || item.tipo_servicio || '',
           );
           cantidadImportada.set(k, (cantidadImportada.get(k) ?? 0) + 1);
@@ -630,9 +962,11 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         }
 
         if (discrepancias.length > 0) {
-          throw new Error(
-            `Validación fallida: los instrumentos del archivo no coinciden con la cotización '${cotizacionExistente.CODIGO_COTIZACION}'. Detalle: ${JSON.stringify(discrepancias)}`,
-          );
+          const detalle = `los instrumentos del archivo no coinciden con la cotización '${cotizacionExistente.CODIGO_COTIZACION}'. Detalle: ${JSON.stringify(discrepancias)}`;
+          if (BLOQUEAR_DISCREPANCIA_COTIZACION) {
+            throw new Error(`Validación fallida: ${detalle}`);
+          }
+          advertencias.push(`Aviso: ${detalle}`);
         }
 
         codigoCotizacionFinal = cotizacionExistente.CODIGO_COTIZACION;
@@ -707,8 +1041,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
       const sitioPorClave = new Map<string, SitioCalibracion>();
       for (const d of detallesCotizacion) {
-        const inst = d.EQUIPO_DESCRIPCION.trim().toLowerCase();
-        const tipo = (d.TIPO_SERVICIO || '').trim().toLowerCase();
+        const inst = familiaDe(d.EQUIPO_DESCRIPCION);
+        const tipo = normalizar(d.TIPO_SERVICIO);
         const sitio = d.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
         if (tipo && !sitioPorClave.has(`${inst}|${tipo}`)) {
           sitioPorClave.set(`${inst}|${tipo}`, sitio);
@@ -720,8 +1054,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
       const resolverSitio = (item: ExtractedInstrument): SitioCalibracion => {
         if (item.sitio) return normalizarSitio(item.sitio);
-        const inst = item.instrumento.trim().toLowerCase();
-        const tipo = (item.tipo_servicio_real || item.tipo_servicio || '').trim().toLowerCase();
+        const inst = familiaDe(item.instrumento_tarifa ?? item.instrumento);
+        const tipo = normalizar(item.tipo_servicio_real || item.tipo_servicio || '');
         if (tipo) {
           const s = sitioPorClave.get(`${inst}|${tipo}`);
           if (s) return s;
@@ -917,6 +1251,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       data: {
         status: 'COMPLETED',
         fileUrl: s3KeyDefinitiva,
+        data: { advertencias },
       },
     });
 
@@ -924,6 +1259,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       success: true,
       fileUrl: s3KeyDefinitiva,
       idUsuario,
+      advertencias,
       triggers: [
         isCotizacionNueva
           ? {
