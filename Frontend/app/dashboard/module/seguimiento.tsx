@@ -11,6 +11,7 @@ import {
   eliminarSeguimiento,
 } from "@/app/action_module/seguimiento";
 import { useSession } from "next-auth/react";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 
 const tipoIcono: Record<string, React.ReactNode> = {
   LLAMADA: <Phone size={13} />,
@@ -28,6 +29,8 @@ export default function SeguimientoComercial() {
   const { loadTable } = useDbActions();
   const loading = useDbLoading("cotizaciones");
   const { data: session } = useSession();
+  const { can } = usePermissions();
+  const puedeGestionar = can("cotizaciones", "crear_editar");
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -60,9 +63,16 @@ export default function SeguimientoComercial() {
 
   const seguimientosDeCotizacion = useMemo(() => {
     if (!selectedId) return [];
-    const base = seguimientos.filter((s) => s.idCotizacion === selectedId);
-    const extras = local.filter((s) => s.idCotizacion === selectedId);
-    return [...extras, ...base].sort(
+    // Deduplicar por idSeguimiento: el realtime ya inserta en el store la fila
+    // creada por la API, y `local` podía volver a añadirla (doble aparición).
+    const mapa = new Map<number, SeguimientoComercialModel>();
+    for (const s of seguimientos) {
+      if (s.idCotizacion === selectedId) mapa.set(s.idSeguimiento, s);
+    }
+    for (const s of local) {
+      if (s.idCotizacion === selectedId) mapa.set(s.idSeguimiento, s);
+    }
+    return Array.from(mapa.values()).sort(
       (a, b) => new Date(b.fechaGestion).getTime() - new Date(a.fechaGestion).getTime()
     );
   }, [selectedId, seguimientos, local]);
@@ -200,6 +210,7 @@ export default function SeguimientoComercial() {
                   placeholder="Resultado (opcional)"
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs outline-none focus:border-[#5680F9]"
                 />
+                {puedeGestionar && (
                 <button
                   onClick={agregarSeguimiento}
                   disabled={saving || !form.descripcion.trim()}
@@ -207,6 +218,7 @@ export default function SeguimientoComercial() {
                 >
                   <Plus size={14} /> {saving ? "Guardando..." : "Registrar gestión"}
                 </button>
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto space-y-2">
@@ -229,6 +241,7 @@ export default function SeguimientoComercial() {
                           <p className="text-[10px] text-slate-400 mt-1">Próxima gestión: {formatoFecha(s.proximaGestion)}</p>
                         )}
                       </div>
+                      {puedeGestionar && (
                       <button
                         onClick={() => borrarSeguimiento(s.idSeguimiento)}
                         className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
@@ -236,6 +249,7 @@ export default function SeguimientoComercial() {
                       >
                         <Trash2 size={14} />
                       </button>
+                      )}
                     </div>
                   ))
                 )}

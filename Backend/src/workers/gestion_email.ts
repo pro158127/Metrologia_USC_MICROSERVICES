@@ -25,16 +25,19 @@ const minioClient = new MinioClient({
 });
 const BUCKET_NAME = 'documentos-metrologia';
 
-// 2. Configuración de Transporte SMTP (Validado con Google)
+// 2. Configuración de Transporte SMTP (unificado con variables SMTP_* y
+//    fallback a las variables OUTLOOK_* usadas históricamente).
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
+  host: process.env.SMTP_HOST || "smtp.gmail.com",
+  port: parseInt(process.env.SMTP_PORT || '587', 10),
   secure: false, // Soporte para STARTTLS
   auth: {
-    user: process.env.OUTLOOK_USER, // Sigue usando tu variable de entorno existente
-    pass: process.env.OUTLOOK_APP_PASSWORD,
+    user: process.env.SMTP_USER || process.env.OUTLOOK_USER,
+    pass: process.env.SMTP_PASSWORD || process.env.OUTLOOK_APP_PASSWORD,
   }
 });
+
+const EMAIL_FROM = process.env.SMTP_USER || process.env.OUTLOOK_USER || 'Soporte Metrología USC';
 
 // 3. Compilador de Plantillas Handlebars
 const renderHtml = (templateType: string, contextData: any): string => {
@@ -111,7 +114,7 @@ export const emailWorker = new Worker<EmailJobData>(
 
       // Ejecutar envío mediante Nodemailer
       const info = await transporter.sendMail({
-        from: process.env.OUTLOOK_USER, 
+        from: EMAIL_FROM, 
         to: to,
         subject: subject,
         html: htmlContent,

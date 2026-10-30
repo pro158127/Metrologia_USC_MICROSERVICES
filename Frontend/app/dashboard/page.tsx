@@ -4,6 +4,8 @@
 import React, { useCallback, useState } from "react";
 import { signOut } from "next-auth/react";
 import { Sidebar, ModuleKey } from "./components/sidebar";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { permisionMapping } from "@/app/lib/permissions/mapping";
 import { Header } from "./components/Header";
 import { Administracion } from "./module/Administracion";
 import ClientMainRenderer from "./module/gestion_clientes/page";
@@ -123,12 +125,21 @@ const ModuloActivo = ({
 
 export const MainRenderer = () => {
 
-
+  const { hasModule } = usePermissions();
 
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
   const [cliente, setCliente] = useState<number | null>(null);
   const [otToOpen, setOtToOpen] = useState<number | null>(null);
+
+  const puedeVer = useCallback((m: ModuleKey) => {
+    const key = permisionMapping[m];
+    return key === true || hasModule(key as string);
+  }, [hasModule]);
+
+  const navegarSeguro = useCallback((m: ModuleKey) => {
+    setActiveModule(puedeVer(m) ? m : "dashboard");
+  }, [puedeVer]);
 
 
   useEffect(() => {
@@ -172,7 +183,7 @@ const handleOpenOt = useCallback((id: number) => {
       {/* 2. Menú Lateral */}
       <Sidebar
         activeModule={activeModule}
-        onNavigate={(m) => setActiveModule(m)}
+        onNavigate={navegarSeguro}
         onLogout={handleLogout}
         isOpen={isSidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -187,10 +198,21 @@ const handleOpenOt = useCallback((id: number) => {
         />
 
         <main className="flex-1 overflow-auto bg-[#eff5ff]">
-          <ModuloActivo modulo={activeModule}   clienteId={cliente}
-  onSelectCliente={handleSelectCliente}
-  onVolver={handleVolverClientes}  onNavigarte={(m:ModuleKey) => setActiveModule(m)}
-  otToOpen={otToOpen} onOpenOt={handleOpenOt} />
+          {puedeVer(activeModule) ? (
+            <ModuloActivo
+              modulo={activeModule}
+              clienteId={cliente}
+              onSelectCliente={handleSelectCliente}
+              onVolver={handleVolverClientes}
+              onNavigarte={navegarSeguro}
+              otToOpen={otToOpen}
+              onOpenOt={handleOpenOt}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-400">
+              No tienes permisos para acceder a este módulo.
+            </div>
+          )}
         </main>
       </div>
 

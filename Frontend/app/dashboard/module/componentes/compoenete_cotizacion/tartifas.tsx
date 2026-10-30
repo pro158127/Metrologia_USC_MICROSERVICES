@@ -14,6 +14,7 @@ import {
  Upload
 } from "lucide-react";
 import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   obtenerTodasLasTarifas,
   crearTarifa,
@@ -57,6 +58,8 @@ const CatalogHeaderControls = ({
   tiposServicioDisponibles,
   onOpenCreate,
 }: CatalogHeaderControlsProps) => {
+  const { can } = usePermissions();
+  const puedeGestionar = can("cotizaciones", "gestionar_catalogo_tarifas");
 
 const handleButton_tarifas = async () => {
     try {
@@ -113,6 +116,7 @@ const handleButton_tarifas = async () => {
   <div className="flex items-center gap-2 self-end sm:self-auto">
     
     {/* Botón Secundario (Importar) */}
+    {puedeGestionar && (
     <button
       onClick={async ()=>{const  v=handleButton_tarifas();
         const res=await v
@@ -128,8 +132,10 @@ const handleButton_tarifas = async () => {
       <Upload size={15} />
       <span>Importar tarifas</span>
     </button>
+    )}
 
     {/* Botón Primario (Nuevo Ítem) */}
+    {puedeGestionar && (
     <button
       onClick={() => { onOpenCreate(); }}
       className="flex items-center gap-1.5 px-4 py-2 bg-[#5680F9] hover:bg-blue-600 text-white font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap"
@@ -137,6 +143,7 @@ const handleButton_tarifas = async () => {
       <Plus size={15} />
       <span>Nuevo Ítem</span>
     </button>
+    )}
     
   </div>
 </div>
@@ -475,6 +482,8 @@ const CatalogRow = ({
   onToggleStatus,
   onViewHistory,
 }: CatalogRowProps) => {
+  const { can } = usePermissions();
+  const puedeGestionar = can("cotizaciones", "gestionar_catalogo_tarifas");
   return (
     <tr className="hover:bg-slate-50/60 transition-colors">
       <td className="px-4 py-3 align-top">
@@ -505,22 +514,26 @@ const CatalogRow = ({
       </td>
       <td className="px-4 py-3 align-top">
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onEdit(item)}
-            className="p-2 text-slate-500 hover:text-[#5680F9] hover:bg-blue-50 rounded-lg transition"
-            title="Editar"
-          >
-            <Edit3 size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => onToggleStatus(item.idTarifa, item.estado)}
-            className={`p-2 rounded-lg transition ${item.estado === "ACTIVO" ? "text-emerald-600 hover:bg-emerald-50" : "text-rose-600 hover:bg-rose-50"}`}
-            title={item.estado === "ACTIVO" ? "Desactivar" : "Activar"}
-          >
-            <Power size={14} />
-          </button>
+          {puedeGestionar && (
+            <button
+              type="button"
+              onClick={() => onEdit(item)}
+              className="p-2 text-slate-500 hover:text-[#5680F9] hover:bg-blue-50 rounded-lg transition"
+              title="Editar"
+            >
+              <Edit3 size={14} />
+            </button>
+          )}
+          {puedeGestionar && (
+            <button
+              type="button"
+              onClick={() => onToggleStatus(item.idTarifa, item.estado)}
+              className={`p-2 rounded-lg transition ${item.estado === "ACTIVO" ? "text-emerald-600 hover:bg-emerald-50" : "text-rose-600 hover:bg-rose-50"}`}
+              title={item.estado === "ACTIVO" ? "Desactivar" : "Activar"}
+            >
+              <Power size={14} />
+            </button>
+          )}
         </div>
       </td>
     </tr>

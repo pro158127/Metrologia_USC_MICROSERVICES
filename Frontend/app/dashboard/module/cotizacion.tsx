@@ -32,6 +32,7 @@ import type {
 } from "@/tipos/cotizacion";
 import { transicionesValidas } from "@/tipos/cotizacion";
 import { useSession } from "next-auth/react";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 
 // ==========================================
 // Tipos y Estilos
@@ -61,6 +62,9 @@ const HeaderBar = ({
   setStep,
   onNewQuote,
 }: HeaderBarProps) => {
+  const { can } = usePermissions();
+  const puedeGestionarTarifas = can("cotizaciones", "gestionar_catalogo_tarifas");
+  const puedeCrearEditar = can("cotizaciones", "crear_editar");
   return (
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-3">
@@ -78,18 +82,22 @@ const HeaderBar = ({
       </div>
       {view === "list" && (
         <div className="flex gap-2">
-          <button
-            onClick={() => setView("catalog")}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 bg-white text-xs font-bold cursor-pointer hover:bg-slate-50 transition-colors"
-          >
-            Catálogo de tarifas
-          </button>
-          <button
-            onClick={onNewQuote || (() => setView("create"))}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#5680F9] text-white text-xs font-bold border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-[0_2px_8px_rgba(86,128,249,0.25)]"
-          >
-            <Plus size={15} /> Nueva cotización
-          </button>
+          {puedeGestionarTarifas && (
+            <button
+              onClick={() => setView("catalog")}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-500 bg-white text-xs font-bold cursor-pointer hover:bg-slate-50 transition-colors"
+            >
+              Catálogo de tarifas
+            </button>
+          )}
+          {puedeCrearEditar && (
+            <button
+              onClick={onNewQuote || (() => setView("create"))}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#5680F9] text-white text-xs font-bold border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-[0_2px_8px_rgba(86,128,249,0.25)]"
+            >
+              <Plus size={15} /> Nueva cotización
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -229,6 +237,9 @@ const QuotationListTable = ({
   onEstadoChange,
   updatingId,
 }: QuotationListTableProps) => {
+  const { can } = usePermissions();
+  const puedeGestionarEstado =
+    can("cotizaciones", "aprobar_rechazar") || can("cotizaciones", "enviar_al_cliente");
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden">
       <table className="w-full text-left text-xs">
@@ -248,7 +259,7 @@ const QuotationListTable = ({
                 <td className="py-3 px-4 text-slate-600 font-medium">{c.cliente?.razonSocial || "N/A"}</td>
                 <td className="py-3 px-4 font-mono font-bold text-slate-700">{formatCurrency(c.montoTotal)}</td>
                 <td className="py-3 px-4">
-                  {posiblesTransiciones.length > 0 ? (
+                  {puedeGestionarEstado && posiblesTransiciones.length > 0 ? (
                     <select
                       value={c.estado}
                       onChange={(e) => onEstadoChange(c.idCotizacion, e.target.value as Estados)}
@@ -310,6 +321,8 @@ const QuotationDetailView = ({
   onopentable,
 }: QuotationDetailViewProps) => {
   const historial: HistorialItem[] = historialitems || [];
+  const { can } = usePermissions();
+  const puedeVersionar = can("cotizaciones", "crear_version_corregida");
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] p-6 mt-6 animate-in slide-in-from-bottom-2 duration-200">
@@ -322,9 +335,11 @@ const QuotationDetailView = ({
                  <button type="button" onClick={onopentable} className="rounded-xl bg-[#5680F9] px-3 py-2 text-xs font-bold text-white hover:bg-[#4069E2] transition-colors shadow-sm shadow-[#5680F9]/10">
             Mostrar cambios
           </button>
-          <button type="button" onClick={openVersionModal} className="rounded-xl bg-[#5680F9] px-3 py-2 text-xs font-bold text-white hover:bg-[#4069E2] transition-colors shadow-sm shadow-[#5680F9]/10">
-            Generar nueva versión
-          </button>
+          {puedeVersionar && (
+            <button type="button" onClick={openVersionModal} className="rounded-xl bg-[#5680F9] px-3 py-2 text-xs font-bold text-white hover:bg-[#4069E2] transition-colors shadow-sm shadow-[#5680F9]/10">
+              Generar nueva versión
+            </button>
+          )}
           <button type="button" onClick={() => setSelectedQuotation(null)} className="rounded-xl bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 transition-colors">
             Cerrar visualización
           </button>
@@ -396,6 +411,9 @@ const CreateQuotationWizard = ({
   getInstrumentosByMagnitudAndTipo,
 }: CreateQuotationWizardProps) => {
   const clientes = useDbTable("clientes");
+  const { can } = usePermissions();
+  const puedeCrearEditar = can("cotizaciones", "crear_editar");
+  const puedeEnviar = can("cotizaciones", "enviar_al_cliente");
   const [search, setSearch] = useState<string>("");
 
   const filteredClientes: ClienteModel[] = useMemo(() => {
@@ -511,6 +529,7 @@ const CreateQuotationWizard = ({
           </button>
         ) : (
    <div className="flex gap-3">
+  {puedeCrearEditar && (
   <button
     onClick={() => guardarCotizacion(Estados.BORRADOR)}
     disabled={isSaving || items.length === 0}
@@ -518,6 +537,8 @@ const CreateQuotationWizard = ({
   >
     {isSaving ? "Guardando..." : "Guardar como borrador"}
   </button>
+  )}
+  {puedeEnviar && (
   <button
     onClick={() => guardarCotizacion(Estados.ENVIADA)}
     disabled={isSaving || items.length === 0}
@@ -525,6 +546,7 @@ const CreateQuotationWizard = ({
   >
     {isSaving ? "Enviando..." : "Enviar cotización"}
   </button>
+  )}
 </div>
         )}
       </div>
@@ -639,7 +661,6 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
 // COMPONENTE PRINCIPAL
 // ==========================================
 
-import { obtenerUsuariosPorPermiso } from "@/app/action_module/administration";
 import { HistorialCambioItem } from "@/tipos/cotizacion";
 export default function Cotizaciones() {
 
@@ -665,16 +686,9 @@ export default function Cotizaciones() {
   const [modalDescuento, setModalDescuento] = useState<number>(0);
   const [modalViaticos, setModalViaticos] = useState<number>(0);
   const [toast, setToast] = useState("");
-  const roles=useDbTable("roles");
   const [isOpenTable,setOpenTable]=useState(false)
   const [rejectTargetId, setRejectTargetId] = useState<number | null>(null);
   const [rejectMotivo, setRejectMotivo] = useState("");
-
-    const rolesMap = useMemo(() => {
-      const map = new Map<number, string>();
-      roles?.forEach((r) => map.set(Number(r.idRol), r.nombreRol));
-      return map;
-    }, [roles]);
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================

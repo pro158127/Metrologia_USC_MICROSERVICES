@@ -2,9 +2,17 @@ import NextAuth from "next-auth"
 import Credentials from "next-auth/providers/credentials"
 import { authConfig } from "./auth.config"
 import { CredentialsSignin } from "next-auth"
-import { obtenerIpCliente } from "@/app/action_module/administration"
 import { encode } from "next-auth/jwt"
 import { BASE_URL } from "@/app/lib/api/fastifyClient"
+import { headers } from "next/headers"
+
+function obtenerIpClienteLocal(h: Headers): string {
+  const xForwardedFor = h.get("x-forwarded-for");
+  let ip = xForwardedFor ? xForwardedFor.split(",")[0].trim() : (h.get("x-real-ip") || "127.0.0.1");
+  if (ip.startsWith("::ffff:")) ip = ip.replace("::ffff:", "");
+  if (ip === "::1") ip = "127.0.0.1";
+  return ip;
+}
 
 export class CustomAuthError extends CredentialsSignin {
   code: string
@@ -28,7 +36,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       async authorize(credentials) {
         const email = credentials.email as string
         const password = credentials.password as string
-        const ip = await obtenerIpCliente()
+        const ip = obtenerIpClienteLocal(await headers())
 
         const res = await fetch(`${BASE_URL}/api/v1/auth/credentials`, {
           method: "POST",

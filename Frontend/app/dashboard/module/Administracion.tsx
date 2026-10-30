@@ -186,6 +186,8 @@ function RenderTabUsuarios({
   showToast,
   rolColors,
 }: TabUsuariosProps) {
+  const { can } = usePermissions();
+  const puedeGestionarUsuarios = can("administracion", "gestionar_usuarios_roles");
   const [loadingResetId,setLoadingResetId] =
 useState<number | null>(null);
 const [showDeleted, setShowDeleted] = useState(false);
@@ -225,6 +227,7 @@ console.log(userdelted,"esto es  ")
           <span style={{ color: "#475569", fontSize: 13, fontWeight: 500 }}>
             {filteredUsers.length} usuarios
           </span>
+          {puedeGestionarUsuarios && (
           <button
             onClick={openCreate}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg transition-all"
@@ -239,6 +242,7 @@ console.log(userdelted,"esto es  ")
           >
             <Plus size={15} /> Nuevo usuario
           </button>
+          )}
         </div>
       </div>
 
@@ -415,6 +419,7 @@ console.log(userdelted,"esto es  ")
 
         <td className="px-6 py-4">
 
+        {puedeGestionarUsuarios ? (
         <button
         onClick={()=>toggleEstado(
           u.idUsuario,
@@ -469,6 +474,9 @@ console.log(userdelted,"esto es  ")
 
 
         </button>
+        ) : (
+          <span className="text-xs font-semibold">{u.estado ? "Activo" : "Inactivo"}</span>
+        )}
 
         </td>
 
@@ -503,6 +511,7 @@ console.log(userdelted,"esto es  ")
 
         {/* editar */}
 
+        {puedeGestionarUsuarios && (
         <button
         onClick={()=>openEdit(u)}
         className="
@@ -530,11 +539,13 @@ console.log(userdelted,"esto es  ")
         Editar
 
         </button>
+        )}
 
 
 
         {/* reset password */}
 
+        {puedeGestionarUsuarios && (
         <button
         disabled={
           loadingResetId===u.idUsuario
@@ -624,12 +635,14 @@ console.log(userdelted,"esto es  ")
 
 
         </button>
+        )}
 
 
 
 
         {/* eliminar */}
 
+        {puedeGestionarUsuarios && (
         <button
         disabled={
           elemianarloading==u.idUsuario
@@ -717,6 +730,7 @@ console.log(userdelted,"esto es  ")
         
 
         </button>
+        )}
 
 
         </div>
@@ -853,6 +867,7 @@ console.log(userdelted,"esto es  ")
 
     <td className="px-6 py-4">
 
+        {puedeGestionarUsuarios && (
         <button
         
             className="px-3 py-2 rounded-xl cursor-pointer"
@@ -881,8 +896,9 @@ console.log(userdelted,"esto es  ")
           {loadingrestaurar===u.idUsuario ? <p>restaurando....</p>:<p>restaurar</p>}
            
 
-            
+             
         </button>
+        )}
 
     </td>
 
@@ -1401,11 +1417,14 @@ const SettingsIcon = ({ className }: { className?: string }) => (
 );
 
 export default function RenderTabConfiguracion({ configSection, setConfigSection }: TabConfiguracionProps) {
+  const { can } = usePermissions();
   const menuItems = [
-    { key: "plantillas", label: "Plantillas de documentos", icon: DocumentIcon },
-    { key: "sello", label: "Sello y marca de agua", icon: StampIcon },
-    { key: "parametros", label: "Parámetros del sistema", icon: SettingsIcon },
+    { key: "plantillas", label: "Plantillas de documentos", icon: DocumentIcon, permitido: can("administracion", "configurar_plantillas_documentos") },
+    { key: "sello", label: "Sello y marca de agua", icon: StampIcon, permitido: can("firma_sello_y_certificacion", "configurar_sello_logo_plantilla") },
+    { key: "parametros", label: "Parámetros del sistema", icon: SettingsIcon, permitido: can("administracion", "configurar_catalogo_parametros") },
   ] as const;
+
+  const itemsVisibles = menuItems.filter((item) => item.permitido);
 
   return (
     <div className="flex flex-col gap-6 w-full">
@@ -1414,7 +1433,7 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
         aria-label="Pestañas de configuración"
         className="flex items-center p-1 gap-1 w-full overflow-x-auto rounded-xl bg-slate-100/80 border border-slate-200/60 backdrop-blur-sm scrollbar-none"
       >
-        {menuItems.map((item) => {
+        {itemsVisibles.map((item) => {
           const isActive = configSection === item.key;
           const Icon = item.icon;
 
@@ -1446,9 +1465,9 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
       {/* Área de contenido */}
       <div className="flex-1 w-full min-w-0 transition-opacity duration-300 ease-in-out">
         <div key={configSection} className="animate-fade-in-up">
-          {configSection === "plantillas" && <RenderConfigPlantillas />}
-          {configSection === "sello" && <RenderConfigSello />}
-          {configSection === "parametros" && <RenderConfigParametros />}
+          {configSection === "plantillas" && can("administracion", "configurar_plantillas_documentos") && <RenderConfigPlantillas />}
+          {configSection === "sello" && can("firma_sello_y_certificacion", "configurar_sello_logo_plantilla") && <RenderConfigSello />}
+          {configSection === "parametros" && can("administracion", "configurar_catalogo_parametros") && <RenderConfigParametros />}
         </div>
       </div>
     </div>
@@ -1532,9 +1551,9 @@ function RenderConfigParametros() {
 // 4. COMPONENTE PRINCIPAL
 // ==========================================
 
-import { module_permission } from "@/app/server_component/controlle_permission";
 import { useSession } from "next-auth/react";
 import { generarTokenBackend } from "@/app/lib/auth-token";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 // 🔄 Reemplazar useDbRealtime por los nuevos hooks
 import { UsuarioModel, useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import { warn } from "console";
@@ -1555,15 +1574,13 @@ export function Administracion() {
   const [tokenPromise, setTokenPromise] = useState("");
 
   const { data: session } = useSession();
+  const { can, canAny } = usePermissions();
 
   // Store Subscriptions
   const usuarios = useDbTable("usuarios");
   const roles = useDbTable("roles");
   const { loadAllData, loadTable } = useDbActions();
   const loadingUsuarios = useDbLoading("usuarios");
-
-  const permisos = session?.user?.permissions;
-  const permission = useMemo(() => module_permission(permisos), [permisos]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -1580,13 +1597,14 @@ export function Administracion() {
   // 2. Permisos memorizados para evitar re-calculo y loops en useEffect
   const tab_permission = useMemo(() => {
     return {
-      usuarios: !!permission?.administracion?.gestionar_usuarios_roles,
-      bitacora: !!permission?.administracion?.consultar_bitacora_auditoria,
-      config:
-        !!permission?.administracion?.configurar_catalogo_parametros ||
-        !!permission?.administracion?.configurar_plantillas_documentos,
+      usuarios: can("administracion", "gestionar_usuarios_roles"),
+      bitacora: can("administracion", "consultar_bitacora_auditoria"),
+      config: canAny("administracion", [
+        "configurar_catalogo_parametros",
+        "configurar_plantillas_documentos",
+      ]),
     };
-  }, [permission]);
+  }, [can, canAny]);
 
   // 3. Creación de Token de Sesión
   useEffect(() => {
@@ -1599,7 +1617,7 @@ export function Administracion() {
       user: {
         id: session?.user?.id_user ?? "",
         email: session?.user?.email ?? "",
-        permissions: { permisos: { administracion: { consultar_bitacora_auditoria: true } } },
+        permissions: session?.user?.permissions ?? {},
       },
     }).then((t) => {
       if (isMounted && t) setTokenPromise(t);

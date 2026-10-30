@@ -59,6 +59,27 @@ export async function inferirPlantillaSello(
   return match ?? candidatos[0] ?? null;
 }
 
+/**
+ * Selecciona la plantilla de sello conectada al instrumento evaluado:
+ *   - acreditado    -> ID 1 ("Sello Acreditado")
+ *   - no acreditado -> ID 2 ("Sello No Acreditado")
+ * Si los IDs 1/2 no existen en el entorno, se recurre a la inferencia por nombre.
+ */
+export async function seleccionarPlantillaSello(
+  prisma: PrismaClient,
+  tipoServicio?: string | null
+) {
+  const acreditado = esAcreditado(tipoServicio);
+  const idDeseado = acreditado ? 1 : 2;
+
+  const porId = await prisma.plantillas_sellos.findUnique({
+    where: { ID_PLANTILLA_SELLO: idDeseado },
+  });
+  if (porId) return porId;
+
+  return inferirPlantillaSello(prisma, tipoServicio);
+}
+
 /** Compila plantilla + documento y sube el PDF resultante a MinIO. */
 export async function composeCertificateToMinio(data: CertificateComposeJobData) {
   const [templateBuffer, documentBuffer] = await Promise.all([
@@ -136,7 +157,7 @@ export async function generarCertificadoFinal(
 
   const plantilla = selloId
     ? await prisma.plantillas_sellos.findUnique({ where: { ID_PLANTILLA_SELLO: selloId } })
-    : await inferirPlantillaSello(prisma, tipoServicio);
+    : await seleccionarPlantillaSello(prisma, tipoServicio);
 
   if (!plantilla || !plantilla.TEMPLATE_PDF_KEY) {
     // Sin plantilla configurada no se puede sellar; se conserva el documento original.

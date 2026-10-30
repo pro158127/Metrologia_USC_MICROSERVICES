@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { Download, Search, FileText } from "lucide-react";
 import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import type { BarChartData, ConversionData, TecnicoResumen, CertificadoHistorico, Kpi, AuditTraceabilityRow, AuditTraceabilityReportProps } from "@/tipos/reportes";
 
 // Reusable Tailwind Style Maps (Sugerencia por alta repetibilidad de inputs/selects)
@@ -38,11 +39,14 @@ const mesesUltimos = (n: number): string[] => {
 // 2. Declaración de Componentes Hijos (Extraídos)
 
 const HeaderSection: React.FC = () => {
+  const { can } = usePermissions();
+  const puedeExportar = can("reportes_y_consolidados", "exportar_base_de_datos");
   return (
     <div className="flex items-center justify-between mb-6">
       <h1 className="text-xl font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
         Reportes y Consolidados
       </h1>
+      {puedeExportar && (
       <div className="flex gap-2">
         <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-slate-600 border border-slate-200 text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-sm">
           <Download size={14} /> Exportar PDF
@@ -51,6 +55,7 @@ const HeaderSection: React.FC = () => {
           <Download size={14} /> Exportar Excel
         </button>
       </div>
+      )}
     </div>
   );
 };
@@ -295,6 +300,8 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
   onGenerateReport,
   filas,
 }) => {
+  const { can } = usePermissions();
+  const puedeGenerar = can("reportes_y_consolidados", "generar_consolidado_ventas");
   return (
     <div className="rounded-[20px] border border-slate-100 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] mb-6">
       <div className="text-sm font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3 mb-1">
@@ -313,12 +320,14 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
             className={`w-full pl-9 pr-4 ${inputBaseStyles}`}
           />
         </div>
+        {puedeGenerar && (
         <button
           onClick={onGenerateReport}
           className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#5680F9] text-white hover:bg-blue-600 font-semibold text-xs transition-all cursor-pointer shadow-sm"
         >
           Generar reporte auditoría
         </button>
+        )}
       </div>
 
       {showTrazabilidad && (

@@ -74,13 +74,36 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         path: "/socket.io",
         query: { userId: String(userIdValido) },
         transports: ["websocket", "polling"],
-        reconnectionAttempts: 5,
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 10000,
+        timeout: 20000,
       });
     socketRef.current = nuevoSocket;
 
+    // Re-sincroniza salas y estado pendiente tras (re)conexión.
+    const sincronizarRealtime = () => {
+      nuevoSocket.emit("join_room", userIdValido);
+      const store = useDbStore.getState();
+      // Forzar recarga de las tablas que pueden quedar desactualizadas
+      // si se perdieron eventos durante la desconexión/suspensión.
+      const tablasClave: (keyof RealtimeTablesState)[] = [
+        "usuarios",
+        "cotizaciones",
+        "clientes",
+        "ordenes_trabajo",
+        "recepciones_equipo",
+        "facturas",
+        "seguimientos_comerciales",
+        "certificados",
+      ];
+      tablasClave.forEach((t) => store.loadTable(t, true));
+    };
+
     nuevoSocket.on("connect", () => {
       setSocket(nuevoSocket);
-      nuevoSocket.emit("join_room", userIdValido);
+      sincronizarRealtime();
     });
  nuevoSocket.on("job_plantilla_terminado", (payload) => {
       console.warn("🔔 EVENTO EN NAVEGADOR:", payload);
@@ -149,7 +172,25 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
     nuevoSocket.on("disconnect", () => console.warn("🔌 Desconectado"));
 
+    // Al volver a la pestaña, forzar reconexión y re-sincronización si la
+    // conexión se suspendió mientras la pestaña estuvo oculta.
+    const manejarVisibilidad = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!nuevoSocket.connected) {
+        nuevoSocket.connect();
+      } else {
+        sincronizarRealtime();
+      }
+    };
+    const manejarOnline = () => {
+      if (!nuevoSocket.connected) nuevoSocket.connect();
+    };
+    document.addEventListener("visibilitychange", manejarVisibilidad);
+    window.addEventListener("online", manejarOnline);
+
     return () => {
+      document.removeEventListener("visibilitychange", manejarVisibilidad);
+      window.removeEventListener("online", manejarOnline);
       nuevoSocket.disconnect();
       socketRef.current = null;
     };

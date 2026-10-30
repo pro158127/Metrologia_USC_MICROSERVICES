@@ -200,6 +200,8 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   estadoActual, // <-- Nuevo prop
 }) => {
  const puedeAsignar = estadoActual === "En_recepción";
+ const { can } = usePermissions();
+ const tienePermisoAsignar = can("ordenes_de_trabajo", "asignar_tecnico");
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
@@ -214,7 +216,7 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
         </div>
         
         {/* Renderizado condicional basado en el estado */}
-        {puedeAsignar ? (
+        {puedeAsignar && tienePermisoAsignar ? (
           <button
             onClick={() => setEditingTechnician(!editingTechnician)}
             className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-700 transition cursor-pointer border-none shadow-sm"
@@ -223,7 +225,7 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
           </button>
         ) : (
           <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
-            Asignación bloqueada (la OT no está "En recepción")
+            Asignación no disponible
           </span>
         )}
       </div>
@@ -618,6 +620,8 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   onRemoveInstrument,
   tarifas,
 }) => {
+  const { can } = usePermissions();
+  const puedeEditar = can("ordenes_de_trabajo", "crear_editar");
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     datosCertificado: true,
     instrumentos: true,
@@ -669,12 +673,14 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
             Edición en caliente estructurada según la disposición jerárquica del Excel original.
           </p>
         </div>
+        {puedeEditar && (
         <button
           onClick={() => setEditingOrder(!editingOrder)}
           className="bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-slate-800 cursor-pointer border-none shadow-sm transition"
         >
           {editingOrder ? 'Bloquear Edición' : 'Habilitar Campos del Formulario'}
         </button>
+        )}
       </div>
 
       {editingOrder && (
@@ -949,6 +955,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
 
           {/* Botón guardar */}
           <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+            {puedeEditar && (
             <button
               type="button"
               onClick={saveOrderEdits}
@@ -956,6 +963,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
             >
               Consolidar Orden R-CM05
             </button>
+            )}
           </div>
         </div>
       )}
@@ -1340,6 +1348,7 @@ export const TreeView: React.FC<{
 // ==========================================
 import { obtenerDatosIniciales } from "@/app/action_module/ordenes";
 import { useDbTable, useDbActions, useDbLoading, OrdenTrabajoModel, UsuarioModel, CotizacionModel, RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
   const usuarios = useDbTable("usuarios");

@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
-import argon2 from 'argon2';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { verifyPassword } from '../services/password.service.js';
 import {
   loginBodySchema,
   respuestaLoginSchema,
@@ -37,7 +37,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         throw new AppError(401, 'Usuario bloqueado o inactivo', 'user_blocked_or_inactive');
       }
 
-      const passwordMatch = await argon2.verify(user.contrase_a, password);
+      const passwordMatch = await verifyPassword(user.contrase_a, password);
       if (!passwordMatch) {
         const nuevosIntentos = user.intentos + 1;
         if (nuevosIntentos >= 3) {

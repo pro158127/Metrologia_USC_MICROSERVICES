@@ -13,6 +13,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   obtenerCertificadosRevision,
   aprobarCertificado,
@@ -469,9 +470,15 @@ function mapRevision(data: CertificadoRevisionItem[]): CertificadoRevision[] {
 
 export function RevisionCertificados() {
   const { data: session } = useSession();
+  const { can } = usePermissions();
   const rol = (session?.user?.role as string) || "Sin rol";
-  const permisosRevision = session?.user?.permissions?.permisos?.revision;
 
+  const tienePermisosRevision = Boolean(
+    can("revision", "revisar_aprobar_acreditados") ||
+      can("revision", "revisar_aprobar_no_acreditados") ||
+      rol === "Director Técnico" ||
+      rol === "Coordinadora"
+  );
   const [certsRaw, setCertsRaw] = useState<CertificadoRevision[]>([]);
   const [cargando, setCargando] = useState(true);
   const [selected, setSelected] = useState<number | null>(null);
@@ -482,13 +489,6 @@ export function RevisionCertificados() {
   const [toast, setToast] = useState("");
   const [sortField, setSortField] = useState<SortField>("espera");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-
-  const tienePermisosRevision = Boolean(
-    permisosRevision?.revisar_aprobar_acreditados ||
-      permisosRevision?.revisar_aprobar_no_acreditados ||
-      rol === "Director Técnico" ||
-      rol === "Coordinadora"
-  );
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);

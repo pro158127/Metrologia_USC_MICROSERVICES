@@ -189,7 +189,9 @@ export type EmailTemplateType =
   | 'bienvenida_cliente'
   | 'aproved'
   | 'crear_ot'
-  | 'envia_certifiados'; // Agrega los que necesites
+  | 'envia_certifiados'
+  | 'crear_usuario'
+  | 'restablecer_contrasena'; // Agrega los que necesites
 
 // 2. Interfaz estricta para el trabajo de BullMQ
 export interface EmailJobData {

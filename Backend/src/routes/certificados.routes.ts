@@ -3,9 +3,10 @@ import { EstadoOT } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { getCertificatePdfQueue } from '../lib/queue/queue.js';
-import { esAcreditado, inferirPlantillaSello } from '../services/certificatePdf.service.js';
+import { esAcreditado, seleccionarPlantillaSello } from '../services/certificatePdf.service.js';
 import { evaluarTransicionesOT, transicionarOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
+import { notificarUsuario } from '../services/notificacion.service.js';
 import {
   aprobarCertificadoBodySchema,
   calibracionRawToDtoSchema,
@@ -187,12 +188,12 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
         ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle?.ITEM) ??
         null;
 
-      // Inferencia de plantilla de sello por tipo de servicio (convención de NOMBRE)
+      // Selección de plantilla de sello por acreditación del instrumento (ID 1/2).
       const plantilla = request.body.selloId
         ? await fastify.prisma.plantillas_sellos.findUnique({
             where: { ID_PLANTILLA_SELLO: request.body.selloId },
           })
-        : await inferirPlantillaSello(fastify.prisma, otDetalle?.TIPO_SERVICIO ?? null);
+        : await seleccionarPlantillaSello(fastify.prisma, otDetalle?.TIPO_SERVICIO ?? null);
 
       const actualizado = await fastify.prisma.$transaction(async (tx) => {
         const upd = await tx.certificados.update({
@@ -277,6 +278,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       if (!cert) throw new AppError(404, 'Certificado no encontrado');
 
       const ot = cert.calibraciones?.recepcion_equipo_detalles?.recepciones_equipo?.ordenes_trabajo;
+      const idTecnico = cert.calibraciones?.ID_TECNICO_FK ?? null;
 
       const actualizado = await fastify.prisma.$transaction(async (tx) => {
         const upd = await tx.certificados.update({
@@ -288,6 +290,16 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
             REVISADO_AT: new Date(),
           },
           include: { certificado_sellos: true },
+        });
+
+        // Trazabilidad: registrar cada devolución con usuario, fecha y motivo.
+        await tx.historial_devoluciones_informes.create({
+          data: {
+            ID_CERTIFICADO_FK: idCertificado,
+            ID_CALIBRACION_FK: cert.ID_CALIBRACION_FK,
+            ID_USUARIO_FK: idUsuario,
+            MOTIVO: request.body.descripcion,
+          },
         });
 
         // Devolver el flujo al técnico (transición explícita con retroceso permitido).
@@ -310,6 +322,14 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
           },
         });
 
+        // Notificar al técnico responsable del instrumento.
+        await notificarUsuario(tx, {
+          idUsuario: idTecnico,
+          mensaje: `Tu certificado ${cert.CODIGO_CERTIFICADO} fue devuelto para corrección: ${request.body.descripcion}`,
+          modulo: 'revision',
+          nivelPrioridad: 'ALTA',
+        });
+
         return upd;
       });
 
@@ -318,6 +338,45 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
         message: 'Certificado rechazado. El flujo fue devuelto al técnico.',
         data: certificadoRawToDtoSchema.parse(actualizado),
       };
+    }
+  );
+
+  // ==========================================================================
+  // GET /api/v1/certificados/:id/devoluciones
+  // Historial de devoluciones (trazabilidad) de un certificado/informe.
+  // ==========================================================================
+  app.get(
+    '/api/v1/certificados/:id/devoluciones',
+    {
+      preHandler: [fastify.authenticate],
+      schema: { params: certificadoIdParamsSchema },
+    },
+    async (request) => {
+      const idCertificado = request.params.id;
+
+      const historial = await fastify.prisma.historial_devoluciones_informes.findMany({
+        where: { ID_CERTIFICADO_FK: idCertificado },
+        include: {
+          usuarios: {
+            select: {
+              ID_USUARIO_AUTO_INCREMENT: true,
+              NOMBRE_COMPLETO: true,
+              CORREO_INSTITUCION: true,
+            },
+          },
+        },
+        orderBy: { FECHA_DEVOLUCION: 'desc' },
+      });
+
+      return historial.map((h) => ({
+        id: h.ID_HISTORIAL_DEVOLUCION,
+        idCertificado: h.ID_CERTIFICADO_FK,
+        idCalibracion: h.ID_CALIBRACION_FK,
+        idUsuario: h.ID_USUARIO_FK,
+        revisor: h.usuarios?.NOMBRE_COMPLETO ?? null,
+        motivo: h.MOTIVO,
+        fecha: h.FECHA_DEVOLUCION,
+      }));
     }
   );
 }

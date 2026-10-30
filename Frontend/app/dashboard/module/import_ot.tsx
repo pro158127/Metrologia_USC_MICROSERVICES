@@ -7,6 +7,7 @@
   import { useDbLoading } from "@/app/componets/tables_recharge";
   import { procesarImportacionOTAction, consultarEstadoJobAction } from "@/app/action_module/ordenes";
   import { subirArchivoDocumento } from "@/app/action_module/archivos";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 
   // Interfaces y Tipos
   interface GeneratedOT {
@@ -253,6 +254,8 @@
 
     const { cotizaciones, ordenes_trabajo, loadTable } = useDbStore();
     const loadingOTs = useDbLoading("ordenes_trabajo");
+    const { can } = usePermissions();
+    const tieneAcceso = can("ordenesOt", "acceso");
 
     const [file, setFile] = useState<File | null>(null);
     const [showForm, setShowForm] = useState(false);
@@ -381,6 +384,7 @@
         <ToastNotification message={toast} />
         <section className="mb-8">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-slate-800"><FileText size={20} className="text-blue-600" /> Importar Orden de Trabajo</h2>
+          {tieneAcceso ? (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
             <FlowSelector tipoFlujo={tipoFlujo} onSelectFlow={(f) => { setTipoFlujo(f); setCotizacionSeleccionada(""); setShowForm(false); setFile(null); }} />
             <FileUploadZone tipoFlujo={tipoFlujo} file={file} showForm={showForm} onFileChange={(e: any) => setFile(e.target.files?.[0])} onRemoveFile={() => setFile(null)} onExtract={handleExtract} onStartManual={handleStartManual} />
@@ -388,6 +392,11 @@
               <OTFormSection tipoFlujo={tipoFlujo} cotizacionExtraida={cotizacionExtraida} otNumber={otNumber} date={date} client={client} cotizacionSeleccionada={cotizacionSeleccionada} recepciones={cotizacionesVinculables} isProcessing={isProcessing} onCotizacionChange={handleCotizacionChange} onGenerateOT={handleGenerateOT} />
             )}
           </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 text-center text-sm text-slate-400">
+              No tienes permisos para importar órdenes de trabajo.
+            </div>
+          )}
         </section>
         {loadingOTs ? (
           <div className="space-y-2 animate-pulse">

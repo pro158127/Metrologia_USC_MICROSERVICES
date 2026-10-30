@@ -18,6 +18,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   getDocumentosEnvio,
   subirComprobante,
@@ -97,6 +98,9 @@ const GestionPanel: React.FC<{
   const [enviando, setEnviando] = useState(false);
   const [firmando, setFirmando] = useState(false);
   const [viewer, setViewer] = useState<{ url: string | null; titulo: string } | null>(null);
+  const { can } = usePermissions();
+  const puedeMarcarPagada = can("entrega_y_envio", "marcar_ot_pagada");
+  const puedeEnviarCertificados = can("entrega_y_envio", "enviar_certificados_lotes");
 
   const recargar = useCallback(() => {
     getDocumentosEnvio(idOT).then((d) => setDocs(d));
@@ -271,6 +275,7 @@ const GestionPanel: React.FC<{
                     </button>
                   </div>
                 ) : (
+                  puedeMarcarPagada ? (
                   <label
                     className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed text-[11px] font-semibold transition-colors ${
                       todosAprobados
@@ -297,10 +302,16 @@ const GestionPanel: React.FC<{
                       }}
                     />
                   </label>
+                  ) : (
+                    <span className="text-[11px] font-semibold text-slate-400">
+                      Sin permisos para subir comprobante de pago.
+                    </span>
+                  )
                 )}
               </section>
 
               {/* Enviar */}
+              {puedeEnviarCertificados && (
               <button
                 onClick={handleEnviar}
                 disabled={!puedeEnviar || enviando}
@@ -313,6 +324,7 @@ const GestionPanel: React.FC<{
                 {enviando ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
                 {enviando ? "Enviando..." : "Enviar certificados al cliente"}
               </button>
+              )}
             </>
           )}
         </div>

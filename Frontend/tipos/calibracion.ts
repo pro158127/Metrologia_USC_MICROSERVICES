@@ -83,6 +83,13 @@ export interface PDFViewerPanelProps {
 
 export type EstadoInstrumento = "Pendiente" | "Adjuntado" | "En revisión" | "Devuelto" | "Firmado";
 
+export interface DevolucionHistorialItem {
+  id: number;
+  fecha: string;
+  motivo: string;
+  revisor: string | null;
+}
+
 export interface InstrumentoAsignado {
   id: string;
   idInstrumento?: number;
@@ -97,6 +104,7 @@ export interface InstrumentoAsignado {
   fileName?: string;
   status: EstadoInstrumento;
   motivoDevolucion?: string;
+  historialDevoluciones?: DevolucionHistorialItem[];
   datosTecnicos?: unknown;
 }
 

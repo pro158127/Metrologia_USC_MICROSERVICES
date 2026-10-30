@@ -29,6 +29,7 @@ model Usuario {
   historial_estados HistorialEstadoCotizacion[]
   instrumentos_asignados OrdenTrabajoDetalle[]
   seguimientos      SeguimientoComercial[]
+  historialDevoluciones HistorialDevolucionInforme[]
 
   @@map("usuarios")
 }
@@ -191,6 +192,23 @@ model HistorialCambios {
   updatedAt               DateTime @updatedAt @map("updated_at")
 
   @@map("historial_cambios")
+}
+
+model HistorialDevolucionInforme {
+  idHistorialDevolucion Int          @id @default(autoincrement()) @map("ID_HISTORIAL_DEVOLUCION")
+  idCertificado         Int          @map("ID_CERTIFICADO_FK")
+  idCalibracion         Int          @map("ID_CALIBRACION_FK")
+  idUsuario             Int          @map("ID_USUARIO_FK")
+  motivo                String       @map("MOTIVO")
+  fechaDevolucion       DateTime     @default(now()) @map("FECHA_DEVOLUCION")
+
+  certificado           Certificado  @relation(fields: [idCertificado], references: [idCertificado])
+  calibracion           Calibracion  @relation(fields: [idCalibracion], references: [idCalibracion])
+  usuario               Usuario      @relation(fields: [idUsuario], references: [idUsuario])
+
+  @@index([idCertificado])
+  @@index([idCalibracion])
+  @@map("historial_devoluciones_informes")
 }
 
 model HistorialEstadoCotizacion {
@@ -437,6 +455,7 @@ model Calibracion {
   instrumento   RecepcionEquipoDetalle @relation(fields: [idInstrumento], references: [idInstrumento])
   tecnico       Usuario                @relation(fields: [idTecnico], references: [idUsuario])
   certificado   Certificado?
+  historialDevoluciones HistorialDevolucionInforme[]
 
   @@map("calibraciones")
 }
@@ -454,6 +473,7 @@ model Certificado {
   sellos        CertificadoSello[]
   calibracion   Calibracion        @relation(fields: [idCalibracion], references: [idCalibracion])
   documento     Documento          @relation(fields: [idDocumento], references: [idDocumento])
+  historialDevoluciones HistorialDevolucionInforme[]
 
   @@map("certificados")
 }

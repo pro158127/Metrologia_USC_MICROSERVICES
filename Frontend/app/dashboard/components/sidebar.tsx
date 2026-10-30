@@ -18,8 +18,8 @@ import {
   LogOut 
 } from "lucide-react";
 import UscLabLogo from "./logo";
-import { useSession } from "next-auth/react";
-import { sidebar_permissions } from "@/app/server_component/controlle_permission";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { permisionMapping } from "@/app/lib/permissions/mapping";
 export type ModuleKey =
   | "dashboard"
   | "clientes"
@@ -56,25 +56,6 @@ interface SidebarProps {
   isOpen: boolean;      
   onClose: () => void;  
 }
-
-// 1. Diccionario para mapear las llaves del Sidebar con las llaves del objeto de permisos
-const permisionMapping: Record<ModuleKey, string | boolean> = {
-  dashboard: true, // Siempre visible
-  clientes: "clientes",
-  cotizaciones: "cotizaciones",
-  seguimiento: "cotizaciones", // Comparte permiso con Cotizaciones
-  recepcion: "recepcion_de_equipos",  
-  importarOrden: "ordenesOt", // Comparte permiso con Órdenes
-  ordenes: "ordenes_de_trabajo",
-  calibracion: "calibracion_e_informes",
-  revision: "revision",    // Ajustar si tiene un permiso propio
-  firma: "firma_sello_y_certificacion",
-  entrega: "entrega_y_envio",
-  reportes: "reportes_y_consolidados",
-  administracion: "administracion",         // Ajustar si tiene un permiso propio
-  configuracion: true,      // Ajustar si tiene un permiso propio
-  perfil_cliente:true
-};
 
 const sections: SidebarSection[] = [
   {
@@ -117,10 +98,7 @@ const sections: SidebarSection[] = [
 ];
 
 export function Sidebar({ activeModule, onNavigate, onLogout, isOpen, onClose }: SidebarProps) {
-  const { data: session } = useSession();
-  const permisos = session?.user?.permissions || {};
-  const modulosVisibles = sidebar_permissions({ permisos }) || {};
-  console.log("Permisos del usuario:",modulosVisibles);
+  const { hasModule } = usePermissions();
   return (
     <>
       {isOpen && (
@@ -157,13 +135,12 @@ export function Sidebar({ activeModule, onNavigate, onLogout, isOpen, onClose }:
               // Si el mapeo dice true, no requiere restricción (ej: dashboard)
               if (permisoKey === true) return true;
               
-              // Si existe la propiedad en modulosVisibles, retornamos su valor booleano
-              return !!modulosVisibles[permisoKey as string];
+              // Si existe la propiedad en permisos, retornamos su valor booleano
+              return hasModule(permisoKey as string);
             });
 
             // 3. Si la sección no tiene ningún ítem visible, no renderizamos ni el título
             if (visibleItems.length === 0) return null;
-            console.log(`Sección: ${section.title}, Ítems visibles:`, visibleItems.map(i => i.label));
 
             return (
               <div key={section.title} className="mb-4">

@@ -25,6 +25,7 @@ import {
   History,
 } from "lucide-react";
 import Link from "next/link";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import type { Estados } from "@/tipos/enums";
 import type {
   DocumentConfig,
@@ -606,6 +607,8 @@ const FacturaModal = ({
 
 export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetailPageProps) {
   console.log(id_cliente,"hlaaa")
+  const { can } = usePermissions();
+  const puedeGestionarFacturas = can("facturas", "crear_editar");
   const [is_open_documento, setIsOpenDocumento] = useState(false);
   const [searchCodigo, setSearchCodigo] = useState("");
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
@@ -705,12 +708,14 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
           <Eye size={14} className="text-blue-600" />
           Ver RUT del Cliente
         </button>
+        {puedeGestionarFacturas && (
         <button
           onClick={() => setIsFacturaModalOpen(true)}
           className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#5680F9] text-white hover:bg-[#4069E2] transition-all text-xs font-semibold border border-transparent shadow-sm"
         >
           Agregar factura
         </button>
+        )}
       </div>
 
       {/* Hero Header */}

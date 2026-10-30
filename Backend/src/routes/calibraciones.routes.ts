@@ -106,7 +106,12 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
         ? await fastify.prisma.calibraciones.findMany({
             where: { ID_INSTRUMENTO_FK: { in: instrumentoIds } },
             include: {
-              certificados: { include: { documentos: true } },
+              certificados: {
+                include: {
+                  documentos: true,
+                  historial_devoluciones_informes: { include: { usuarios: true } },
+                },
+              },
             },
           })
         : [];
@@ -140,6 +145,12 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
           client: ot?.clientes?.RAZON_SOCIAL ?? '—',
           status,
           motivoDevolucion: cert?.MOTIVO_RECHAZO ?? undefined,
+          historialDevoluciones: (cert?.historial_devoluciones_informes ?? []).map((h) => ({
+            id: h.ID_HISTORIAL_DEVOLUCION,
+            fecha: h.FECHA_DEVOLUCION,
+            motivo: h.MOTIVO,
+            revisor: h.usuarios?.NOMBRE_COMPLETO ?? null,
+          })),
           fileName: cert?.documentos?.NOMBRE ?? undefined,
           datosTecnicos: cal?.DATOS_TECNICOS_JSON ?? undefined,
           uploadDate: cert?.REVISADO_AT ?? cal?.CREATED_AT ?? undefined,

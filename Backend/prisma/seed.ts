@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { hashPassword } from '../src/services/password.service.js';
 
 const prisma = new PrismaClient();
 
@@ -268,6 +269,23 @@ async function main() {
     },
   ];
 
+  // Dominio "facturas" (nuevo): se inyecta programáticamente para no duplicar
+  // la clave en cada JSON de rol.
+  const facturasPorRol: Record<number, { consultar: boolean; crear_editar: boolean }> = {
+    1: { consultar: true, crear_editar: false }, // Secretaria
+    2: { consultar: true, crear_editar: true }, // Director Técnico
+    3: { consultar: false, crear_editar: false }, // Técnico
+    4: { consultar: true, crear_editar: true }, // Coordinadora
+    5: { consultar: true, crear_editar: false }, // Gestor Comercial
+  };
+
+  for (const role of roles) {
+    const permisos = JSON.parse(role.permisos);
+    permisos.permisos.facturas =
+      facturasPorRol[role.id] ?? { consultar: false, crear_editar: false };
+    role.permisos = JSON.stringify(permisos);
+  }
+
   for (const role of roles) {
     await prisma.$executeRaw`
       INSERT INTO public.roles ("ID_ROL_INCREMENT", "NOMBRE_ROL", "PERMISOS_JSON", "JUSTIFICACION", "DIRECTRIZ_DIRECTOR")
@@ -284,15 +302,26 @@ async function main() {
     SELECT setval(pg_get_serial_sequence('public.roles', 'ID_ROL_INCREMENT'), COALESCE(MAX("ID_ROL_INCREMENT"), 1)) FROM public.roles;
   `;
 
-  // 3. Inserción Idempotente del Usuario Base (Director Técnico)
-  await prisma.$executeRaw`
-    INSERT INTO public.usuarios (
-      "ID_USUARIO_AUTO_INCREMENT", "NOMBRE_COMPLETO", "contraseña", "ID_ROL_FK", "CORREO_INSTITUCION", "CREATED_AT", "ESTADO", "intentos", "elminado"
-    ) VALUES (
-      1, 'Director del Sistema', '$argon2i$v=19$m=16,t=2,p=1$VHFlZTBZQmttYzNwbmpObQ$tHUMReyjgufFgA/xvhrugQ', 2, 'director@usc.edu.co', NOW(), true, 0, false
-    )
-    ON CONFLICT ("CORREO_INSTITUCION") DO NOTHING;
-  `;
+  // 3. Inserción Idempotente del Usuario Base (Director Técnico) con Argon2id fuerte.
+  const directorPassword = process.env.DIRECTOR_DEFAULT_PASSWORD ?? 'Director*2026!';
+  if (!process.env.DIRECTOR_DEFAULT_PASSWORD) {
+    console.warn('⚠️ Usando contraseña por defecto para el Director. Define DIRECTOR_DEFAULT_PASSWORD en .env.');
+  }
+  const directorHash = await hashPassword(directorPassword);
+  await prisma.usuarios.upsert({
+    where: { CORREO_INSTITUCION: 'director@usc.edu.co' },
+    update: {}, // No sobreescribir credenciales si ya existe el usuario.
+    create: {
+      ID_USUARIO_AUTO_INCREMENT: 1,
+      NOMBRE_COMPLETO: 'Director del Sistema',
+      contrase_a: directorHash,
+      ID_ROL_FK: 2,
+      CORREO_INSTITUCION: 'director@usc.edu.co',
+      ESTADO: true,
+      intentos: 0,
+      elminado: false,
+    },
+  });
 
   await prisma.$executeRaw`
     SELECT setval(pg_get_serial_sequence('public.usuarios', 'ID_USUARIO_AUTO_INCREMENT'), COALESCE(MAX("ID_USUARIO_AUTO_INCREMENT"), 1)) FROM public.usuarios;
@@ -351,6 +380,38 @@ async function main() {
   // Sincronizar secuencia de las plantillas por si acaso
   await prisma.$executeRaw`
     SELECT setval(pg_get_serial_sequence('public.plantillas', 'ID_PLANTILLA'), COALESCE(MAX("ID_PLANTILLA"), 1)) FROM public.plantillas;
+  `;
+
+  console.log('🌱 Sembrando plantillas de sellos...');
+  
+  const plantillasSellosSeed = [
+    { 
+      ID_PLANTILLA_SELLO: 1, 
+      NOMBRE: 'Sello Acreditado', 
+      DESCRIPCION: 'Plantilla de sello para certificados con acreditación',
+    },
+    { 
+      ID_PLANTILLA_SELLO: 2, 
+      NOMBRE: 'Sello No Acreditado', 
+      DESCRIPCION: 'Plantilla de sello para certificados sin acreditación',
+    }
+  ];
+
+  for (const sello of plantillasSellosSeed) {
+    await prisma.plantillas_sellos.upsert({
+      where: { ID_PLANTILLA_SELLO: sello.ID_PLANTILLA_SELLO },
+      update: {},
+      create: {
+        ID_PLANTILLA_SELLO: sello.ID_PLANTILLA_SELLO,
+        NOMBRE: sello.NOMBRE,
+        DESCRIPCION: sello.DESCRIPCION
+      }
+    });
+  }
+
+  // Sincronizar secuencia de la tabla de sellos para evitar errores de llave primaria[cite: 1]
+  await prisma.$executeRaw`
+    SELECT setval(pg_get_serial_sequence('public.plantillas_sellos', 'ID_PLANTILLA_SELLO'), COALESCE(MAX("ID_PLANTILLA_SELLO"), 1)) FROM public.plantillas_sellos;
   `;
 
 

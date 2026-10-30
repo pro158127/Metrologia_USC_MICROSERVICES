@@ -26,6 +26,7 @@ import {
 // Importar el contexto y los tipos
 import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables_recharge";
 import { useSession } from "next-auth/react";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
 import type { QuoteItem, TarifaOption, cambiospayload } from "@/tipos/cotizacion";
 import type {
@@ -129,6 +130,8 @@ const FilterBar = ({
   onDiaChange,
   onAgregarRecepcion,
 }: FilterBarProps) => {
+  const { can } = usePermissions();
+  const puedeRegistrar = can("recepcion_de_equipos", "registrar");
   const MESES = [
     { value: "all", label: "Todos los meses" },
     { value: "01", label: "Enero" },
@@ -212,6 +215,7 @@ const FilterBar = ({
         </div>
       </div>
 
+      {puedeRegistrar && (
       <button
         type="button"
         onClick={onAgregarRecepcion}
@@ -219,6 +223,7 @@ const FilterBar = ({
       >
         <Plus size={14} /> Agregar Recepción
       </button>
+      )}
     </div>
   );
 };
@@ -487,6 +492,8 @@ const TablaInstrumentos = ({
   onAgregarFila,
   onEliminarFila,
 }: TablaInstrumentosProps) => {
+  const { can } = usePermissions();
+  const puedeRegistrar = can("recepcion_de_equipos", "registrar");
   // Función para sugerir instrumentos desde tarifas
   const sugerenciasTarifas = useMemo(() => {
     return tarifasDisponibles.map((t) => ({
@@ -505,6 +512,7 @@ const TablaInstrumentos = ({
         <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
           Estructura de Equipos Metrológicos
         </span>
+        {puedeRegistrar && (
         <button
           type="button"
           onClick={onAgregarFila}
@@ -512,6 +520,7 @@ const TablaInstrumentos = ({
         >
           <Plus size={12} /> Añadir Instrumento
         </button>
+        )}
       </div>
 
       <div className="overflow-auto max-h-[400px] w-full">
@@ -706,6 +715,7 @@ const TablaInstrumentos = ({
                 </td>
 
                 <td className="p-2 text-center">
+                  {puedeRegistrar && (
                   <button
                     type="button"
                     onClick={() => onEliminarFila(i)}
@@ -713,6 +723,7 @@ const TablaInstrumentos = ({
                   >
                     <Trash2 size={13} />
                   </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -839,6 +850,8 @@ const FormFooterActions = ({
   onGenerarActa,
   guardando = false,
 }: FormFooterActionsProps) => {
+  const { can } = usePermissions();
+  const puedeGenerarActa = can("recepcion_de_equipos", "generar_acta");
   return (
     <>
       <div className="flex items-center justify-between p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex-wrap gap-4">
@@ -850,6 +863,7 @@ const FormFooterActions = ({
             Almacenando cambios bajo auditoría del sistema.
           </div>
         </div>
+        {puedeGenerarActa && (
         <button
           onClick={onGenerarActa}
           disabled={guardando}
@@ -859,6 +873,7 @@ const FormFooterActions = ({
         >
           <FileText size={15} /> {guardando ? "Guardando..." : "Guardar Formato R-CM010"}
         </button>
+        )}
       </div>
 
       {actaGuardada && (
@@ -897,6 +912,8 @@ export function MainRenderers() {
   const loadingRecepciones = useDbLoading("recepciones_equipo");
   const { data: session } = useSession();
   const nombreUsuarioSesion = session?.user?.name ?? "";
+  const { can } = usePermissions();
+  const puedeRegistrar = can("recepcion_de_equipos", "registrar");
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
@@ -1664,12 +1681,14 @@ const handleGenerarActa = useCallback(async () => {
                 >
                   <History size={14} /> Ver trazabilidad
                 </button>
+                {puedeRegistrar && (
                 <button
                   onClick={() => { setDeleteRecepcionMotivo(""); setDeleteRecepcionOpen(true); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 cursor-pointer border-none"
                 >
                   <Trash2 size={14} /> Eliminar
                 </button>
+                )}
               </div>
             </div>
           )}

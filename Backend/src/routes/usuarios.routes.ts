@@ -1,9 +1,9 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
-import argon2 from 'argon2';
-import nodemailer from 'nodemailer';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { hashPassword, generarContrasenaTemporalSegura } from '../services/password.service.js';
+import { getEmailQueue } from '../lib/queue/queue.js';
 import {
   actualizarUsuarioBodySchema,
   bitacoraRawToDtoSchema,
@@ -18,27 +18,6 @@ import {
   rolRawToDtoSchema,
   usuarioRawToDtoSchema,
 } from './usuarios.schemas.js';
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASSWORD,
-  },
-});
-
-function generarContrasenaTemporal(nombre: string): string {
-  const primerNombre = (nombre || '')
-    .trim()
-    .split(' ')[0]
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9]/g, '');
-  const numeroAleatorio = Math.floor(100 + Math.random() * 900);
-  return `Usc${primerNombre}${numeroAleatorio}*`;
-}
 
 async function registrarAuditoria(
   fastify: FastifyInstance,
@@ -102,8 +81,8 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
     async (request) => {
       const { nombre, correo, idRol, estado } = request.body;
 
-      const contraseñaTemporal = generarContrasenaTemporal(nombre);
-      const contraseñaHasheada = await argon2.hash(contraseñaTemporal, { type: argon2.argon2id });
+      const contraseñaTemporal = generarContrasenaTemporalSegura();
+      const contraseñaHasheada = await hashPassword(contraseñaTemporal);
 
       const nuevoUsuario = await fastify.prisma.usuarios.create({
         data: {
@@ -128,17 +107,23 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       );
 
       try {
-        await transporter.sendMail({
-          from: `"Soporte Metrología USC" <${process.env.SMTP_USER}>`,
+        await getEmailQueue().add('crear_usuario', {
           to: correo,
           subject: 'Bienvenido al Sistema de Metrología USC - Tu Cuenta ha sido Creada',
-          html: `<p>Hola, ${nombre}. Tu cuenta fue creada. Contraseña temporal: <strong>${contraseñaTemporal}</strong></p>`,
+          template_type: 'crear_usuario',
+          context_data: {
+            nombre,
+            correo,
+            contrasenaTemporal: contraseñaTemporal,
+          },
+          id_registro: nuevoUsuario.ID_USUARIO_AUTO_INCREMENT,
+          tipo_entry: 'prod',
         });
       } catch (mailError) {
         fastify.log.error(mailError);
         return {
           success: true as const,
-          warning: `El usuario fue creado, pero falló el envío de correo. Compártele esta clave temporal: ${contraseñaTemporal}`,
+          warning: `El usuario fue creado, pero falló el encolado del correo. Compártele esta clave temporal: ${contraseñaTemporal}`,
         };
       }
 
@@ -296,10 +281,8 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       });
       if (!usuario) throw new AppError(404, 'El usuario especificado no existe.');
 
-      const nuevaContrasenaTemporal = generarContrasenaTemporal(usuario.NOMBRE_COMPLETO);
-      const contrasenaHasheada = await argon2.hash(nuevaContrasenaTemporal, {
-        type: argon2.argon2id,
-      });
+      const nuevaContrasenaTemporal = generarContrasenaTemporalSegura();
+      const contrasenaHasheada = await hashPassword(nuevaContrasenaTemporal);
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
@@ -319,17 +302,22 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       );
 
       try {
-        await transporter.sendMail({
-          from: `"Soporte Metrología USC" <${process.env.SMTP_USER}>`,
+        await getEmailQueue().add('restablecer_contrasena', {
           to: usuario.CORREO_INSTITUCION,
           subject: 'Restablecimiento de Contraseña - Metrología USC',
-          html: `<p>Hola, ${usuario.NOMBRE_COMPLETO}. Tu nueva contraseña temporal es: <strong>${nuevaContrasenaTemporal}</strong></p>`,
+          template_type: 'restablecer_contrasena',
+          context_data: {
+            nombre: usuario.NOMBRE_COMPLETO,
+            nuevaContrasena: nuevaContrasenaTemporal,
+          },
+          id_registro: idUsuario,
+          tipo_entry: 'prod',
         });
       } catch (mailError) {
         fastify.log.error(mailError);
         return {
           success: true as const,
-          warning: `Contraseña restablecida en el sistema, pero falló el envío del correo. Compártele la clave temporal manualmente: ${nuevaContrasenaTemporal}`,
+          warning: `Contraseña restablecida en el sistema, pero falló el encolado del correo. Compártele la clave temporal manualmente: ${nuevaContrasenaTemporal}`,
         };
       }
 

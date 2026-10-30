@@ -33,6 +33,7 @@ model calibraciones {
   recepcion_equipo_detalles recepcion_equipo_detalles @relation(fields: [ID_INSTRUMENTO_FK], references: [ID_INSTRUMENTO])
   usuarios                  usuarios                  @relation(fields: [ID_TECNICO_FK], references: [ID_USUARIO_AUTO_INCREMENT])
   certificados              certificados?
+  historial_devoluciones_informes historial_devoluciones_informes[]
 }
 
 model certificado_sellos {
@@ -57,6 +58,7 @@ model certificados {
   certificado_sellos    certificado_sellos[]
   calibraciones         calibraciones        @relation(fields: [ID_CALIBRACION_FK], references: [ID_CALIBRACION])
   documentos            documentos           @relation(fields: [ID_DOCUMENTO_FK], references: [ID_DOCUMENTO])
+  historial_devoluciones_informes historial_devoluciones_informes[]
 }
 
 model clientes {
@@ -439,6 +441,7 @@ model usuarios {
   audit_logs                  audit_logs[]
   calibraciones               calibraciones[]
   historial_estado_cotizacion historial_estado_cotizacion[]
+  historial_devoluciones_informes historial_devoluciones_informes[]
   notificaciones              notificaciones[]
   orden_trabajo_detalles      orden_trabajo_detalles[]
   roles                       roles                         @relation(fields: [ID_ROL_FK], references: [ID_ROL_INCREMENT])
@@ -509,6 +512,22 @@ model historial_cambios {
   created_at               DateTime     @default(now())
   updated_at               DateTime
   cotizaciones             cotizaciones @relation(fields: [id_cotizacion], references: [ID_COTIZACION], onDelete: Cascade)
+}
+
+model historial_devoluciones_informes {
+  ID_HISTORIAL_DEVOLUCION Int           @id @default(autoincrement())
+  ID_CERTIFICADO_FK       Int
+  ID_CALIBRACION_FK       Int
+  ID_USUARIO_FK           Int
+  MOTIVO                  String
+  FECHA_DEVOLUCION        DateTime      @default(now())
+
+  certificados            certificados  @relation(fields: [ID_CERTIFICADO_FK], references: [ID_CERTIFICADO])
+  calibraciones           calibraciones @relation(fields: [ID_CALIBRACION_FK], references: [ID_CALIBRACION])
+  usuarios                usuarios      @relation(fields: [ID_USUARIO_FK], references: [ID_USUARIO_AUTO_INCREMENT])
+
+  @@index([ID_CERTIFICADO_FK])
+  @@index([ID_CALIBRACION_FK])
 }
 
 model historial_estado_cotizacion {

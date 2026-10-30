@@ -58,7 +58,8 @@ function LoginContent({ onLogin }: LoginProps) {
       }
 
       if (result?.ok) {
-        router.push("/dashboard");
+        router.replace("/dashboard");
+        router.refresh();
       }
     } catch (err) {
       console.error("Error crítico de red o servidor:", err);

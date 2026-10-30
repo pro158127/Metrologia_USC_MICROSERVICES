@@ -4,6 +4,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Upload, FileText, AlertTriangle, RefreshCw, ChevronDown, CheckCircle2, Clock, XCircle, Layers } from "lucide-react";
 import { getMisInstrumentos, subirCertificadoCalibracion } from "@/app/action_module/calibraciones";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import type {
   InstrumentoAsignado,
   EstadoInstrumento,
@@ -190,6 +191,8 @@ const UploadDock: React.FC<UploadDockProps> = ({
   onFileChange,
   onUpload,
 }) => {
+  const { can } = usePermissions();
+  const puedeAdjuntar = can("calibracion_e_informes", "adjuntar_pdf");
   const isDevuelto = selectedInstrumento.status === "Devuelto";
 
   return (
@@ -216,13 +219,20 @@ const UploadDock: React.FC<UploadDockProps> = ({
             {selectedInstrumento.equipment}
           </h3>
 
-          {isDevuelto && selectedInstrumento.motivoDevolucion && (
-            <div className="bg-rose-50/80 border border-rose-200 text-rose-900 rounded-xl p-3 text-xs flex gap-2">
-              <AlertTriangle size={16} className="text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-extrabold block">Observación del Director Técnico:</span>
-                <p className="mt-0.5 text-rose-800 italic leading-snug">{selectedInstrumento.motivoDevolucion}</p>
-              </div>
+          {isDevuelto && (selectedInstrumento.historialDevoluciones?.length ?? 0) > 0 && (
+            <div className="bg-rose-50/80 border border-rose-200 text-rose-900 rounded-xl p-3 text-xs space-y-2">
+              <span className="font-extrabold flex items-center gap-1 text-[10px]">
+                <AlertTriangle size={12} className="text-rose-600 shrink-0" /> Historial de devoluciones:
+              </span>
+              {selectedInstrumento.historialDevoluciones!.map((h) => (
+                <div key={h.id} className="border-b border-rose-100 pb-1.5 last:border-0 last:pb-0">
+                  <p className="text-rose-800 italic leading-snug">{h.motivo}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {new Date(h.fecha).toLocaleDateString("es-CO")}
+                    {h.revisor ? ` · ${h.revisor}` : ""}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
 
@@ -245,7 +255,9 @@ const UploadDock: React.FC<UploadDockProps> = ({
         </div>
 
         <div className="flex flex-col items-center justify-center border border-slate-200/80 bg-slate-50/50 p-4 rounded-xl min-h-[150px]">
-          {selectedFile ? (
+          {!puedeAdjuntar ? (
+            <span className="text-xs text-slate-400 font-bold">Sin permisos para adjuntar certificados.</span>
+          ) : selectedFile ? (
             <div className="text-center w-full space-y-3">
               <div className="inline-flex p-2 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200/60">
                 <FileText size={20} />
