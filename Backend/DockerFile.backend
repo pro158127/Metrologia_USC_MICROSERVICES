@@ -7,16 +7,13 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /workspace/Backend
 
 # 🔥 INSTALACIÓN DEL MOTOR: Python (tu pipeline) + LibreOffice + Fuentes tipográficas
+# minio-client provee el binario `mc` de forma nativa (musl) vía repos de Alpine.
 RUN apk add --no-cache \
     python3 py3-pandas py3-openpyxl \
     libreoffice \
     postgresql16-client \
-    curl \
+    minio-client \
     ttf-dejavu font-liberation
-
-# Cliente MinIO (mc) para espejar el bucket de documentos en los respaldos
-RUN curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
-    && chmod +x /usr/local/bin/mc
 
 EXPOSE 3001
 
