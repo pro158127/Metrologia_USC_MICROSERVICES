@@ -1,0 +1,239 @@
+================================================================================
+ENTRADA PARA MODELO DE IA — GENERACIÓN DE MANUAL DE USUARIO
+Sistema de Gestión del Laboratorio de Metrología USC
+================================================================================
+
+INSTRUCCIÓN PARA EL MODELO DE IA
+--------------------------------
+A partir de este documento, genera un MANUAL DE USUARIO en español, orientado al
+usuario final (no técnico), con esta estructura:
+  1. Portada y propósito del sistema.
+  2. Requisitos de acceso (credenciales, navegador) y convenciones de la interfaz.
+  3. Glosario de términos.
+  4. Roles y qué puede hacer cada uno.
+  5. Un capítulo por módulo: objetivo, quién lo usa, pasos numerados, descripción
+     de campos, botones y estados, y notas/errores frecuentes.
+  6. Guías paso a paso de los flujos principales (cotización -> OT -> recepción ->
+     calibración -> certificado -> entrega).
+  7. Preguntas frecuentes (FAQ).
+Tono: claro, instructivo, con capturas de pantalla como espacio reservado
+"[IMAGEN: ...]". Evita tecnicismos; si los usas, defínelos en el glosario.
+
+--------------------------------------------------------------------------------
+1) CONTEXTO GENERAL
+--------------------------------------------------------------------------------
+Plataforma web para el control y trazabilidad del Laboratorio de Calibración y
+Ensayo de la Universidad Santiago de Cali (USC), bajo norma ISO/IEC 17025.
+Cubre el ciclo completo: clientes, cotizaciones, órdenes de trabajo, recepción
+de equipos, calibración, certificados, firma/sello y entrega, con reportes,
+administración y auditoría.
+
+--------------------------------------------------------------------------------
+2) ROLES Y PERMISOS (resumen)
+--------------------------------------------------------------------------------
+- DIRECTOR TÉCNICO / ADMINISTRADOR: acceso total; gestiona usuarios/roles,
+  bitácora, parámetros, plantillas, sellos; revisa y aprueba/rechaza certificados.
+- COORDINADOR(A): gestiona clientes, cotizaciones, tarifas, plantillas, reportes;
+  revisa certificados acreditados/no acreditados según permiso.
+- SECRETARÍA / OPERATIVO: entrega y envío de certificados, marca OT pagada,
+  previsualiza y despacha.
+- TÉCNICO / METRÓLOGO: recibe instrumentos asignados, adjunta certificados PDF,
+  reenvía certificados devueltos.
+- CONSULTA / USUARIO BÁSICO: solo lectura según permiso.
+
+Nota: los permisos por rol se definen en PERMISOS_JSON (módulo Administración).
+
+--------------------------------------------------------------------------------
+3) GLOSARIO
+--------------------------------------------------------------------------------
+- OT: Orden de Trabajo.
+- R-CM005: plantilla/formato de Orden de Trabajo.
+- R-CM010: plantilla/formato de Recepción de Equipos.
+- Cotización: oferta comercial con precios.
+- Magnitud: tipo de medición (masa, presión, temperatura, etc.).
+- Norma: documento técnico de referencia para la calibración.
+- Estampilla: sello/identificador físico del instrumento.
+- IBC: estado del instrumento en la entrada/salida (E·T·D·A).
+- Certificado: documento PDF del resultado de calibración.
+- Comprobante de pago: evidencia de pago de la OT.
+- Trazabilidad: línea de tiempo de un documento/equipo (recepción, calibración,
+  revisión, versiones y sellos).
+- BORRADOR / ENVIADA / APROBADA / RECHAZADA / EN_SEGUIMIENTO: estados de cotización.
+- Estados de OT: Creada, En recepción, Asignada, En calibración, Certificado en
+  revisión, Certificado aprobado, Certificado enviado.
+
+--------------------------------------------------------------------------------
+4) INICIO DE SESIÓN
+--------------------------------------------------------------------------------
+- Ingresar correo institucional (nombre@usc.edu.co) y contraseña.
+- Botón "Ingresar" (muestra "Verificando...").
+- Si la contraseña es incorrecta 3 veces, la cuenta se BLOQUEA (ver módulo de
+  recuperación).
+- Sesión expira tras 30 minutos de inactividad.
+- "Restablecer contraseña": solicita un código de 6 dígitos enviado al correo,
+  se digita el código y una nueva contraseña (desbloquea la cuenta).
+
+--------------------------------------------------------------------------------
+5) MÓDULOS
+--------------------------------------------------------------------------------
+
+5.1 DASHBOARD (Panel de control)
+  - Objetivo: vista general del laboratorio.
+  - Contenido: totales (Clientes, Cotizaciones, OT activas, Facturas), tarjetas
+    KPI (OT activas, cotizaciones pendientes, ingresos del mes, certificados
+    emitidos), tabla de certificados pendientes, alertas del sistema, actividad
+    reciente, gráficas (cotizaciones vs aprobadas; distribución de servicios).
+  - Acción: botón "Revisar" en certificados pendientes lleva a Revisión.
+
+5.2 CLIENTES
+  - Objetivo: administrar clientes (crear, editar, activar/desactivar).
+  - Elementos: buscador por razón social/NIT, filtros (Todos/Activos/Inactivos),
+    botón "Nuevo cliente", acciones por fila (Ver Perfil, Editar, Cambiar estado).
+  - Formulario: Razón Social*, NIT/Cédula*, Correo*, Nombre de contacto, Teléfono,
+    Ciudad (desplegable Colombia), Tipo (Natural/Jurídico), Dirección, RUT (PDF/
+    imagen), Observación.
+  - Estado: ACTIVO (verde) / INACTIVO (rojo).
+
+5.3 PERFIL DE CLIENTE (detalle)
+  - Muestra datos del cliente y toda su documentación: cotizaciones, OT,
+    recepciones, certificados, comprobantes y facturas.
+  - Secciones desplegables por cotización con carpetas de documentos (Cotización,
+    OT, Recepciones, Certificados, Comprobantes).
+  - "Ver RUT", "Agregar factura", botón "Trazabilidad" en certificados (línea de
+    tiempo con versiones y sellos).
+
+5.4 COTIZACIONES
+  - Objetivo: crear y gestionar ofertas comerciales con catálogo de tarifas.
+  - Vistas: Lista, Nueva cotización (asistente 2 pasos), Catálogo de tarifas.
+  - Paso 1: elegir cliente. Paso 2: agregar ítems (tipo servicio, magnitud,
+    equipo/puntos, lugar, norma, cantidad, valor unitario), descuento (0/10/15/20%),
+    viáticos y total. Botones "Guardar como borrador" y "Enviar cotización".
+  - Estados: BORRADOR -> ENVIADA -> APROBADA (por enlace enviado al cliente) ->
+    EN_SEGUIMIENTO; o ENVIADA -> RECHAZADA (con motivo).
+  - "Generar nueva versión" exige descripción del cambio y "aprobado por".
+  - "Catálogo de tarifas": importar tarifas, nuevo ítem, historial de precios,
+    activar/desactivar.
+
+5.5 SEGUIMIENTO COMERCIAL
+  - Objetivo: registrar gestiones (llamada, correo, reunión, otro) sobre
+    cotizaciones EN_SEGUIMIENTO.
+  - Acciones: nueva gestión con tipo, fecha de próxima gestión, descripción y
+    resultado; historial de gestiones con opción de eliminar.
+
+5.6 RECEPCIÓN DE EQUIPOS (R-CM010)
+  - Objetivo: registrar la entrada de equipos al laboratorio.
+  - Filtros: cliente, año, mes, fecha exacta. Botón "Agregar Recepción".
+  - Formulario: datos generales (cliente, solicitante, quién entrega, cotización,
+    OT, sitio de calibración, fechas), tabla de instrumentos (instrumento, marca,
+    modelo, serie, código interno, resolución, estado IBC entrada/salida,
+    estampilla, observaciones), accesorios, cierre técnico y cierre de servicio.
+  - "Guardar Formato" guarda como RECIBIDO o BORRADOR según completitud.
+
+5.7 IMPORTAR OT
+  - Objetivo: crear OT desde un Excel (.xlsx).
+  - Flujo Estándar (extrae datos del Excel) o Flujo Inverso (vincular manual a
+    una cotización existente).
+  - Pasos: adjuntar archivo, detectar cotización, confirmar datos, "Procesar OT".
+  - Tabla de OT generadas con filtros y botón "Ver".
+
+5.8 ÓRDENES DE TRABAJO (OT)
+  - Objetivo: ver y gestionar OT con 3 vistas: Tablero (Kanban), Árbol y Lista.
+  - Kanban por estado: Creada, En recepción, Asignada, En calibración, Certificado
+    en revisión, Certificado aprobado, Certificado enviado.
+  - Detalle de OT: alertas (vencida, sin responsable, sin fecha, >10 instrumentos),
+    "Asignar Técnico" (solo si está "En recepción"), formulario R-CM05 y botón
+    "Consolidar Orden R-CM05".
+
+5.9 CALIBRACIÓN E INFORMES
+  - Objetivo: el técnico adjunta certificados PDF a sus instrumentos asignados.
+  - KPIs: Total asignados, Por cargar, Devueltos/Observaciones, Procesados.
+  - Filtros por OT y cliente. Lista "Mis instrumentos asignados".
+  - Carga: "Inyección de archivo" (PDF máx 10 MB) o "Reenvío obligatorio" (cuando
+    fue devuelto), con la observación del Director.
+
+5.10 REVISIÓN DE CERTIFICADOS
+  - Objetivo: Director/Coordinador revisa y aprueba o rechaza certificados.
+  - Tabla: N° OT, estampilla, instrumento, cliente, técnico, tipo, fecha, acciones.
+  - "Aprobar" (pasa a cola de firma/sellado) o "Rechazar" (motivo obligatorio,
+    devuelve al técnico).
+  - Visor de PDF integrado.
+
+5.11 FIRMA Y SELLO
+  - En el menú, pero actualmente sin pantalla funcional (el sellado se dispara al
+    aprobar el certificado). Considerar como pendiente en la documentación.
+
+5.12 ENTREGA Y ENVÍO
+  - Objetivo: preparar y despachar certificados.
+  - Filtros por estado (Certificado en revisión / enviado), fecha y búsqueda.
+  - Panel: estado de aprobación, lista de certificados ("Ver"), comprobante de
+    pago (PDF/PNG/JPG, bloqueado si no todos aprobados), botón "Enviar certificados
+    al cliente" (por correo).
+
+5.13 REPORTES Y CONSOLIDADOS
+  - Objetivo: análisis y auditoría.
+  - "Exportar PDF/Excel", filtros (fechas, tipo servicio, cliente, técnico),
+    KPIs, gráficas (calibraciones por mes, tasa de conversión), resumen por
+    técnico, búsqueda de certificados históricos (RF-41), reporte de trazabilidad
+    para auditoría (RF-46).
+
+5.14 ADMINISTRACIÓN DEL SISTEMA
+  - Pestañas: Gestión de usuarios, Bitácora de auditoría, Configuración.
+  - Usuarios: crear/editar, estado (activo/inactivo), restablecer contraseña,
+    eliminar/restaurar. Al crear, se envía contraseña temporal por correo.
+  - Bitácora: registro inmutable de acciones, filtros, exportar a Excel.
+  - Configuración: plantillas (mapeo de variables), sello/marca de agua (bounding
+    boxes), parámetros del sistema (días de vencimiento de cotización, frecuencia
+    y retención de respaldo).
+
+5.15 PARÁMETROS DEL SISTEMA (sub-sección de Administración)
+  - Vencimiento de cotizaciones: días para rechazar una cotización sin aprobar y
+    días para pasar una rechazada a seguimiento.
+  - Respaldo: frecuencia automática (UNA VEZ / DIARIA / SEMANAL / PROGRAMADA_CRON)
+    y retención en días.
+  - Botón "Guardar parámetros".
+
+--------------------------------------------------------------------------------
+6) FLUJOS PRINCIPALES PASO A PASO
+--------------------------------------------------------------------------------
+FLUJO A: De cotización a OT
+  1. Clientes -> crear cliente (si no existe).
+  2. Cotizaciones -> Nueva cotización -> elegir cliente -> agregar ítems -> enviar.
+  3. El cliente aprueba mediante el enlace enviado por correo.
+  4. Al aprobar, se generan automáticamente las OT (Creada).
+  5. (Alternativa) Importar OT desde un Excel.
+
+FLUJO B: De OT a certificado
+  1. Recepción de Equipos -> registrar R-CM010 (pasa la OT a "En recepción").
+  2. Órdenes de Trabajo -> Asignar Técnico (OT "Asignada").
+  3. Calibración e Informes -> el técnico sube el PDF (certificado "Pendiente").
+  4. Revisión de Certificados -> aprobar (certificado "Aprobado" y se sella) o
+     rechazar (devuelve al técnico).
+
+FLUJO C: Entrega
+  1. Entrega y Envío -> subir comprobante de pago (OT "Pagada").
+  2. Enviar certificados al cliente por correo (OT "Certificado enviado").
+
+FLUJO D: Recuperar contraseña / desbloquear cuenta
+  1. En login, "Restablecer contraseña" (solo para el correo del director).
+  2. Se envía un código de 6 dígitos al correo.
+  3. Digitar el código y la nueva contraseña -> la cuenta queda desbloqueada.
+
+--------------------------------------------------------------------------------
+7) PREGUNTAS FRECUENTES (FAQ) SUGERIDAS
+--------------------------------------------------------------------------------
+- ¿Por qué no puedo iniciar sesión aunque la contraseña sea correcta?
+  Respuesta: la cuenta quedó bloqueada tras 3 intentos fallidos; usa "Restablecer
+  contraseña" o contacta al administrador.
+- ¿Por qué no puedo asignar un técnico? Porque la OT no está en "En recepción".
+- ¿Por qué no puedo enviar certificados? Falta el comprobante de pago o no todos
+  los certificados están aprobados, o no hay correo de destino configurado.
+- ¿Qué significa cada color de estado de una cotización? (BORRADOR ámbar, ENVIADA
+  azul, APROBADA verde, RECHAZADA rojo, EN_SEGUIMIENTO gris).
+- ¿Cómo se genera un certificado firmado/sellado? Se dispara automáticamente al
+  APROBAR el certificado en Revisión.
+- ¿Dónde veo la trazabilidad de un equipo? En Perfil de cliente -> certificado ->
+  botón "Trazabilidad".
+
+--------------------------------------------------------------------------------
+FIN DE LA ENTRADA
+--------------------------------------------------------------------------------

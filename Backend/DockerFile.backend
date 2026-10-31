@@ -11,6 +11,7 @@ RUN apk add --no-cache \
     python3 py3-pandas py3-openpyxl \
     libreoffice \
     postgresql16-client \
+    curl \
     ttf-dejavu font-liberation
 
 # Cliente MinIO (mc) para espejar el bucket de documentos en los respaldos
