@@ -255,6 +255,20 @@ export interface CronJobData {
   tarea: string;
 }
 
+/** Convierte una frecuencia de respaldo (enum) en un patrón cron de BullMQ. */
+export function patronCronRespaldo(frecuencia: string, expresionCron?: string | null): string | null {
+  switch (frecuencia) {
+    case 'DIARIA':
+      return '0 2 * * *';
+    case 'SEMANAL':
+      return '0 2 * * 0';
+    case 'PROGRAMADA_CRON':
+      return expresionCron || null;
+    default:
+      return null; // UNA_VEZ
+  }
+}
+
 /**
  * Cola de tareas programadas (cron). El worker `cron.worker.ts` registra aquí
  * los jobs repetibles (p. ej. el barrido diario de cotizaciones vencidas).

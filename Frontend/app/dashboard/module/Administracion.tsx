@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback, useMemo, useEffectEvent } from "react
 import { Plus, Shield, X, Check, Search, FileSpreadsheet, User } from "lucide-react";
 
 import { actualizarUsuarioGenerico, crearUsuarioGenerico, restablecerContrasenaGenerico, obtenerBitacoraPorPermiso, eliminarUsuario, restaurarUsuario } from "@/app/action_module/administration";
+import { actualizarParametrosSistema } from "@/app/action_module/parametros_sistema";
 
 import type {
   AdminTab,
@@ -1490,56 +1491,167 @@ function RenderConfigSello() {
 
 function RenderConfigParametros() {
   const parametros = useDbTable("parametros_sistema");
+  const { loadTable } = useDbActions();
+
   const parametrosPorClave = useMemo(() => {
     const mapa = new Map<string, ParametroSistemaModel>();
     parametros?.forEach((parametro) => mapa.set(parametro.clave, parametro));
     return mapa;
   }, [parametros]);
 
-  const valorScript = (clave: string, porDefecto: string) =>
-    parametrosPorClave.get(clave)?.codigoScript ?? porDefecto;
+  if (!parametros || parametros.length === 0) {
+    return <div className="text-sm text-slate-500">Cargando parámetros...</div>;
+  }
 
-  const secciones = [
-    {
-      title: "Alertas y notificaciones",
-      items: [
-        { label: "Días para alerta de retraso de OT", type: "number", val: valorScript("DIAS_ALERTA_RETRASO_OT", "0") },
-        { label: "Días para alerta de vencimiento de plantilla", type: "number", val: valorScript("DIAS_ALERTA_VENCIMIENTO_PLANTILLA", "0") },
-        { label: "Remitente de correos institucionales", type: "email", val: valorScript("REMITENTE_CORREOS_INSTITUCIONALES", "") },
-      ],
-    },
-    {
-      title: "Respaldo de datos",
-      items: [
-        { label: "Frecuencia de respaldo automático", type: "select", val: parametrosPorClave.get("FRECUENCIA_RESPALDO")?.frecuencia ?? "UNA_VEZ" },
-      ],
-    },
-  ];
+  return <FormParametros parametrosPorClave={parametrosPorClave} onGuardado={() => loadTable("parametros_sistema")} />;
+}
+
+function FormParametros({
+  parametrosPorClave,
+  onGuardado,
+}: {
+  parametrosPorClave: Map<string, ParametroSistemaModel>;
+  onGuardado: () => void;
+}) {
+  const [diasRechazo, setDiasRechazo] = useState(
+    parametrosPorClave.get("DIAS_RECHAZAR_COTIZACION")?.codigoScript ?? "15"
+  );
+  const [diasSeguimiento, setDiasSeguimiento] = useState(
+    parametrosPorClave.get("DIAS_SEGUIMIENTO_COTIZACION")?.codigoScript ?? "30"
+  );
+  const [frecuenciaRespaldo, setFrecuenciaRespaldo] = useState(
+    parametrosPorClave.get("FRECUENCIA_RESPALDO")?.frecuencia ?? "DIARIA"
+  );
+  const [expresionCron, setExpresionCron] = useState(
+    parametrosPorClave.get("FRECUENCIA_RESPALDO")?.expresionCron ?? ""
+  );
+  const [retencionBackups, setRetencionBackups] = useState(
+    parametrosPorClave.get("RETENCION_BACKUPS")?.codigoScript ?? "30"
+  );
+  const [mensaje, setMensaje] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    setGuardando(true);
+    setMensaje("");
+    const res = await actualizarParametrosSistema([
+      { clave: "DIAS_RECHAZAR_COTIZACION", codigoScript: String(diasRechazo) },
+      { clave: "DIAS_SEGUIMIENTO_COTIZACION", codigoScript: String(diasSeguimiento) },
+      {
+        clave: "FRECUENCIA_RESPALDO",
+        frecuencia: frecuenciaRespaldo,
+        expresionCron: frecuenciaRespaldo === "PROGRAMADA_CRON" ? expresionCron : null,
+      },
+      { clave: "RETENCION_BACKUPS", codigoScript: String(retencionBackups) },
+    ]);
+    setGuardando(false);
+    if (res.success) {
+      setMensaje("Parámetros guardados correctamente.");
+      onGuardado();
+    } else {
+      setMensaje(res.error ?? "No se pudieron guardar los parámetros.");
+    }
+  };
 
   return (
     <div className="flex flex-col gap-5">
-      {secciones.map((section) => (
-        <div key={section.title} className="rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
-          <div style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{section.title}</div>
-          <div className="flex flex-col gap-4">
-            {section.items.map((item) => (
-              <div key={item.label}>
-                <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>{item.label}</label>
-                {item.type === "select" ? (
-                  <select defaultValue={item.val} className="px-3 py-2.5 rounded-lg" style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF" }}>
-                    {OPCIONES_FRECUENCIA.map((o) => <option key={o}>{o}</option>)}
-                  </select>
-                ) : (
-                  <input type={item.type} defaultValue={item.val} className="px-3 py-2.5 rounded-lg" style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }} />
-                )}
-              </div>
-            ))}
+      <div className="rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
+        <div style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Vencimiento de cotizaciones</div>
+        <div className="flex flex-col gap-4">
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Días para rechazar una cotización sin aprobar
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={diasRechazo}
+              onChange={(e) => setDiasRechazo(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+            />
+          </div>
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Días para pasar una cotización rechazada a seguimiento
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={diasSeguimiento}
+              onChange={(e) => setDiasSeguimiento(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+            />
           </div>
         </div>
-      ))}
+      </div>
+
+      <div className="rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
+        <div style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Respaldo de datos</div>
+        <div className="flex flex-col gap-4">
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Frecuencia de respaldo automático
+            </label>
+            <select
+              value={frecuenciaRespaldo}
+              onChange={(e) => setFrecuenciaRespaldo(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF" }}
+            >
+              {OPCIONES_FRECUENCIA.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </div>
+          {frecuenciaRespaldo === "PROGRAMADA_CRON" && (
+            <div>
+              <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+                Expresión cron
+              </label>
+              <input
+                type="text"
+                value={expresionCron}
+                onChange={(e) => setExpresionCron(e.target.value)}
+                placeholder="0 2 * * *"
+                className="px-3 py-2.5 rounded-lg"
+                style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+              />
+            </div>
+          )}
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Retención de respaldos (días)
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={retencionBackups}
+              onChange={(e) => setRetencionBackups(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {mensaje && (
+        <div className="rounded-xl px-4 py-3 text-sm" style={{ background: mensaje.includes("guardados") ? "#ECFDF5" : "#FEF2F2", color: mensaje.includes("guardados") ? "#047857" : "#B91C1C" }}>
+          {mensaje}
+        </div>
+      )}
+
       <div className="flex justify-end">
-        <button className="px-6 py-3 rounded-xl" style={{ background: "#5680F9", color: "#FFFFFF", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>
-          Guardar parámetros
+        <button
+          onClick={guardar}
+          disabled={guardando}
+          className="px-6 py-3 rounded-xl"
+          style={{ background: "#5680F9", color: "#FFFFFF", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer", opacity: guardando ? 0.6 : 1 }}
+        >
+          {guardando ? "Guardando..." : "Guardar parámetros"}
         </button>
       </div>
     </div>

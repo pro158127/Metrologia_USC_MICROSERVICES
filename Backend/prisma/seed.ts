@@ -455,6 +455,27 @@ async function main() {
     $function$;
   `);
 
+  // 5.5 Parámetros del sistema (vencimientos y respaldo configurables)
+  console.log('⚙️ Sembrando parámetros del sistema...');
+  const parametrosBase = [
+    { clave: 'DIAS_RECHAZAR_COTIZACION', codigoScript: '15' },
+    { clave: 'DIAS_SEGUIMIENTO_COTIZACION', codigoScript: '30' },
+    { clave: 'FRECUENCIA_RESPALDO', codigoScript: null },
+    { clave: 'RETENCION_BACKUPS', codigoScript: '30' },
+  ];
+  for (const p of parametrosBase) {
+    await prisma.parametros_sistema.upsert({
+      where: { CLAVE: p.clave },
+      update: {},
+      create: {
+        CLAVE: p.clave,
+        CODIGO_SCRIPT: p.codigoScript,
+        FRECUENCIA: p.clave === 'FRECUENCIA_RESPALDO' ? 'DIARIA' : 'UNA_VEZ',
+        EXPRESION_CRON: p.clave === 'FRECUENCIA_RESPALDO' ? '0 2 * * *' : null,
+      },
+    });
+  }
+
   // 6. Asignación Dinámica de Triggers en todas las tablas
   console.log('⚡ Asignando triggers dinámicos en las tablas base...');
   await prisma.$executeRawUnsafe(`

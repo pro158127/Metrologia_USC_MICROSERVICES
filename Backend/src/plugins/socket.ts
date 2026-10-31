@@ -12,18 +12,41 @@ declare module 'fastify' {
 async function socketPluginHandler(fastify: FastifyInstance) {
   const io = new Server(fastify.server, {
     cors: {
-      origin: '*', // Ajusta según tus necesidades
-      methods: ['GET', 'POST']
+      origin: process.env.FRONTEND_URL || true,
+      methods: ['GET', 'POST'],
+      credentials: true,
+    },
+  });
+
+  // Autenticación por JWT en el handshake: el token debe venir en auth.token.
+  // Se verifica contra AUTH_SECRET (mismo secreto de @fastify/jwt y del frontend).
+  io.use((socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token as string | undefined;
+      if (!token) {
+        return next(new Error('No autenticado: falta token en el handshake.'));
+      }
+      const payload = fastify.jwt.verify(token) as { sub?: string };
+      if (!payload?.sub) {
+        return next(new Error('Token inválido: sin subject.'));
+      }
+      (socket as any).data = { userId: String(payload.sub) };
+      next();
+    } catch {
+      next(new Error('Token inválido o expirado.'));
     }
   });
 
   io.on('connection', (socket) => {
-    console.log(`🔌 Cliente conectado vía WebSocket: ${socket.id}`);
+    const userId = (socket as any).data?.userId as string | undefined;
+    const roomName = `user_room_${userId}`;
+    socket.join(roomName);
+    console.log(`👤 Socket ${socket.id} autenticado (userId=${userId}) unido a ${roomName}`);
 
-    socket.on('join_room', (userId) => {
-      const roomName = `user_room_${userId}`;
+    // Se conserva el evento por compatibilidad, pero el id del cliente se ignora:
+    // la sala siempre se resuelve desde el token verificado.
+    socket.on('join_room', () => {
       socket.join(roomName);
-      console.log(`👤 Socket ${socket.id} se unió a la sala privada: ${roomName}`);
     });
 
     socket.on('disconnect', () => {

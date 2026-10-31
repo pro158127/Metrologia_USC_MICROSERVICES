@@ -1,0 +1,206 @@
+================================================================================
+FLUJOS ENTRE MÓDULOS — LABORATORIO DE METROLOGÍA USC
+Mapa de estados, transiciones, condiciones y brechas (flujos ausentes)
+Fuente: inspección estática de Backend/src y Frontend/app (Prisma, FSMs, rutas)
+================================================================================
+
+--------------------------------------------------------------------------------
+1) FLUJO MACRO DEL NEGOCIO (cadena de valor)
+--------------------------------------------------------------------------------
+  Cliente
+    -> Cotización (BORRADOR -> ENVIADA -> APROBADA [vía enlace] -> EN_SEGUIMIENTO)
+    -> Orden de Trabajo (OT) [se genera al APROBAR la cotización o al Importar OT]
+    -> Recepción de equipos (R-CM010)
+    -> Asignación de técnico
+    -> Calibración (técnico sube PDF -> certificado)
+    -> Revisión de certificados (aprobar/rechazar)
+    -> Firma/sellado (encolado en la aprobación; NO es módulo funcional)
+    -> Entrega y envío (comprobante de pago + envío por correo)
+    -> Reportes / auditoría
+
+--------------------------------------------------------------------------------
+2) MÁQUINA DE ESTADOS DE COTIZACIÓN (enum "Estados")
+--------------------------------------------------------------------------------
+Estados: BORRADOR, ENVIADA, APROBADA, RECHAZADA, EN_SEGUIMIENTO
+
+Transiciones VÁLIDAS (backend cotizaciones.routes.ts:25 y frontend tipos/cotizacion.ts:49):
+  BORRADOR        -> ENVIADA          (única salida)
+  ENVIADA         -> RECHAZADA        (desde la interfaz)
+  ENVIADA         -> APROBADA         (SOLO mediante enlace externo firmado por correo)
+  APROBADA        -> EN_SEGUIMIENTO   (única salida)
+  RECHAZADA       -> (terminal, sin salida)
+  EN_SEGUIMIENTO  -> (terminal, sin salida)
+
+Puntos clave:
+  - La aprobación NO está disponible en la UI. Se realiza exclusivamente por el
+    enlace externo: GET /api/v1/cotizaciones/aprobar/:token (público, token HMAC
+    firmado con AUTH_SECRET, TTL 30 días) -> cotizaciones.routes.ts:917.
+  - Al pasar a APROBADA se generan automáticamente las OT(s)
+    (generarOrdenesTrabajoAprobacion / cotizacion-aprobacion.service.ts).
+    Si la cotización mezcla sitios LABORATORIO y CLIENTE se crea una OT Master
+    (SITIO_CALIBRACION=null) con filas hijas por sitio; si es homogénea, una OT.
+  - RECHAZADA exige "motivo del rechazo" obligatorio.
+  - EN_SEGUIMIENTO alimenta el módulo de Seguimiento Comercial; NO hay retorno a
+    ENVIADA/APROBADA.
+
+--------------------------------------------------------------------------------
+3) MÁQUINA DE ESTADOS DE ORDEN DE TRABAJO (enum "EstadoOT")
+--------------------------------------------------------------------------------
+Orden (monotónica, ot-fsm.service.ts):
+  Creada -> En_recepción -> Asignada -> En_calibración -> Certificado_en_revisión
+         -> Certificado_aprobado -> Certificado_enviado
+
+Condiciones de avance AUTOMÁTICO (evaluarTransicionesOT):
+  Creada -> En_recepción:           cabecera de recepción completa (fecha, entrega,
+                                    recibe) y >=1 instrumento con IBC de entrada.
+  En_recepción -> Asignada:         recepción OK y TODOS los instrumentos con técnico.
+  Asignada -> En_calibración:       recepción OK y >=1 instrumento con PDF
+                                    (calibración) + estampilla válida (no "TEMP-*").
+  En_calibración -> Certificado_en_revisión: recepción OK y >=1 certificado APROBADO.
+  Certificado_en_revisión -> Certificado_aprobado: recepción OK y 100% certificados APROBADO.
+  Certificado_aprobado -> Certificado_enviado: 100% aprobado Y estado_pago = PAGADO.
+
+Transiciones EXPLÍCITAS (transicionarOT):
+  - Rechazo de certificado -> retroceso a En_calibración (permitirRetroceso=true).
+  - Envío de certificados -> Certificado_enviado (permitirRetroceso=true).
+  - Por defecto NO se permite retroceder (rango(estadoNuevo) <= rango(actual) -> 409).
+
+Regla de asignación:
+  - Asignar/cambiar técnico SOLO cuando la OT está en "En_recepción"
+    (validarAsignacionPermitida -> 409 si no).
+
+--------------------------------------------------------------------------------
+4) SUB-FLUJO DE CERTIFICADO (campo ESTADO_REVISION)
+--------------------------------------------------------------------------------
+Valores: PENDIENTE_REVISION (inicial), APROBADO, RECHAZADO.
+
+  - Técnico sube PDF -> certificado PENDIENTE_REVISION (calibraciones.routes.ts:235/269).
+  - Director aprueba -> APROBADO + se encola sellado de PDF
+    (getCertificatePdfQueue 'generar-certificado') + evaluarTransicionesOT.
+  - Director rechaza -> RECHAZADO + motivo obligatorio + se registra en
+    historial_devoluciones_informes + notifica al técnico + la OT retrocede a
+    En_calibración (certificados.routes.ts:283-310).
+
+--------------------------------------------------------------------------------
+5) ESTADO DE PAGO (enum "estadopay")
+--------------------------------------------------------------------------------
+Valores: PENDINDE (NOTA: typo "PENDINDE" en el esquema), PAGADO, VENCIDA.
+
+  - Subir comprobante de pago (Entrega y Envío) -> estado_pago = PAGADO
+    -> dispara automáticamente Certificado_enviado (envios.routes.ts:215-221).
+  - No hay lógica automática detectada para pasar a VENCIDA (solo existe el enum).
+
+--------------------------------------------------------------------------------
+6) FLUJOS ENTRE MÓDULOS (entradas / salidas / condiciones)
+--------------------------------------------------------------------------------
+
+[LOGIN] -> [DASHBOARD]
+  - Autenticación por correo + contraseña (argon2), JWT NextAuth 30 min.
+  - Bloqueo de cuenta tras 3 intentos fallidos (auth.routes.ts:36) y/o ESTADO=false.
+  - El enlace "restablecer contraseña" solo se muestra para director@usc.edu.co.
+  - Salida: Dashboard (vista general con KPIs, certificados pendientes, alertas).
+
+[CLIENTES] <-> [PERFIL DE CLIENTE]
+  - Cliente: crear, editar, activar/desactivar (ACTIVO/INACTIVO), adjuntar RUT.
+  - Perfil cliente: muestra cotizaciones, OT, recepciones, certificados,
+    comprobantes y facturas del cliente; permite agregar factura.
+  - Sin restricción de flujo: solo lectura/gestión de entidad cliente.
+
+[COTIZACIONES]
+  - Crea borrador -> envía (ENVIADA).
+  - Catálogo de tarifas alimenta valores (precios vigentes por magnitud/servicio).
+  - Aprobación por enlace externo genera OT(s).
+  - Salida: OT "Creada" asociada a la cotización + recepción vinculada.
+  - Bloqueo: no se puede editar la cotización si alguna de sus OT está en
+    Asignada/En_calibración/Certificado_en_revisión/Certificado_aprobado/
+    Certificado_enviado (cotizaciones.routes.ts:277-287).
+
+[SEGUIMIENTO COMERCIAL]
+  - Opera SOLO sobre cotizaciones en EN_SEGUIMIENTO.
+  - Registra gestiones (LLAMADA/CORREO/REUNION/OTRO) con fecha próxima gestión.
+  - Sin transición de estado hacia otro módulo.
+
+[IMPORTAR OT]
+  - Crea OT desde Excel (.xlsx), flujo Estándar (auto-detecta) o Inverso (vincula
+    a cotización existente).
+  - Salida: OT "Creada" (puede o no estar ligada a una cotización).
+
+[RECEPCIÓN DE EQUIPOS] (formato R-CM010)
+  - Asocia cliente + cotización + OT.
+  - Captura equipos, IBC entrada/salida, accesorios, cierre técnico.
+  - Salida: OT avanza a En_recepción (cuando cabecera + IBC cumplen).
+  - Guarda como RECIBIDO o BORRADOR según completitud.
+
+[ÓRDENES DE TRABAJO]
+  - Vistas Kanban/Árbol/Lista.
+  - Asignar técnico (solo En_recepción) -> OT Asignada.
+  - Consolidar R-CM05.
+  - Salida: OT avanza según FSM (sección 3).
+
+[CALIBRACIÓN E INFORMES]
+  - Técnico adjunta PDF (máx 10 MB) o reenvía certificado devuelto.
+  - Crea/actualiza certificado PENDIENTE_REVISION + versionado del documento.
+  - Salida: OT avanza a En_calibración (al haber PDF + estampilla).
+
+[REVISIÓN DE CERTIFICADOS]
+  - Aprueba (APROBADO + sellado) o rechaza (RECHAZADO + devuelve al técnico).
+  - Permisos: revisar_aprobar_acreditados / revisar_aprobar_no_acreditados.
+  - Salida: OT avanza a Certificado_en_revisión/Aprobado, o retrocede a En_calibración.
+
+[FIRMA Y SELLO]
+  - En el menú (sección TÉCNICO) pero SIN pantalla funcional implementada.
+  - El sellado real se encola desde la APROBACIÓN del certificado (Revisión).
+  - => brecha de interfaz: opción muerta en el sidebar.
+
+[ENTREGA Y ENVÍO]
+  - Sube comprobante de pago (PDF/PNG/JPG -> PDF) -> estado_pago = PAGADO.
+  - Envía certificados por correo (requiere comprobante + TODOS aprobados + correo).
+  - Salida: OT Certificado_enviado.
+  - Bloqueos: sin comprobante -> 409; no todos aprobados -> 409; sin correo -> 409.
+
+[REPORTES Y CONSOLIDADOS]
+  - KPIs, gráficas, trazabilidad (RF-41 / RF-46), export PDF/Excel.
+  - Solo lectura; no muta estados.
+
+[ADMINISTRACIÓN]
+  - Usuarios (crear/editar/estado/restablecer/eliminar+restaurar), bitácora,
+    plantillas, sellos, parámetros.
+  - Nota: el toggle de estado (Activo/Inactivo) NO resetea "intentos"; para
+    desbloquear hay que además poner intentos=0 (brecha corregida en UI pendiente).
+
+[CONFIGURACIÓN GENERAL]
+  - Opción del menú SIN pantalla funcional independiente (la configuración vive
+    dentro de Administración). => brecha de interfaz.
+
+--------------------------------------------------------------------------------
+7) DÓNDE NO HAY FLUJO (brechas / puntos muertos)
+--------------------------------------------------------------------------------
+1. FIRMA Y SELLO: módulo sin contenido; la firma/sellado es una tarea encolada,
+   no una pantalla. El sidebar lo lista pero no navega a nada funcional.
+2. CONFIGURACIÓN GENERAL: opción sin pantalla.
+3. Cotización RECHAZADA: terminal, sin reabrir ni crear nueva versión desde el
+   rechazo (solo se puede generar nueva versión en otros contextos).
+4. Cotización EN_SEGUIMIENTO: terminal, no vuelve a ENVIADA/APROBADA.
+5. OT Certificado_enviado: terminal, sin flujo de re-apertura.
+6. Asignación de técnico restringida a En_recepción (no se puede reasignar después).
+7. Rechazo de certificado solo retrocede OT a En_calibración (no más atrás).
+8. Pago "VENCIDA": enum existe pero no hay lógica que lo asigne.
+9. Aprobación de cotización: fuera de la UI (solo enlace externo por correo).
+10. Desbloqueo de usuario por estado NO resetea intentos (toggle de Administración).
+11. Socket.IO: clientes se unen a salas por userId sin verificar token (riesgo).
+12. No hay rate-limiting por IP en el login (solo bloqueo por cuenta).
+
+--------------------------------------------------------------------------------
+8) CONDICIONES / BLOQUEOS CRÍTICOS (resumen)
+--------------------------------------------------------------------------------
+- Editar cotización: bloqueado si hay OT avanzadas (Asignada o posterior).
+- Asignar técnico: solo en OT "En_recepción".
+- Enviar certificados: requiere comprobante + 100% aprobados + correo destino.
+- Comprobante de pago: bloqueado si no todos los certificados están aprobados.
+- Rechazo (cotización o certificado): motivo obligatorio.
+- Aprobación de cotización: requiere token firmado (enlace) válido.
+- Permisos RBAC por rol (PERMISOS_JSON) controlan visibilidad/acciones por módulo.
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================

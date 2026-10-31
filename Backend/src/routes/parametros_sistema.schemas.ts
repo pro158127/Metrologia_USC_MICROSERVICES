@@ -39,3 +39,20 @@ export const respuestaListaParametrosSchema = z.object({
   data: z.array(parametroSistemaDtoSchema),
 });
 export type RespuestaListaParametros = z.infer<typeof respuestaListaParametrosSchema>;
+
+export const actualizarParametrosBodySchema = z.object({
+  parametros: z.array(
+    z.object({
+      clave: z.string(),
+      codigoScript: z.string().nullish(),
+      frecuencia: z.string().nullish(),
+      expresionCron: z.string().nullish(),
+    })
+  ),
+});
+export type ActualizarParametrosBody = z.infer<typeof actualizarParametrosBodySchema>;
+
+export const respuestaOkParametrosSchema = z.object({
+  ok: z.literal(true),
+});
+export type RespuestaOkParametros = z.infer<typeof respuestaOkParametrosSchema>;

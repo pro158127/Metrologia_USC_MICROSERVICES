@@ -8,6 +8,7 @@ import { useShallow } from 'zustand/react/shallow'; // ✅ Importar useShallow
 import type RealtimeTablesState from '@/tipos/store';
 import { toast } from 'sonner';
 import { obtenerLlavePrimaria, normalizarPayload } from '@/app/lib/realtime/normalize';
+import { obtenerTokenSocket } from '@/app/lib/socket/token';
 // ==========================================
 // TIPOS CENTRALIZADOS (Frontend/tipos/)
 // Se re-exportan para compatibilidad con los consumidores actuales.
@@ -70,9 +71,16 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     if (status === "loading" || status !== "authenticated" || !userIdValido) return;
     if (socketRef.current?.connected) return;
 
- const nuevoSocket = io({
+    let cancelado = false;
+    let limpiar: (() => void) | undefined;
+
+    (async () => {
+      const token = await obtenerTokenSocket();
+      if (cancelado || !token) return;
+
+      const nuevoSocket = io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
         path: "/socket.io",
-        query: { userId: String(userIdValido) },
+        auth: { token },
         transports: ["websocket", "polling"],
         reconnection: true,
         reconnectionAttempts: Infinity,
@@ -80,119 +88,118 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         reconnectionDelayMax: 10000,
         timeout: 20000,
       });
-    socketRef.current = nuevoSocket;
+      socketRef.current = nuevoSocket;
 
-    // Re-sincroniza salas y estado pendiente tras (re)conexión.
-    const sincronizarRealtime = () => {
-      nuevoSocket.emit("join_room", userIdValido);
-      const store = useDbStore.getState();
-      // Forzar recarga de las tablas que pueden quedar desactualizadas
-      // si se perdieron eventos durante la desconexión/suspensión.
-      const tablasClave: (keyof RealtimeTablesState)[] = [
-        "usuarios",
-        "cotizaciones",
-        "clientes",
-        "ordenes_trabajo",
-        "recepciones_equipo",
-        "facturas",
-        "seguimientos_comerciales",
-        "certificados",
-      ];
-      tablasClave.forEach((t) => store.loadTable(t, true));
-    };
+      // Re-sincroniza salas y estado pendiente tras (re)conexión.
+      const sincronizarRealtime = () => {
+        nuevoSocket.emit("join_room", userIdValido);
+        const store = useDbStore.getState();
+        // Forzar recarga de las tablas que pueden quedar desactualizadas
+        // si se perdieron eventos durante la desconexión/suspensión.
+        const tablasClave: (keyof RealtimeTablesState)[] = [
+          "usuarios",
+          "cotizaciones",
+          "clientes",
+          "ordenes_trabajo",
+          "recepciones_equipo",
+          "facturas",
+          "seguimientos_comerciales",
+          "certificados",
+        ];
+        tablasClave.forEach((t) => store.loadTable(t, true));
+      };
 
-    nuevoSocket.on("connect", () => {
-      setSocket(nuevoSocket);
-      sincronizarRealtime();
-    });
- nuevoSocket.on("job_plantilla_terminado", (payload) => {
-      console.warn("🔔 EVENTO EN NAVEGADOR:", payload);
-      
-      // 🔥 Le damos un alias a 'status' para no chocar con el 'status' de useSession
-      const { idVersion, mensaje, status: jobStatus } = payload;
-
-      if (jobStatus === "COMPLETADO") {
-       // console.log(`Plantilla con ID ${idVersion} procesada correctamente.`);
-        toast.success(mensaje, {
-          description: `La plantilla con ID ${idVersion} ha sido procesada correctamente.`,
-        });
-      } else {
-        toast.error(mensaje, {
-          description: `La plantilla con ID ${idVersion} ha fallado al ser procesada.`,
-        });
-      }
-    });
-
-    nuevoSocket.on("cambio_realtime", (payload) => {
-      const { tabla, operacion, data: rawData } = payload;
-     //console.warn("🔔 EVENTO EN NAVEGADOR:", payload);
-      const { updateTable, setDbState } = useDbStore.getState();
-      // Caso especial plantillas
-      if (TABLAS_PLANTILLAS.includes(tabla)) {
-        setDbState((prev) => ({
-          ...prev,
-          plantillas: processPlantillasRealtime(prev.plantillas, payload),
-        }));
-        return;
-      }
-
-      // Normalizar y actualizar usando updateTable (atómico)
-      const dataMapeada = normalizarPayload(tabla, rawData);
-      console.log(dataMapeada,"dfsfsfs")
-      const { nombreLlave, idValor } = obtenerLlavePrimaria(tabla, dataMapeada);
-
-      if (idValor === undefined || idValor === null || isNaN(idValor)) {
-       // console.error(`❌ ID inválido para [${tabla}]`);
-        return;
-      }
-
-      updateTable(tabla as keyof RealtimeTablesState, (listaActual) => {
-        let listaActualizada = [...(listaActual as any[])];
-        console.log(listaActualizada,"aqui es la lsita c")
-        const existe = listaActualizada.some((item) => Number(item[nombreLlave]) === idValor);
-       // console.log(nombreLlave)
-        if (operacion === "INSERT" && !existe) {
-          console.log("hizo _insert")
-          listaActualizada = [dataMapeada, ...listaActualizada];
-        } else if (operacion === "UPDATE") {
-          console.log("hizo update ")
-          listaActualizada = existe
-            ? listaActualizada.map((item) =>
-                Number(item[nombreLlave]) === idValor ? dataMapeada : item
-              )
-            : [dataMapeada, ...listaActualizada];
-        } else if (operacion === "DELETE") {
-          listaActualizada = listaActualizada.filter(
-            (item) => Number(item[nombreLlave]) !== idValor
-          );
-        }
-        return listaActualizada;
-      });
-    });
-
-    nuevoSocket.on("disconnect", () => console.warn("🔌 Desconectado"));
-
-    // Al volver a la pestaña, forzar reconexión y re-sincronización si la
-    // conexión se suspendió mientras la pestaña estuvo oculta.
-    const manejarVisibilidad = () => {
-      if (document.visibilityState !== "visible") return;
-      if (!nuevoSocket.connected) {
-        nuevoSocket.connect();
-      } else {
+      nuevoSocket.on("connect", () => {
+        setSocket(nuevoSocket);
         sincronizarRealtime();
-      }
-    };
-    const manejarOnline = () => {
-      if (!nuevoSocket.connected) nuevoSocket.connect();
-    };
-    document.addEventListener("visibilitychange", manejarVisibilidad);
-    window.addEventListener("online", manejarOnline);
+      });
+
+      nuevoSocket.on("job_plantilla_terminado", (payload) => {
+        console.warn("🔔 EVENTO EN NAVEGADOR:", payload);
+
+        // 🔥 Le damos un alias a 'status' para no chocar con el 'status' de useSession
+        const { idVersion, mensaje, status: jobStatus } = payload;
+
+        if (jobStatus === "COMPLETADO") {
+          toast.success(mensaje, {
+            description: `La plantilla con ID ${idVersion} ha sido procesada correctamente.`,
+          });
+        } else {
+          toast.error(mensaje, {
+            description: `La plantilla con ID ${idVersion} ha fallado al ser procesada.`,
+          });
+        }
+      });
+
+      nuevoSocket.on("cambio_realtime", (payload) => {
+        const { tabla, operacion, data: rawData } = payload;
+        const { updateTable, setDbState } = useDbStore.getState();
+        // Caso especial plantillas
+        if (TABLAS_PLANTILLAS.includes(tabla)) {
+          setDbState((prev) => ({
+            ...prev,
+            plantillas: processPlantillasRealtime(prev.plantillas, payload),
+          }));
+          return;
+        }
+
+        // Normalizar y actualizar usando updateTable (atómico)
+        const dataMapeada = normalizarPayload(tabla, rawData);
+        const { nombreLlave, idValor } = obtenerLlavePrimaria(tabla, dataMapeada);
+
+        if (idValor === undefined || idValor === null || isNaN(idValor)) {
+          return;
+        }
+
+        updateTable(tabla as keyof RealtimeTablesState, (listaActual) => {
+          let listaActualizada = [...(listaActual as any[])];
+          const existe = listaActualizada.some((item) => Number(item[nombreLlave]) === idValor);
+          if (operacion === "INSERT" && !existe) {
+            listaActualizada = [dataMapeada, ...listaActualizada];
+          } else if (operacion === "UPDATE") {
+            listaActualizada = existe
+              ? listaActualizada.map((item) =>
+                  Number(item[nombreLlave]) === idValor ? dataMapeada : item
+                )
+              : [dataMapeada, ...listaActualizada];
+          } else if (operacion === "DELETE") {
+            listaActualizada = listaActualizada.filter(
+              (item) => Number(item[nombreLlave]) !== idValor
+            );
+          }
+          return listaActualizada;
+        });
+      });
+
+      nuevoSocket.on("disconnect", () => console.warn("🔌 Desconectado"));
+
+      // Al volver a la pestaña, forzar reconexión y re-sincronización si la
+      // conexión se suspendió mientras la pestaña estuvo oculta.
+      const manejarVisibilidad = () => {
+        if (document.visibilityState !== "visible") return;
+        if (!nuevoSocket.connected) {
+          nuevoSocket.connect();
+        } else {
+          sincronizarRealtime();
+        }
+      };
+      const manejarOnline = () => {
+        if (!nuevoSocket.connected) nuevoSocket.connect();
+      };
+      document.addEventListener("visibilitychange", manejarVisibilidad);
+      window.addEventListener("online", manejarOnline);
+
+      limpiar = () => {
+        document.removeEventListener("visibilitychange", manejarVisibilidad);
+        window.removeEventListener("online", manejarOnline);
+        nuevoSocket.disconnect();
+        socketRef.current = null;
+      };
+    })();
 
     return () => {
-      document.removeEventListener("visibilitychange", manejarVisibilidad);
-      window.removeEventListener("online", manejarOnline);
-      nuevoSocket.disconnect();
-      socketRef.current = null;
+      cancelado = true;
+      limpiar?.();
     };
   }, [status, userIdValido]);
 

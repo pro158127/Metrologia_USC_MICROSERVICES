@@ -52,11 +52,13 @@ async function bootstrap() {
     limits: { fileSize: 15 * 1024 * 1024 },
   });
 
-  // 2. Infraestructura & Plugins Globales (¡PRIMERO SOCKETS Y LUEGO POSTGRES!)
-  await fastify.register(socketPlugin);
-  await fastify.register(postgresListenerPlugin);
+  // 2. Infraestructura & Plugins Globales
+  // auth (registra @fastify/jwt) va antes que socketPlugin para poder verificar
+  // el JWT en el handshake de Socket.IO.
   await fastify.register(prismaPlugin);
   await fastify.register(auth);
+  await fastify.register(socketPlugin);
+  await fastify.register(postgresListenerPlugin);
   await fastify.register(errorHandlerPlugin);
 
   // 3. Registro de Rutas

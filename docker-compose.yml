@@ -16,6 +16,8 @@ x-backend-env: &backend-env
   MINIO_ACCESS_KEY: "admin_metrologia"
   MINIO_SECRET_KEY: "PasswordSegura123"
   MINIO_BUCKET_NAME: "documentos-metrologia"
+  MINIO_BUCKET_BACKUP: "backups-postgres"
+  MINIO_BUCKET_BACKUP_MINIO: "backups-minio"
   OUTLOOK_USER: "cris271581@gmail.com"
   OUTLOOK_APP_PASSWORD: "jjrsqofbiykexwgg" # Sin espacios
   FRONTEND_URL: "https://qcwngnfx-3000.use2.devtunnels.ms"
@@ -79,32 +81,6 @@ services:
 
   # 🔥 NUEVO: Script de auto-aprovisionamiento para el bucket
 
-
-  postgres_backup:
-    build:
-      context: ./scripts
-      dockerfile: Dockerfile.backup
-    container_name: metrologia_backup
-    restart: always
-    environment:
-      POSTGRES_HOST: "postgres_db"
-      POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "password123"
-      POSTGRES_DB: "metrologia_db"
-      MINIO_HOST: "minio-storage"
-      MINIO_ROOT_USER: "admin_metrologia"
-      MINIO_ROOT_PASSWORD: "PasswordSegura123"
-      MINIO_BUCKET_BACKUP: "backups-postgres"
-      CRON_SCHEDULE: "0 2 * * *"
-    volumes:
-      - ./scripts/backup.sh:/backup.sh
-    depends_on:
-      postgres_db:
-        condition: service_healthy
-      minio:
-        condition: service_started
-    networks:
-      - metrologia_net
 
   nginx:
     image: nginx:alpine

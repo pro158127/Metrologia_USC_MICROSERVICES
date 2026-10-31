@@ -25,3 +25,27 @@ export async function obtenerParametrosSistema(): Promise<{
     return { success: false, error: 'Error interno del servidor al consultar los parámetros' };
   }
 }
+
+export interface ParametroInput {
+  clave: string;
+  codigoScript?: string | null;
+  frecuencia?: string | null;
+  expresionCron?: string | null;
+}
+
+export async function actualizarParametrosSistema(
+  parametros: ParametroInput[]
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const session = await auth();
+    await fastifyRequest<{ ok: boolean }>(session, '/api/v1/parametros-sistema', {
+      method: 'PUT',
+      body: { parametros },
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Error en actualizarParametrosSistema:', error);
+    if (error instanceof FastifyHttpError) return { success: false, error: error.message };
+    return { success: false, error: 'Error interno del servidor al guardar los parámetros' };
+  }
+}

@@ -10,7 +10,12 @@ WORKDIR /workspace/Backend
 RUN apk add --no-cache \
     python3 py3-pandas py3-openpyxl \
     libreoffice \
+    postgresql16-client \
     ttf-dejavu font-liberation
+
+# Cliente MinIO (mc) para espejar el bucket de documentos en los respaldos
+RUN curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc \
+    && chmod +x /usr/local/bin/mc
 
 EXPOSE 3001
 
