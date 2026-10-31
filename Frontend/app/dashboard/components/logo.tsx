@@ -31,6 +31,7 @@ export default function UscLabLogo({
   width={200}  // Ancho base intrínseco en px
   height={64}  // Alto base intrínseco en px
   className="h-16 w-auto object-contain drop-shadow-[0_0_15px_rgba(99,102,241,0.5)]"
+  style={{ width: "auto", height: "auto" }}
   priority
 />
 </div>
