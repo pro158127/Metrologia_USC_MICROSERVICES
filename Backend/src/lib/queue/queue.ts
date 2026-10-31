@@ -191,7 +191,9 @@ export type EmailTemplateType =
   | 'crear_ot'
   | 'envia_certifiados'
   | 'crear_usuario'
-  | 'restablecer_contrasena'; // Agrega los que necesites
+  | 'restablecer_contrasena'
+  | 'codigo_recuperacion'
+  | 'cambio_contrasena'; // Agrega los que necesites
 
 // 2. Interfaz estricta para el trabajo de BullMQ
 export interface EmailJobData {

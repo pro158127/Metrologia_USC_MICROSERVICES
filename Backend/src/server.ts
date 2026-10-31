@@ -14,6 +14,7 @@ import clientesRoutes from './routes/clientes.routes.js';
 import notificacionesRoutes from './routes/notificaciones.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import usuariosRoutes from './routes/usuarios.routes.js';
+import perfilRoutes from './routes/perfil.routes.js';
 import cotizacionesRoutes from './routes/cotizaciones.routes.js';
 import errorHandlerPlugin from './plugins/error-handler.js';
 import tarifasRoutes from './routes/tarifas.routes.js';
@@ -70,6 +71,7 @@ async function bootstrap() {
   await fastify.register(authRoutes);
   await fastify.register(archivosRoutes);
   await fastify.register(usuariosRoutes);
+  await fastify.register(perfilRoutes);
   await fastify.register(cotizacionesRoutes);
   await fastify.register(tarifasRoutes);
   await fastify.register(sellosRoutes);

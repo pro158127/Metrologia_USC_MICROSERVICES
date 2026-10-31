@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { warn } from "console";
 import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 import type RealtimeTablesState from "@/tipos/store";
+import Perfil from "./Perfil";
 
 
 import { 
@@ -358,6 +359,7 @@ export function Header({ moduleTitle, isSidebarOpen, setIsSidebarOpen }: any) {
 
   const [showPanel, setShowPanel] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const  {data:session}=useSession();
 
 
@@ -457,20 +459,29 @@ const inital=getInitials(session?.user?.name)
                   <p className="text-sm font-semibold text-slate-950">Luis Burgos</p>
                   <p className="text-xs text-slate-500 truncate">director@usc.edu.co</p>
                 </div>
-                {[
-                  { label: "Mi perfil" },
-                  { label: "Configuración" },
-                ].map((item) => (
-                  <button key={item.label} type="button" className="w-full px-4 py-2.5 text-left text-sm text-slate-700 transition hover:bg-slate-50">
-                    {item.label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfile(true);
+                    setShowUserMenu(false);
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                >
+                  Mi perfil
+                </button>
+                <button
+                  type="button"
+                  className="w-full px-4 py-2.5 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                >
+                  Configuración
+                </button>
               </div>
             )}
           </div>
 
         </div>
       </div>
+      {showProfile && <Perfil onClose={() => setShowProfile(false)} />}
     </header>
   );
 }

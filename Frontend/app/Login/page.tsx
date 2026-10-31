@@ -28,8 +28,8 @@ function LoginContent({ onLogin }: LoginProps) {
     if (!errorType) return;
 
     const errorMessages: Record<string, string> = {
-      user_blocked_or_inactive: "Tu cuenta está inactiva o ha sido bloqueada. Contacta al administrador.",
-      user_blocked_now: "Has superado el límite de intentos. Tu cuenta ha sido bloqueada.",
+      user_blocked_or_inactive: "Tu cuenta está inactiva o ha sido bloqueada. Usa 'restablecer contraseña' para desbloquearla.",
+      user_blocked_now: "Has superado el límite de intentos. Tu cuenta ha sido bloqueada. Usa 'restablecer contraseña' para desbloquearla.",
       invalid_credentials: "Contraseña incorrecta. Inténtalo de nuevo.",
       user_not_found: "El correo ingresado no está registrado.",
     };

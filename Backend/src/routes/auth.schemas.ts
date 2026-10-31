@@ -37,3 +37,20 @@ export const respuestaLoginSchema = z.object({
   user: usuarioLoginDtoSchema,
 });
 export type RespuestaLogin = z.infer<typeof respuestaLoginSchema>;
+
+export const solicitarRecuperacionBodySchema = z.object({
+  email: z.string(),
+});
+export type SolicitarRecuperacionBody = z.infer<typeof solicitarRecuperacionBodySchema>;
+
+export const recuperarContrasenaBodySchema = z.object({
+  email: z.string(),
+  codigo: z.string(),
+  nuevaContrasena: z.string().min(8),
+});
+export type RecuperarContrasenaBody = z.infer<typeof recuperarContrasenaBodySchema>;
+
+export const respuestaRecuperacionSchema = z.object({
+  success: z.literal(true),
+});
+export type RespuestaRecuperacion = z.infer<typeof respuestaRecuperacionSchema>;
