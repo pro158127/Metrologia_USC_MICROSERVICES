@@ -70,7 +70,7 @@ export default function Perfil({ onClose }: PerfilProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="w-full max-w-md rounded-[28px] border border-white/15 bg-white/95 p-8 shadow-[0_35px_80px_-40px_rgba(15,23,42,0.35)] backdrop-blur-xl">
         <div className="flex items-start justify-between">
           <h2 className="text-2xl font-semibold text-slate-950">Mi Perfil</h2>

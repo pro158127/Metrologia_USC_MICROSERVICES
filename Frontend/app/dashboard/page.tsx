@@ -7,6 +7,7 @@ import { Sidebar, ModuleKey } from "./components/sidebar";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { permisionMapping } from "@/app/lib/permissions/mapping";
 import { Header } from "./components/Header";
+import Perfil from "./components/Perfil";
 import { Administracion } from "./module/Administracion";
 import ClientMainRenderer from "./module/gestion_clientes/page";
 import ClienteDetailPage from "./module/gestion_clientes/perfil/[id]/page";
@@ -131,6 +132,7 @@ export const MainRenderer = () => {
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
   const [cliente, setCliente] = useState<number | null>(null);
   const [otToOpen, setOtToOpen] = useState<number | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
 
   const puedeVer = useCallback((m: ModuleKey) => {
     const key = permisionMapping[m];
@@ -195,6 +197,7 @@ const handleOpenOt = useCallback((id: number) => {
           moduleTitle={MODULE_TITLES[activeModule] || "Módulo"}
           isSidebarOpen={isSidebarOpen}
           setIsSidebarOpen={setSidebarOpen}
+          onOpenProfile={() => setShowProfile(true)}
         />
 
         <main className="flex-1 overflow-auto bg-[#eff5ff]">
@@ -216,6 +219,7 @@ const handleOpenOt = useCallback((id: number) => {
         </main>
       </div>
 
+      {showProfile && <Perfil onClose={() => setShowProfile(false)} />}
     </div>
   );
 };
