@@ -241,7 +241,7 @@ const QuotationListTable = ({
   const puedeGestionarEstado =
     can("cotizaciones", "aprobar_rechazar") || can("cotizaciones", "enviar_al_cliente");
   return (
-    <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden">
+    <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-x-auto">
       <table className="w-full text-left text-xs">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-100">
@@ -1189,7 +1189,7 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
 
       {rejectTargetId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-slate-100">
+          <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl border border-slate-100">
             <h3 className="text-base font-bold text-slate-800">Rechazar cotización</h3>
             <p className="text-xs text-slate-500 mt-1">Es obligatorio indicar el motivo del rechazo.</p>
             <textarea

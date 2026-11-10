@@ -60,7 +60,7 @@ const PdfViewerModal: React.FC<{
   onClose: () => void;
 }> = ({ url, titulo, cargando, onClose }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-    <div className="w-full max-w-4xl h-[85vh] rounded-2xl bg-white shadow-xl border border-slate-100 flex flex-col">
+    <div className="w-full max-w-4xl h-dvh sm:h-[85vh] rounded-2xl bg-white shadow-xl border border-slate-100 flex flex-col">
       <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
         <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
           <FileText size={16} /> {titulo}
@@ -463,7 +463,7 @@ export function MainRendererenv() {
       </div>
 
       {/* Tabla */}
-      <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden">
+      <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">

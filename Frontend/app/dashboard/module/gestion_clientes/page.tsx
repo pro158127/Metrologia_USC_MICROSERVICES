@@ -164,6 +164,7 @@ export const ClientFormModal = ({
               <label className="block text-slate-400 font-bold mb-1">NIT / Cédula *</label>
               <input
                 type="text"
+                inputMode="numeric"
                 value={formData.nitCedula || ""}
                 onChange={(e) => setFormData({ ...formData, nitCedula: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white outline-none focus:border-[#5680F9]"
@@ -192,7 +193,7 @@ export const ClientFormModal = ({
             <div>
               <label className="block text-slate-400 font-bold mb-1">Teléfono</label>
               <input
-                type="text"
+                type="tel"
                 value={formData.telefono || ""}
                 onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white outline-none focus:border-[#5680F9]"
@@ -554,7 +555,7 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
         permisos={permisos}
       />
 
-      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">

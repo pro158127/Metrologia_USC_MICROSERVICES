@@ -435,7 +435,7 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
       {/* Visor de PDF (mismo componente FileViewer que el RUT) */}
       {viewer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 md:p-8">
-          <div className="relative w-full max-w-5xl h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+          <div className="relative w-full max-w-5xl h-dvh sm:h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
               <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider truncate">
                 {viewer.nombre}
@@ -703,7 +703,7 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 md:p-8">
     
    
-    <div className="relative w-full max-w-5xl h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div className="relative w-full max-w-5xl h-dvh sm:h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
       
 
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">

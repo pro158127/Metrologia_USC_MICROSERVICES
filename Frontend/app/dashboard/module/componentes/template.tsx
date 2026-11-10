@@ -867,7 +867,7 @@ if (faltanEscalares || faltanTablas) {
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
-      <div className="w-full h-[95vh] max-w-[1400px] rounded-xl flex flex-col overflow-hidden shadow-2xl bg-white border border-slate-300">
+      <div className="w-full h-dvh sm:h-[95vh] max-w-[1400px] rounded-xl flex flex-col overflow-hidden shadow-2xl bg-white border border-slate-300">
         {/* Header */}
         <div className="flex justify-between items-center px-4 py-3 border-b bg-slate-50 border-slate-200">
           <div>
@@ -923,7 +923,7 @@ if (faltanEscalares || faltanTablas) {
         )}
 
         {/* Workspace split */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           {/* Izquierda: Canvas Univer */}
           <div className="flex-1 flex flex-col bg-slate-100 relative overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 bg-white border-b border-slate-200">
@@ -967,7 +967,7 @@ if (faltanEscalares || faltanTablas) {
           </div>
 
           {/* Derecha: Panel de Variables */}
-          <div className="w-[380px] border-l border-slate-200 p-4 flex flex-col gap-4 overflow-y-auto bg-slate-50">
+          <div className="w-full lg:w-[380px] border-l border-slate-200 p-4 flex flex-col gap-4 overflow-y-auto bg-slate-50">
             {/* Banner asistente */}
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 flex gap-2 items-start">
               <MousePointerClick size={16} className="text-blue-600 mt-0.5 shrink-0" />

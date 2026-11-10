@@ -722,7 +722,7 @@ const handleDownloadBackendPreview = async () => {
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
-      <div className="w-full h-[95vh] max-w-7xl rounded-xl flex flex-col overflow-hidden shadow-2xl bg-white border border-slate-300">
+      <div className="w-full h-dvh sm:h-[95vh] max-w-7xl rounded-xl flex flex-col overflow-hidden shadow-2xl bg-white border border-slate-300">
         
         {/* Header Modal */}
         <div className="flex justify-between items-center px-4 py-3 border-b bg-slate-50 border-slate-200">
@@ -763,7 +763,7 @@ const handleDownloadBackendPreview = async () => {
         </div>
 
         {/* Workspace */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           
           {/* TAB 1: MAPPER */}
           {activeTab === 'MAPPER' && (
@@ -867,7 +867,7 @@ const handleDownloadBackendPreview = async () => {
               </div>
 
               {/* Controles Derecha */}
-              <div className="w-96 border-l border-slate-200 p-4 flex flex-col gap-4 overflow-y-auto bg-slate-50">
+              <div className="w-full lg:w-96 border-l border-slate-200 p-4 flex flex-col gap-4 overflow-y-auto bg-slate-50">
                 <div>
                   <label className="text-[11px] font-bold text-slate-700 uppercase">Nombre de la Plantilla</label>
                   <input
@@ -1046,7 +1046,7 @@ const handleDownloadBackendPreview = async () => {
     </div>
 
     {/* PANEL LATERAL DE CONTROLES */}
-    <div className="w-80 border-l border-slate-200 p-4 bg-slate-50 flex flex-col gap-4 shrink-0">
+    <div className="w-full lg:w-80 border-l border-slate-200 p-4 bg-slate-50 flex flex-col gap-4 shrink-0">
       <span className="text-xs font-bold uppercase tracking-wider text-slate-800 border-b pb-2">
         Prueba de Integración
       </span>

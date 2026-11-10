@@ -56,8 +56,8 @@ const RejectModal = ({
   if (!showDevolver) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
-      <div className="rounded-2xl p-6 w-full max-w-md bg-white border border-slate-100 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+      <div className="rounded-2xl p-6 w-full max-w-md max-h-[90dvh] overflow-y-auto bg-white border border-slate-100 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-2.5">
             Rechazar Certificado {label ? `— ${label}` : ""}
@@ -132,8 +132,8 @@ const ApproveModal = ({
   if (!showAprobar) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
-      <div className="rounded-2xl p-6 w-full max-w-sm bg-white border border-slate-100 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+      <div className="rounded-2xl p-6 w-full max-w-sm max-h-[90dvh] overflow-y-auto bg-white border border-slate-100 shadow-2xl">
         <div className="flex items-center gap-2 mb-3">
           <CheckCircle size={20} className="text-[#22C55E]" />
           <span className="text-sm font-bold text-slate-800 uppercase tracking-wider">
@@ -266,7 +266,7 @@ const CertificatesTable = ({
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)]">
+    <div className="flex-1 overflow-x-auto overflow-y-auto rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)]">
       <table className="w-full text-left text-xs">
         <thead>
           <tr className="bg-slate-50 border-b border-slate-100">

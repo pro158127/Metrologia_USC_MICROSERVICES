@@ -51,8 +51,8 @@ function RenderToast({ message }: ToastProps) {
 
 function RenderModalUsuario({ editingUser, form, setForm, onClose, onSave, rolColors }: ModalUsuarioProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.45)" }}>
-      <div className="rounded-xl p-6 w-full max-w-md" style={{ background: "#FFFFFF", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }}>
+      <div className="rounded-xl p-6 w-full max-w-md max-h-[90dvh] overflow-y-auto" style={{ background: "#FFFFFF", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
         <div className="flex items-center justify-between mb-5">
           <span style={{ color: "#1F2A44", fontSize: 16, fontWeight: 600 }}>
             {editingUser ? "Editar usuario" : "Nuevo usuario"}

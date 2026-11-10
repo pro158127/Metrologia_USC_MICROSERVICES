@@ -12,6 +12,7 @@ import {
 } from "@/app/action_module/seguimiento";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import ResponsiveTable from "@/app/dashboard/components/ResponsiveTable";
 
 const tipoIcono: Record<string, React.ReactNode> = {
   LLAMADA: <Phone size={13} />,
@@ -132,42 +133,28 @@ export default function SeguimientoComercial() {
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
         {/* Lista de cotizaciones en seguimiento */}
-        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-100">
-                {["N° Cotización", "Cliente", "Valor", "Enviada", "Acción"].map((h) => (
-                  <th key={h} className="px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px]">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">Cargando...</td></tr>
-              ) : filtered.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">No hay cotizaciones en seguimiento.</td></tr>
-              ) : (
-                filtered.map((c) => (
-                  <tr
-                    key={c.idCotizacion}
-                    onClick={() => setSelectedId(c.idCotizacion)}
-                    className={`cursor-pointer transition-colors ${selectedId === c.idCotizacion ? "bg-blue-50/60" : "hover:bg-slate-50"}`}
-                  >
-                    <td className="px-4 py-3 font-mono font-bold text-slate-700">{c.codigo}</td>
-                    <td className="px-4 py-3 text-slate-600">{c.cliente?.razonSocial || "N/A"}</td>
-                    <td className="px-4 py-3 font-mono text-slate-700">
-                      {Number(c.montoTotal ?? 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500">{formatoFecha(c.updatedAt ?? c.createdAt)}</td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">EN_SEGUIMIENTO</span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <ResponsiveTable
+          loading={loading}
+          data={filtered}
+          rowKey={(c) => c.idCotizacion}
+          onRowClick={(c) => setSelectedId(c.idCotizacion)}
+          emptyText="No hay cotizaciones en seguimiento."
+          minWidth="min-w-[560px]"
+          columns={[
+            { header: "N° Cotización", render: (c) => <span className="font-mono font-bold text-slate-700">{c.codigo}</span> },
+            { header: "Cliente", render: (c) => <span className="text-slate-600">{c.cliente?.razonSocial || "N/A"}</span> },
+            { header: "Valor", render: (c) => <span className="font-mono text-slate-700">{Number(c.montoTotal ?? 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })}</span> },
+            { header: "Enviada", render: (c) => <span className="text-slate-500">{formatoFecha(c.updatedAt ?? c.createdAt)}</span> },
+            { header: "Acción", render: () => <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">EN_SEGUIMIENTO</span> },
+          ]}
+          cardTitle={(c) => c.codigo}
+          cardFields={[
+            { label: "Cliente", value: (c) => c.cliente?.razonSocial || "N/A" },
+            { label: "Valor", value: (c) => Number(c.montoTotal ?? 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }) },
+            { label: "Enviada", value: (c) => formatoFecha(c.updatedAt ?? c.createdAt) },
+            { label: "Estado", value: () => "EN_SEGUIMIENTO" },
+          ]}
+        />
 
         {/* Panel de gestión del seguimiento */}
         <div className="rounded-2xl border border-slate-100 bg-white shadow-sm p-5 flex flex-col gap-4">
@@ -246,10 +233,10 @@ export default function SeguimientoComercial() {
                       {puedeGestionar && (
                       <button
                         onClick={() => borrarSeguimiento(s.idSeguimiento)}
-                        className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
+                        className="p-2 touch-target inline-flex items-center justify-center text-slate-300 hover:text-rose-500 transition-colors"
                         title="Eliminar"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={16} />
                       </button>
                       )}
                     </div>

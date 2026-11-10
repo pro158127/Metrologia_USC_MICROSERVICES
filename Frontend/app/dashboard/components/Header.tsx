@@ -335,7 +335,7 @@ const inital=getInitials(session?.user?.name)
           {!isSidebarOpen && (
             <button
               onClick={() => setIsSidebarOpen(true)}
-              className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 active:bg-slate-200 transition-colors"
+              className="rounded-xl p-2 touch-target text-slate-600 hover:bg-slate-100 active:bg-slate-200 transition-colors"
               aria-label="Abrir menú de navegación"
             >
               <Menu size={22} />
