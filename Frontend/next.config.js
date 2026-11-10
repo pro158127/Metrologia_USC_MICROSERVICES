@@ -20,15 +20,6 @@ const nextConfig = {
     optimizePackageImports: ['recharts', 'xlsx', 'exceljs', 'lucide-react']
   },
 
-  webpack: (config, { dev }) => {
-    // Caché persistente en sistema de archivos: evita recompilar módulos pesados
-    // en cada recarga/arranque del dev server.
-    if (dev) {
-      config.cache = { type: 'filesystem' };
-    }
-    return config;
-  },
-
 
 };
 
