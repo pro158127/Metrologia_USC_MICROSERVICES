@@ -416,10 +416,11 @@ async function main() {
 
 
   console.log('⚡ Configurando función de notificación PL/pgSQL segura...');
-  await prisma.$executeRawUnsafe(`
-    -- Secuencia global monótona para ordenar/deduplicar eventos en el frontend.
-    CREATE SEQUENCE IF NOT EXISTS public.realtime_event_seq;
+  // La secuencia se crea en una llamada independiente: $executeRawUnsafe usa una
+  // sentencia preparada, que no admite varios comandos separados por ';'.
+  await prisma.$executeRawUnsafe(`CREATE SEQUENCE IF NOT EXISTS public.realtime_event_seq;`);
 
+  await prisma.$executeRawUnsafe(`
     CREATE OR REPLACE FUNCTION public.notify_cambio_tablas()
     RETURNS trigger
     LANGUAGE plpgsql
