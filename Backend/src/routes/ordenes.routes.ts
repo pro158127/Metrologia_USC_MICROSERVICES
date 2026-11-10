@@ -38,6 +38,20 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
       const idUsuario = Number(request.user?.sub ?? 0);
 
       try {
+        // Barrido de jobs huérfanos: marca como FAILED los quotes que quedaron
+        // PENDING/PROCESSING por un crash del worker (evita registros atascados).
+        const UMBRAL_STALE_MS = 30 * 60 * 1000;
+        await fastify.prisma.quote.updateMany({
+          where: {
+            status: { in: ['PENDING', 'PROCESSING'] },
+            createdAt: { lt: new Date(Date.now() - UMBRAL_STALE_MS) },
+          },
+          data: {
+            status: 'FAILED',
+            data: { error: 'Stale job: superó el tiempo límite de procesamiento.' },
+          },
+        });
+
         // 1. Registrar en la tabla de tracking (Polling)
         const quoteJob = await fastify.prisma.quote.create({ 
           data: { status: 'PENDING' } 

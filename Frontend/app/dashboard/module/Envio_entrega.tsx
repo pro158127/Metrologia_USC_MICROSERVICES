@@ -139,15 +139,19 @@ const GestionPanel: React.FC<{
   );
 
   const handleUpload = useCallback(
-    async (file: File) => {
+    async (files: File[]) => {
       setSubiendo(true);
-      const res = await subirComprobante(idOT, file);
-      setSubiendo(false);
-      if (!res.ok) {
-        onToast(`❌ ${res.error ?? "No se pudo subir el comprobante."}`);
-        return;
+      let fallos = 0;
+      for (const file of files) {
+        const res = await subirComprobante(idOT, file);
+        if (!res.ok) fallos += 1;
       }
-      onToast("✅ Comprobante registrado como PDF.");
+      setSubiendo(false);
+      if (fallos > 0) {
+        onToast(`❌ No se pudieron subir ${fallos} comprobante(s).`);
+      } else {
+        onToast(`✅ ${files.length} comprobante(s) registrado(s).`);
+      }
       recargar();
       onRefresh();
     },
@@ -168,8 +172,8 @@ const GestionPanel: React.FC<{
   }, [idOT, onToast, recargar, onRefresh]);
 
   const todosAprobados = docs?.todosAprobados ?? false;
-  const tieneComprobante = !!docs?.comprobante;
-  const puedeEnviar = todosAprobados && tieneComprobante && docs?.correo;
+  const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
+  const puedeEnviar = todosAprobados && tieneComprobante && !!docs?.correo;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
@@ -255,27 +259,28 @@ const GestionPanel: React.FC<{
                 </div>
               </section>
 
-              {/* Comprobante */}
+              {/* Comprobantes */}
               <section>
                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                  Comprobante de pago
+                  Comprobantes de pago ({docs?.comprobantes.length ?? 0})
                 </h3>
-                {tieneComprobante ? (
-                  <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5">
+                {(docs?.comprobantes ?? []).map((comp) => (
+                  <div
+                    key={comp.idDocumento}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 mb-2"
+                  >
                     <div className="flex items-center gap-2 text-xs font-bold text-emerald-800">
-                      <Paperclip size={14} /> {docs?.comprobante?.nombre}
+                      <Paperclip size={14} /> {comp.nombre}
                     </div>
                     <button
-                      onClick={() =>
-                        verDocumento(docs?.comprobante?.rutaUrl ?? null, "Comprobante de pago")
-                      }
+                      onClick={() => verDocumento(comp.rutaUrl, comp.nombre)}
                       className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-emerald-200 text-emerald-700 text-[10px] font-bold uppercase tracking-wider cursor-pointer"
                     >
                       <Eye size={12} /> Ver
                     </button>
                   </div>
-                ) : (
-                  puedeMarcarPagada ? (
+                ))}
+                {puedeMarcarPagada ? (
                   <label
                     className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed text-[11px] font-semibold transition-colors ${
                       todosAprobados
@@ -288,25 +293,25 @@ const GestionPanel: React.FC<{
                       {todosAprobados
                         ? subiendo
                           ? "Subiendo..."
-                          : "Subir comprobante (PDF, PNG o JPG)"
+                          : "Subir comprobante(s) (PDF, PNG o JPG)"
                         : "Bloqueado: espera la aprobación de todos los certificados"}
                     </span>
                     <input
                       type="file"
                       accept="image/png,image/jpeg,application/pdf"
+                      multiple
                       className="hidden"
                       disabled={!todosAprobados || subiendo}
                       onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleUpload(file);
+                        const files = Array.from(e.target.files ?? []);
+                        if (files.length) handleUpload(files);
                       }}
                     />
                   </label>
-                  ) : (
-                    <span className="text-[11px] font-semibold text-slate-400">
-                      Sin permisos para subir comprobante de pago.
-                    </span>
-                  )
+                ) : (
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    Sin permisos para subir comprobante de pago.
+                  </span>
                 )}
               </section>
 

@@ -68,6 +68,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.permissions = user.permissions;
         token.id_user = user.id_user;
         token.name = user.name;
+        token.email = user.email;
       }
       return token;
     },
@@ -76,6 +77,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.role = token.role;
         session.user.id_user = token.id_user;
         session.user.name = token.name;
+        session.user.email = token.email;
         session.user.permissions = token.permissions as string;
         session.accessToken = token.accessToken
         const secret = process.env.AUTH_SECRET;

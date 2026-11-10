@@ -26,7 +26,7 @@ export interface DocumentosEnvio {
   correo: string | null;
   todosAprobados: boolean;
   certificados: CertificadoEnvio[];
-  comprobante: ComprobanteEnvio | null;
+  comprobantes: ComprobanteEnvio[];
 }
 
 export async function getDocumentosEnvio(idOT: number): Promise<DocumentosEnvio | null> {

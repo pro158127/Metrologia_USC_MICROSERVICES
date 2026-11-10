@@ -722,11 +722,14 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
     await prisma.$transaction(async (tx) => {
       // ==============================================================
       // 3. CLIENTE
+      //    Se resuelve por el NIT del SOLICITANTE (solicitante_nit), no por
+      //    cert_nit: el dato del solicitante es el que el archivo OTE trae de
+      //    forma fiable y evita falsos rechazos por formato/ausencia de cert_nit.
       // ==============================================================
-      const nitLimpio = getString(datosExtraidos, 'cert_nit');
+      const nitLimpio = getString(datosExtraidos, 'solicitante_nit');
 
       if (!nitLimpio) {
-        throw new Error('El documento no contiene un NIT en la celda configurada.');
+        throw new Error('El documento no contiene un NIT del solicitante en la celda configurada.');
       }
 
       const cliente = await tx.clientes.findFirst({
@@ -1357,14 +1360,9 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
   } catch (error: any) {
     console.error('Error importando OTE:', error);
 
-    await s3Client
-      .send(
-        new DeleteObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: s3KeyTemp,
-        }),
-      )
-      .catch(() => {});
+    // NO se elimina el archivo temporal: se conserva para permitir reintentos
+    // manuales/automáticos del mismo job sin re-subir el Excel.
+    console.warn(`[import-worker] Archivo temporal conservado para reintento: ${s3KeyTemp}`);
 
     await prisma.quote.update({
       where: {

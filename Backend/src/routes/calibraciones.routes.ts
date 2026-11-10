@@ -211,6 +211,8 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
           where: { ID_CALIBRACION_FK: calibracion.ID_CALIBRACION },
         });
 
+        let idCertificado: number;
+
         if (certExistente) {
           await tx.documentos.update({
             where: { ID_DOCUMENTO: certExistente.ID_DOCUMENTO_FK },
@@ -238,41 +240,45 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
               REVISADO_AT: null,
             },
           });
-          return certExistente.ID_CERTIFICADO;
+          idCertificado = certExistente.ID_CERTIFICADO;
+        } else {
+          const documento = await tx.documentos.create({
+            data: {
+              NOMBRE: safeName,
+              RUTA_URL: key,
+              PROVEEDOR: 'AWS_S3',
+              MIME_TYPE: 'application/pdf',
+              ID_RECEPCION_FK: recepcion?.ID_RECEPCION ?? null,
+              ID_ORDEN_TRABAJO_FK: ot?.ID_ORDEN_TRABAJO ?? null,
+            },
+          });
+          await tx.version_documentos.create({
+            data: {
+              ID_DOCUMENTO_FK: documento.ID_DOCUMENTO,
+              VERSION: 1,
+              RUTA_URL: key,
+              usuario_fk: idUsuario,
+              content_json: { pdf: key },
+            },
+          });
+          const codigo = `CERT-${ot?.CODIGO_OT ?? 'SIN-OT'}-${detalleRecepcion.ITEM ?? idInstrumento}`;
+          const nuevoCert = await tx.certificados.create({
+            data: {
+              CODIGO_CERTIFICADO: codigo,
+              ID_CALIBRACION_FK: calibracion.ID_CALIBRACION,
+              ID_DOCUMENTO_FK: documento.ID_DOCUMENTO,
+              ESTADO_REVISION: 'PENDIENTE_REVISION',
+            },
+          });
+          idCertificado = nuevoCert.ID_CERTIFICADO;
         }
 
-        const documento = await tx.documentos.create({
-          data: {
-            NOMBRE: safeName,
-            RUTA_URL: key,
-            PROVEEDOR: 'AWS_S3',
-            MIME_TYPE: 'application/pdf',
-            ID_RECEPCION_FK: recepcion?.ID_RECEPCION ?? null,
-            ID_ORDEN_TRABAJO_FK: ot?.ID_ORDEN_TRABAJO ?? null,
-          },
-        });
-        await tx.version_documentos.create({
-          data: {
-            ID_DOCUMENTO_FK: documento.ID_DOCUMENTO,
-            VERSION: 1,
-            RUTA_URL: key,
-            usuario_fk: idUsuario,
-            content_json: { pdf: key },
-          },
-        });
-        const codigo = `CERT-${ot?.CODIGO_OT ?? 'SIN-OT'}-${detalleRecepcion.ITEM ?? idInstrumento}`;
-        const nuevoCert = await tx.certificados.create({
-          data: {
-            CODIGO_CERTIFICADO: codigo,
-            ID_CALIBRACION_FK: calibracion.ID_CALIBRACION,
-            ID_DOCUMENTO_FK: documento.ID_DOCUMENTO,
-            ESTADO_REVISION: 'PENDIENTE_REVISION',
-          },
-        });
-        return nuevoCert.ID_CERTIFICADO;
-      });
+        // La transición de estado se evalúa en la MISMA transacción que mutó
+        // la calibración/certificado para evitar desincronizaciones.
+        if (ot) await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
 
-      if (ot) await evaluarTransicionesOT(fastify.prisma, ot.ID_ORDEN_TRABAJO);
+        return idCertificado;
+      });
 
       await registrarBitacora(fastify.prisma, {
         action: 'UPLOAD_CERTIFICADO',

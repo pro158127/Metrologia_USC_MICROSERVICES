@@ -307,6 +307,19 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
           await transicionarOT(tx, ot.ID_ORDEN_TRABAJO, EstadoOT.En_calibración, {
             permitirRetroceso: true,
           });
+
+          // Trazabilidad comercial del rechazo (módulo Seguimiento Comercial).
+          if (ot.ID_COTIZACION_FK) {
+            await tx.seguimientos_comerciales.create({
+              data: {
+                ID_COTIZACION_FK: ot.ID_COTIZACION_FK,
+                TIPO: 'RECHAZO',
+                DESCRIPCION: `Certificado ${cert.CODIGO_CERTIFICADO} rechazado: ${request.body.descripcion}`,
+                RESULTADO: 'RECHAZADO',
+                ID_USUARIO_FK: idUsuario || null,
+              },
+            });
+          }
         }
 
         await registrarBitacora(tx, {

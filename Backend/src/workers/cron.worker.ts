@@ -179,6 +179,7 @@ async function procesarPagosVencidos(): Promise<number> {
       CODIGO_OT: true,
       estado_pago: true,
       FECHA_LIMITE_FACTURACION: true,
+      ID_COTIZACION_FK: true,
     },
   });
 
@@ -187,17 +188,32 @@ async function procesarPagosVencidos(): Promise<number> {
     if (ot.estado_pago === 'PAGADO' || ot.estado_pago === 'VENCIDA') continue;
 
     try {
-      await prisma.ordenes_trabajo.update({
-        where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
-        data: { estado_pago: 'VENCIDA' },
-      });
-      await registrarBitacora(prisma, {
-        action: 'MARCAR_PAGO_VENCIDO',
-        tableName: 'ordenes_trabajo',
-        recordId: ot.ID_ORDEN_TRABAJO,
-        userId: null,
-        ip: '0.0.0.0',
-        details: { codigoOT: ot.CODIGO_OT, fechaLimite: ot.FECHA_LIMITE_FACTURACION, sistema: true },
+      await prisma.$transaction(async (tx) => {
+        await tx.ordenes_trabajo.update({
+          where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
+          data: { estado_pago: 'VENCIDA' },
+        });
+        await registrarBitacora(tx, {
+          action: 'MARCAR_PAGO_VENCIDO',
+          tableName: 'ordenes_trabajo',
+          recordId: ot.ID_ORDEN_TRABAJO,
+          userId: null,
+          ip: '0.0.0.0',
+          details: { codigoOT: ot.CODIGO_OT, fechaLimite: ot.FECHA_LIMITE_FACTURACION, sistema: true },
+        });
+
+        // Trazabilidad comercial del pago vencido (Seguimiento Comercial).
+        if (ot.ID_COTIZACION_FK) {
+          await tx.seguimientos_comerciales.create({
+            data: {
+              ID_COTIZACION_FK: ot.ID_COTIZACION_FK,
+              TIPO: 'RECHAZO',
+              DESCRIPCION: `Pago vencido — OT ${ot.CODIGO_OT}`,
+              RESULTADO: 'VENCIDA',
+              ID_USUARIO_FK: null,
+            },
+          });
+        }
       });
       actualizadas += 1;
       console.log(`[cron] Pago vencido: OT ${ot.CODIGO_OT}`);

@@ -41,9 +41,9 @@ const respuestaDocumentosEnvioSchema = z.object({
         idDocumento: z.number(),
       })
     ),
-    comprobante: z
-      .object({ idDocumento: z.number(), nombre: z.string(), rutaUrl: z.string() })
-      .nullable(),
+    comprobantes: z.array(
+      z.object({ idDocumento: z.number(), nombre: z.string(), rutaUrl: z.string() })
+    ),
   }),
 });
 
@@ -86,7 +86,7 @@ async function cargarContextoOT(fastify: FastifyInstance, idOT: number) {
     })
   );
 
-  const comprobante = await fastify.prisma.documentos.findFirst({
+  const comprobantes = await fastify.prisma.documentos.findMany({
     where: { ordenPagoId: idOT },
     orderBy: { ID_DOCUMENTO: 'desc' },
   });
@@ -94,7 +94,7 @@ async function cargarContextoOT(fastify: FastifyInstance, idOT: number) {
   const todosAprobados =
     certificados.length > 0 && certificados.every((c) => c.estadoRevision === 'APROBADO');
 
-  return { ot, certificados, comprobante, todosAprobados };
+  return { ot, certificados, comprobantes, todosAprobados };
 }
 
 async function convertirImagenAPdf(buffer: Buffer, mime: string): Promise<Buffer> {
@@ -125,7 +125,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
-      const { ot, certificados, comprobante, todosAprobados } = await cargarContextoOT(
+      const { ot, certificados, comprobantes, todosAprobados } = await cargarContextoOT(
         fastify,
         request.params.id
       );
@@ -139,13 +139,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           correo: ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null,
           todosAprobados,
           certificados,
-          comprobante: comprobante
-            ? {
-                idDocumento: comprobante.ID_DOCUMENTO,
-                nombre: comprobante.NOMBRE,
-                rutaUrl: comprobante.RUTA_URL,
-              }
-            : null,
+          comprobantes: comprobantes.map((c) => ({
+            idDocumento: c.ID_DOCUMENTO,
+            nombre: c.NOMBRE,
+            rutaUrl: c.RUTA_URL,
+          })),
         },
       };
     }
@@ -164,7 +162,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idOT = request.params.id;
-      const { ot, todosAprobados } = await cargarContextoOT(fastify, idOT);
+      const { ot, certificados, todosAprobados } = await cargarContextoOT(fastify, idOT);
 
       if (!todosAprobados) {
         throw new AppError(
@@ -186,54 +184,104 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         throw new AppError(415, 'Formato no permitido. Use PDF, PNG o JPG.');
       }
 
-      // En BD solo se registran comprobantes tipo PDF.
+      // En BD solo se registran comprobantes tipo PDF. Cada subida crea un
+      // documento nuevo: se admiten uno o más comprobantes por OT.
       const key = `comprobantes/${ot.CODIGO_OT}_${Date.now()}.pdf`;
       const nombre = `Comprobante_${ot.CODIGO_OT}.pdf`;
       await uploadBuffer(key, buffer, 'application/pdf', { originalName: nombre });
 
-      const existente = await fastify.prisma.documentos.findFirst({
-        where: { ordenPagoId: idOT },
-      });
+      // Transacción atómica: documento + pago + FSM + seguimiento comercial.
+      const resultado = await fastify.prisma.$transaction(async (tx) => {
+        const otActual = await tx.ordenes_trabajo.findUnique({
+          where: { ID_ORDEN_TRABAJO: idOT },
+          select: { estado_pago: true },
+        });
+        const yaPagada = otActual?.estado_pago === 'PAGADO';
 
-      const documento = existente
-        ? await fastify.prisma.documentos.update({
-            where: { ID_DOCUMENTO: existente.ID_DOCUMENTO },
-            data: { RUTA_URL: key, MIME_TYPE: 'application/pdf', PROVEEDOR: 'AWS_S3', NOMBRE: nombre },
-          })
-        : await fastify.prisma.documentos.create({
+        const documento = await tx.documentos.create({
+          data: {
+            NOMBRE: nombre,
+            RUTA_URL: key,
+            PROVEEDOR: 'AWS_S3',
+            MIME_TYPE: 'application/pdf',
+            ID_ORDEN_TRABAJO_FK: idOT,
+            ordenPagoId: idOT,
+          },
+        });
+
+        await tx.ordenes_trabajo.update({
+          where: { ID_ORDEN_TRABAJO: idOT },
+          data: { estado_pago: 'PAGADO' },
+        });
+
+        // El pago registrado dispara automáticamente el estado "Certificado_enviado".
+        await evaluarTransicionesOT(tx, idOT);
+
+        // Trazabilidad comercial: solo en la transición no-PAGADO -> PAGADO.
+        if (!yaPagada && ot.ID_COTIZACION_FK) {
+          await tx.seguimientos_comerciales.create({
             data: {
-              NOMBRE: nombre,
-              RUTA_URL: key,
-              PROVEEDOR: 'AWS_S3',
-              MIME_TYPE: 'application/pdf',
-              ID_ORDEN_TRABAJO_FK: idOT,
-              ordenPagoId: idOT,
+              ID_COTIZACION_FK: ot.ID_COTIZACION_FK,
+              TIPO: 'PAGO',
+              DESCRIPCION: `Comprobante de pago registrado — OT ${ot.CODIGO_OT}`,
+              RESULTADO: 'PAGADO',
+              ID_USUARIO_FK: Number(request.user?.sub ?? 0) || null,
             },
           });
+        }
 
-      // Subir el comprobante marca la OT como pagada.
-      await fastify.prisma.ordenes_trabajo.update({
-        where: { ID_ORDEN_TRABAJO: idOT },
-        data: { estado_pago: 'PAGADO' },
+        await registrarBitacora(tx, {
+          action: 'MARCAR_PAGADA',
+          tableName: 'ordenes_trabajo',
+          recordId: idOT,
+          userId: Number(request.user?.sub ?? 0),
+          ip: request.ip,
+          details: { codigoOT: ot.CODIGO_OT, idDocumento: documento.ID_DOCUMENTO },
+        });
+
+        return { idDocumento: documento.ID_DOCUMENTO, rutaUrl: documento.RUTA_URL, yaPagada };
       });
 
-      // El pago registrado dispara automáticamente el estado "Certificado_enviado".
-      await evaluarTransicionesOT(fastify.prisma, idOT);
-
-      await registrarBitacora(fastify.prisma, {
-        action: 'MARCAR_PAGADA',
-        tableName: 'ordenes_trabajo',
-        recordId: idOT,
-        userId: Number(request.user?.sub ?? 0),
-        ip: request.ip,
-        details: { codigoOT: ot.CODIGO_OT, idDocumento: documento.ID_DOCUMENTO },
-      });
+      // Notificación de "pago registrado" (una sola vez por transición de pago).
+      if (!resultado.yaPagada) {
+        const destino = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
+        if (destino) {
+          const links = [
+            ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
+            resultado.rutaUrl,
+          ];
+          try {
+            await getEmailQueue().add('pago_registrado', {
+              to: destino,
+              subject: `Pago registrado — OT ${ot.CODIGO_OT}`,
+              template_type: 'pago_registrado',
+              context_data: {
+                nombreCliente: ot.clientes?.NOMBRE_CONTACTO ?? ot.clientes?.RAZON_SOCIAL ?? 'Cliente',
+                numeroOT: ot.CODIGO_OT,
+                numeroCotizacion: ot.no_cotizacion ?? null,
+                totalCertificados: certificados.length,
+                certificados: certificados.map((c, i) => ({
+                  item: i + 1,
+                  codigo: c.codigo,
+                  instrumento: c.instrumento,
+                  estampilla: c.estampilla ?? '—',
+                })),
+              },
+              minio_links: links,
+              id_registro: idOT,
+              tipo_entry: 'prod',
+            });
+          } catch (mailError) {
+            fastify.log.error(mailError);
+          }
+        }
+      }
 
       return {
         ok: true as const,
         data: {
-          idDocumento: documento.ID_DOCUMENTO,
-          rutaUrl: documento.RUTA_URL,
+          idDocumento: resultado.idDocumento,
+          rutaUrl: resultado.rutaUrl,
         },
       };
     }
@@ -252,12 +300,12 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idOT = request.params.id;
-      const { ot, certificados, comprobante, todosAprobados } = await cargarContextoOT(
+      const { ot, certificados, comprobantes, todosAprobados } = await cargarContextoOT(
         fastify,
         idOT
       );
 
-      if (!comprobante) {
+      if (comprobantes.length === 0) {
         throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
       }
       if (!todosAprobados) {
@@ -285,7 +333,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
 
       const links = [
         ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
-        comprobante.RUTA_URL,
+        ...comprobantes.map((c) => c.RUTA_URL),
       ];
 
       const job = await getEmailQueue().add('enviar_certificados', {

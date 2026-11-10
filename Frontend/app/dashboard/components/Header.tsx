@@ -296,63 +296,6 @@ useEffect(() => {
   );
 }
 
-const mockNotificaciones = [
-  {
-    idNotificacion: 1,
-    idUsuario: 10,
-    mensaje: "Se ha detectado un inicio de sesión sospechoso desde una dirección IP desconocida.",
-    modulo: "Seguridad",
-    visto: false,
-    nivelPrioridad: "ALTA",
-    createdAt: "2026-07-17T05:30:00.000Z", // Hoy
-  },
-  {
-    idNotificacion: 2,
-    idUsuario: 10,
-    mensaje: "Felicidades, se ha registrado una nueva venta por un valor de $1,250.00 USD.",
-    modulo: "Ventas",
-    visto: false,
-    nivelPrioridad: "BAJA",
-    createdAt: "2026-07-17T04:15:00.000Z", // Hoy
-  },
-  {
-    idNotificacion: 3,
-    idUsuario: 10,
-    mensaje: "El stock del producto 'Laptop Pro 15' está por debajo del límite mínimo establecido.",
-    modulo: "Inventario",
-    visto: false,
-    nivelPrioridad: "MEDIA",
-    createdAt: "2026-07-16T18:20:00.000Z", // Ayer
-  },
-  {
-    idNotificacion: 4,
-    idUsuario: 10,
-    mensaje: "El usuario 'Admin_Carlos' ha cambiado los permisos del rol de Editor.",
-    modulo: "Seguridad",
-    visto: true, // Ya leída
-    nivelPrioridad: "MEDIA",
-    createdAt: "2026-07-15T14:00:00.000Z", // Hace 2 días
-  },
-  {
-    idNotificacion: 5,
-    idUsuario: 10,
-    mensaje: "Mantenimiento programado de la base de datos para este domingo a las 02:00 AM.",
-    modulo: "Soporte",
-    visto: true, // Ya leída
-    nivelPrioridad: "BAJA",
-    createdAt: "2026-07-14T09:45:00.000Z", // Hace 3 días
-  },
-  {
-    idNotificacion: 6,
-    idUsuario: 10,
-    mensaje: "ERROR CRÍTICO: Caída del servicio de pasarela de pagos API (Stripe).",
-    modulo: "Ventas",
-    visto: false,
-    nivelPrioridad: "ALTA",
-    createdAt: "2026-07-17T06:05:00.000Z", // Reciente de hoy
-  }
-];
-
 import socket from "@/app/lib/socket/socket";
 export function Header({ moduleTitle, isSidebarOpen, setIsSidebarOpen, onOpenProfile }: any) {
 
@@ -454,8 +397,8 @@ const inital=getInitials(session?.user?.name)
               <div className="absolute right-0 top-13 sm:top-14 w-48 overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-[0_24px_80px_-24px_rgba(15,23,42,0.25)]">
                 {/* Información básica de usuario visible también en móvil */}
                 <div className="px-4 py-3 border-b border-slate-200/70 md:hidden">
-                  <p className="text-sm font-semibold text-slate-950">Luis Burgos</p>
-                  <p className="text-xs text-slate-500 truncate">director@usc.edu.co</p>
+                  <p className="text-sm font-semibold text-slate-950">{session?.user?.name}</p>
+                  <p className="text-xs text-slate-500 truncate">{session?.user?.email}</p>
                 </div>
                 <button
                   type="button"

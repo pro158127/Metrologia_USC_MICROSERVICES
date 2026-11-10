@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { Search, Plus, Trash2, Phone, Mail, Users, CalendarClock } from "lucide-react";
+import { Search, Plus, Trash2, Phone, Mail, Users, CalendarClock, CheckCircle, XCircle } from "lucide-react";
 import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
 import { Estados } from "@/tipos/enums";
 import type { CotizacionModel, SeguimientoComercialModel } from "@/tipos/entidades";
@@ -18,6 +18,8 @@ const tipoIcono: Record<string, React.ReactNode> = {
   CORREO: <Mail size={13} />,
   REUNION: <Users size={13} />,
   OTRO: <CalendarClock size={13} />,
+  PAGO: <CheckCircle size={13} />,
+  RECHAZO: <XCircle size={13} />,
 };
 
 const formatoFecha = (v: Date | string | null | undefined) =>
