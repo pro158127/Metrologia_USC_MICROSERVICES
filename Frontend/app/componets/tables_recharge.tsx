@@ -9,6 +9,19 @@ import type RealtimeTablesState from '@/tipos/store';
 import { toast } from 'sonner';
 import { obtenerLlavePrimaria, normalizarPayload } from '@/app/lib/realtime/normalize';
 import { obtenerTokenSocket } from '@/app/lib/socket/token';
+
+// Relaciones/arrays que el snapshot HTTP sí trae pero que la fila del NOTIFY
+// (to_jsonb de una sola fila) NO contiene. En un UPDATE se preservan del estado
+// actual para no corromper la UI (p.ej. instrumentos de una OT).
+const RELACIONES_A_PRESERVAR: Record<string, string[]> = {
+  ordenes_trabajo: ["instrumentos"],
+  cotizaciones: ["detalles", "cliente", "historialEstados"],
+  recepciones_equipo: ["detalles", "instrumentos"],
+  facturas: ["ordenTrabajo", "cliente"],
+  documentos: ["versiones"],
+  certificados: ["sellos"],
+};
+
 // ==========================================
 // TIPOS CENTRALIZADOS (Frontend/tipos/)
 // Se re-exportan para compatibilidad con los consumidores actuales.
@@ -90,6 +103,10 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       });
       socketRef.current = nuevoSocket;
 
+      // Secuencia monótona para deduplicar y detectar huecos (eventos perdidos).
+      let lastSeq = 0;
+      let primeraSecuencia = true;
+
       // Re-sincroniza salas y estado pendiente tras (re)conexión.
       const sincronizarRealtime = () => {
         nuevoSocket.emit("join_room", userIdValido);
@@ -132,8 +149,31 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       });
 
       nuevoSocket.on("cambio_realtime", (payload) => {
-        const { tabla, operacion, data: rawData } = payload;
-        const { updateTable, setDbState } = useDbStore.getState();
+        const { tabla, operacion, data: rawData, seq, truncado } = payload;
+        const { updateTable, setDbState, loadTable } = useDbStore.getState();
+
+        // Deduplicación y detección de huecos por secuencia monótona global.
+        if (typeof seq === "number" && !Number.isNaN(seq)) {
+          if (!primeraSecuencia && lastSeq > 0) {
+            if (seq <= lastSeq) return; // duplicado o fuera de orden
+            if (seq > lastSeq + 1) {
+              // Se perdieron eventos (micro-corte): re-sincronizar y descartar este.
+              sincronizarRealtime();
+              lastSeq = seq;
+              return;
+            }
+          }
+          lastSeq = seq;
+          primeraSecuencia = false;
+        }
+
+        // Si el payload fue truncado en la BD (muy grande), la fila no es fiable:
+        // re-consultar la tabla de forma autoritativa.
+        if (truncado) {
+          loadTable(tabla as keyof RealtimeTablesState, true);
+          return;
+        }
+
         // Caso especial plantillas
         if (TABLAS_PLANTILLAS.includes(tabla)) {
           setDbState((prev) => ({
@@ -157,11 +197,21 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
           if (operacion === "INSERT" && !existe) {
             listaActualizada = [dataMapeada, ...listaActualizada];
           } else if (operacion === "UPDATE") {
-            listaActualizada = existe
-              ? listaActualizada.map((item) =>
-                  Number(item[nombreLlave]) === idValor ? dataMapeada : item
-                )
-              : [dataMapeada, ...listaActualizada];
+            if (existe) {
+              // Fusionar campos escalares SIN sobrescribir relaciones/arrays que
+              // el snapshot HTTP trae pero la fila del NOTIFY no.
+              const claves = RELACIONES_A_PRESERVAR[tabla] ?? [];
+              listaActualizada = listaActualizada.map((item) => {
+                if (Number(item[nombreLlave]) !== idValor) return item;
+                const preservados: Record<string, unknown> = {};
+                for (const k of claves) {
+                  if (item[k] !== undefined && item[k] !== null) preservados[k] = item[k];
+                }
+                return { ...item, ...dataMapeada, ...preservados };
+              });
+            } else {
+              listaActualizada = [dataMapeada, ...listaActualizada];
+            }
           } else if (operacion === "DELETE") {
             listaActualizada = listaActualizada.filter(
               (item) => Number(item[nombreLlave]) !== idValor

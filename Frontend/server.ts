@@ -89,6 +89,10 @@ app.prepare().then(async () => {
   });
 
   // 3. CONEXIÓN A POSTGRESQL (LISTEN/NOTIFY)
+  //    ⚠️ SOLO EN DESARROLLO. En producción el backend (postgrest-listener.ts) es
+  //    la única fuente de LISTEN/NOTIFY; este listener duplicado se desactiva para
+  //    evitar doble procesamiento y doble carga de conexiones a Postgres.
+  if (dev) {
   const isLocalDb = process.env.DATABASE_URL?.includes('localhost') || process.env.DATABASE_URL?.includes('127.0.0.1');
 
   const pgClient = new Client({
@@ -105,7 +109,7 @@ app.prepare().then(async () => {
       if (msg.channel === 'cambio_tablas' && msg.payload) {
         try {
           const evento = JSON.parse(msg.payload);
-          const { tabla, operacion, data } = evento;
+          const { tabla, operacion, data, seq, truncado } = evento;
 
          const clientesConectados = io.engine.clientsCount;
 console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacion} | 👥 Clientes socket activos: ${clientesConectados}`);
@@ -122,7 +126,9 @@ console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacio
               io.to(salaDestino).emit('cambio_realtime', {
                 tabla,
                 operacion,
-                data
+                data,
+                seq,
+                truncado
               });
 
               console.log(`🔒 Notificación [${operacion}] enviada a ${salaDestino}`);
@@ -134,7 +140,9 @@ console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacio
             io.emit('cambio_realtime', {
               tabla,
               operacion,
-              data
+              data,
+              seq,
+              truncado
             });
           }
         } catch (parseErr) {
@@ -147,6 +155,7 @@ console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacio
 
   } catch (err) {
     console.error('❌ Error al conectar Postgres Realtime:', err);
+  }
   }
 
   // 4. INICIALIZAR SERVIDOR

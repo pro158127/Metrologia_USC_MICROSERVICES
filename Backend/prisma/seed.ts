@@ -417,6 +417,9 @@ async function main() {
 
   console.log('⚡ Configurando función de notificación PL/pgSQL segura...');
   await prisma.$executeRawUnsafe(`
+    -- Secuencia global monótona para ordenar/deduplicar eventos en el frontend.
+    CREATE SEQUENCE IF NOT EXISTS public.realtime_event_seq;
+
     CREATE OR REPLACE FUNCTION public.notify_cambio_tablas()
     RETURNS trigger
     LANGUAGE plpgsql
@@ -426,6 +429,7 @@ async function main() {
         operacion   TEXT := TG_OP;
         payload     JSONB;
         row_data    JSONB;
+        seq_val     BIGINT;
     BEGIN
         IF (TG_OP = 'DELETE') THEN
             row_data := to_jsonb(OLD);
@@ -433,13 +437,19 @@ async function main() {
             row_data := to_jsonb(NEW);
         END IF;
 
-        -- 💡 FILTRO DE SEGURIDAD: Remover solo las columnas gigantes para no exceder los 8KB
+        -- 💡 FILTRO DE SEGURIDAD: Remover las columnas gigantes para no exceder los 8KB
         IF (tabla_nombre = 'version_plantillas') THEN
             row_data := row_data - 'INPUT_SCHEMA' - 'MAPPING_CONFIG' - 'MAPEO_CONFIG' - 'MAPEO_EXCEL_JSON';
         ELSIF (tabla_nombre = 'calibraciones') THEN
             row_data := row_data - 'DATOS_TECNICOS_JSON';
         ELSIF (tabla_nombre = 'roles') THEN
             row_data := row_data - 'PERMISOS_JSON';
+        ELSIF (tabla_nombre = 'version_documentos') THEN
+            row_data := row_data - 'content_json';
+        ELSIF (tabla_nombre = 'document_chunks') THEN
+            row_data := row_data - 'CONTENIDO' - 'embedding';
+        ELSIF (tabla_nombre = 'Quote') THEN
+            row_data := row_data - 'data';
         END IF;
 
         payload := jsonb_build_object(
@@ -447,6 +457,40 @@ async function main() {
             'operacion', operacion,
             'data', row_data
         );
+
+        -- 💡 GUARD DE TAMAÑO: pg_notify falla si el payload supera ~8KB y, al estar
+        -- dentro del trigger, abortaría la transacción de escritura. Si el payload
+        -- es muy grande se degrada a un marcador que indica al frontend que debe
+        -- re-consultar la tabla en lugar de aplicar la fila recibida.
+        IF octet_length(payload::text) > 7500 THEN
+            row_data := jsonb_build_object(
+                '__truncado', true,
+                'id', COALESCE(
+                    row_data->'ID_COTIZACION',
+                    row_data->'ID_ORDEN_TRABAJO',
+                    row_data->'ID_RECEPCION',
+                    row_data->'ID_CERTIFICADO',
+                    row_data->'ID_CALIBRACION',
+                    row_data->'ID_CLIENTE',
+                    row_data->'ID_DOCUMENTO',
+                    row_data->'ID_TARIFA',
+                    row_data->'ID_SELLO',
+                    row_data->'ID_USUARIO_AUTO_INCREMENT',
+                    row_data->'ID_NOTIFICACION',
+                    row_data->'ID_FACTURA',
+                    row_data->'ID_SEGUIMIENTO'
+                )
+            );
+            payload := jsonb_build_object(
+                'tabla', tabla_nombre,
+                'operacion', operacion,
+                'data', row_data,
+                'truncado', true
+            );
+        END IF;
+
+        SELECT nextval('public.realtime_event_seq') INTO seq_val;
+        payload := payload || jsonb_build_object('seq', seq_val);
 
         PERFORM pg_notify('cambio_tablas', payload::text);
 
@@ -476,21 +520,43 @@ async function main() {
     });
   }
 
-  // 6. Asignación Dinámica de Triggers en todas las tablas
-  console.log('⚡ Asignando triggers dinámicos en las tablas base...');
+  // 6. Asignación de Triggers SOLO en el allow-list de tablas que el frontend consume.
+  //    Se excluyen las tablas de alta rotación/auditoría (quote, audit_logs,
+  //    document_chunks, historial_cambios, historial_devoluciones_informes) para
+  //    reducir ruido emitido por Socket.IO y evitar payloads gigantes/vectores.
+  console.log('⚡ Asignando triggers en las tablas base (allow-list)...');
   await prisma.$executeRawUnsafe(`
     DO $$
     DECLARE
         r RECORD;
     BEGIN
-        FOR r IN 
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public' 
+        -- Limpieza: quitar triggers de TODAS las tablas (incluye las excluidas que
+        -- pudieron quedar de una versión anterior del seed).
+        FOR r IN
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
               AND table_type = 'BASE TABLE'
-              AND table_name NOT IN ('_prisma_migrations')
         LOOP
             EXECUTE format('DROP TRIGGER IF EXISTS trg_notify_cambios ON public.%I;', r.table_name);
+        END LOOP;
+
+        -- Creación: solo sobre el allow-list.
+        FOR r IN
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_type = 'BASE TABLE'
+              AND table_name IN (
+                'usuarios','clientes','cotizaciones','cotizacion_detalles',
+                'ordenes_trabajo','orden_trabajo_detalles','recepciones_equipo',
+                'recepcion_equipo_detalles','calibraciones','certificados',
+                'certificado_sellos','tarifas','historial_tarifas','notificaciones',
+                'facturas','seguimientos_comerciales','sellos','plantillas_sellos',
+                'roles','documentos','version_documentos','parametros_sistema',
+                'version_plantillas','plantillas','historial_estado_cotizacion'
+              )
+        LOOP
             EXECUTE format('
                 CREATE TRIGGER trg_notify_cambios
                 AFTER INSERT OR UPDATE OR DELETE ON public.%I

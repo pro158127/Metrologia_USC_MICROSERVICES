@@ -4,11 +4,10 @@ import fp from 'fastify-plugin';
 
 async function postgresListenerPluginHandler(fastify: FastifyInstance) {
   const dbEnv = process.env.DB_ENV;
-  const connectionString = "postgresql://postgres:password123@postgres_db:5432/metrologia_db"
-  if (!connectionString) {
-    console.error('❌ Error: DATABASE_URL no está definida en las variables de entorno.');
-    return;
-  }
+  const connectionString =
+    process.env.DATABASE_URL_LOCAL ||
+    process.env.DATABASE_URL_AWS ||
+    'postgresql://postgres:password123@postgres_db:5432/metrologia_db';
 
   const useSSL = dbEnv === 'aws' || dbEnv === 'production';
   const clientConfig: ClientConfig = {
@@ -17,24 +16,38 @@ async function postgresListenerPluginHandler(fastify: FastifyInstance) {
     connectionTimeoutMillis: 5000,
     ssl: useSSL ? { rejectUnauthorized: false } : false,
   };
-if(clientConfig){
-  console.log("conexion establcida con exito sql",clientConfig)
-}
-  let pgClient: Client;
+
+  let pgClient: Client | null = null;
   let isDisconnecting = false;
+  let reconnectTimer: NodeJS.Timeout | null = null;
+
+  const scheduleReconnect = () => {
+    if (isDisconnecting || reconnectTimer) return;
+    if (pgClient) {
+      const client = pgClient;
+      pgClient = null;
+      // Se conservan los listeners (el guard `reconnectTimer` evita dobles
+      // reintentos) para no arriesgar un 'error' sin handler tras el end().
+      client.end().catch(() => {});
+    }
+    console.log('🔄 Reintentando conexión con PostgreSQL LISTEN en 5 segundos...');
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectAndListen();
+    }, 5000);
+  };
 
   const connectAndListen = async () => {
-    pgClient = new Client(clientConfig);
+    const client = new Client(clientConfig);
+    pgClient = client;
 
-    pgClient.on('notification', (msg) => {
+    client.on('notification', (msg) => {
       if (msg.channel === 'cambio_tablas' && msg.payload) {
         try {
-         /// console.log("📥 NOTIFICACIÓN RECIBIDA DE POSTGRESQL:", msg.payload);
           const evento = JSON.parse(msg.payload);
-          const { tabla, operacion, data } = evento;
+          const { tabla, operacion, data, seq, truncado } = evento;
 
           if (!fastify.io) {
-           // console.warn('⚠️ Instancia de Socket.io no disponible en Fastify.');
             return;
           }
 
@@ -47,24 +60,27 @@ if(clientConfig){
               const usuarioEstaConectado = roomSockets && roomSockets.size > 0;
 
               if (usuarioEstaConectado) {
-                fastify.io.to(targetRoom).emit('cambio_realtime', { tabla, operacion, data });
+                fastify.io.to(targetRoom).emit('cambio_realtime', { tabla, operacion, data, seq, truncado });
                 fastify.io.except(targetRoom).emit('cambio_realtime', {
                   tabla,
                   operacion: 'DELETE',
                   data: { id: data?.id ?? data?.ID_NOTIFICACION },
+                  seq,
+                  truncado,
                 });
               } else {
                 fastify.io.emit('cambio_realtime', {
                   tabla,
                   operacion: 'DELETE',
                   data: { id: data?.id ?? data?.ID_NOTIFICACION },
+                  seq,
+                  truncado,
                 });
               }
             }
           } else {
             // Emisión global para las demás tablas
-            fastify.io.emit('cambio_realtime', { tabla, operacion, data });
-           // console.log(`📡 Emisión global enviada vía Socket.io para la tabla: ${tabla}`);
+            fastify.io.emit('cambio_realtime', { tabla, operacion, data, seq, truncado });
           }
         } catch (err) {
           console.error('❌ Error parseando payload de Postgres:', err);
@@ -72,23 +88,18 @@ if(clientConfig){
       }
     });
 
-    pgClient.on('error', (err) => {
+    client.on('error', (err) => {
       console.error('❌ Error en el cliente de PostgreSQL:', err.message);
-      if (!isDisconnecting) {
-        console.log('🔄 Reintentando conexión con PostgreSQL LISTEN en 5 segundos...');
-        setTimeout(connectAndListen, 5000);
-      }
+      scheduleReconnect();
     });
 
     try {
-      await pgClient.connect();
-      await pgClient.query('LISTEN cambio_tablas');
+      await client.connect();
+      await client.query('LISTEN cambio_tablas');
       console.log(`🔈 PostgreSQL (${(dbEnv ?? 'unknown').toUpperCase()}) escuchando "cambio_tablas" con éxito.`);
     } catch (err: any) {
       console.error('❌ Error al conectar el Listener de PostgreSQL:', err.message);
-      if (!isDisconnecting) {
-        setTimeout(connectAndListen, 5000);
-      }
+      scheduleReconnect();
     }
   };
 
@@ -98,6 +109,10 @@ if(clientConfig){
   // Limpieza limpia al apagar el servidor Fastify
   fastify.addHook('onClose', async () => {
     isDisconnecting = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (pgClient) {
       await pgClient.end();
       console.log('🔌 Listener de PostgreSQL desconectado correctamente.');
