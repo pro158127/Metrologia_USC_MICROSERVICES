@@ -37,6 +37,7 @@ import pdfRoutes from './routes/pdfRoutes.routes.js';
 import internalRoutes from './routes/internal.route.js';
 import quoteStatusRoutes from './routes/quote.route.js';
 import archivosRoutes from './routes/archivos.routes.js';
+import { asegurarBucketExiste, s3Client, BUCKET_NAME } from './lib/s3Client.js';
 async function bootstrap() {
   const fastify = Fastify({ logger: true });
 
@@ -51,6 +52,13 @@ async function bootstrap() {
   await fastify.register(fastifyMultipart, {
     limits: { fileSize: 15 * 1024 * 1024 },
   });
+
+  // Asegura que el bucket de MinIO exista antes de exponer las rutas de subida.
+  try {
+    await asegurarBucketExiste(s3Client, BUCKET_NAME);
+  } catch (err: any) {
+    fastify.log.warn(`[minio] No se pudo verificar/crear el bucket ${BUCKET_NAME}: ${err?.message ?? err}`);
+  }
 
   // 2. Infraestructura & Plugins Globales
   // auth (registra @fastify/jwt) va antes que socketPlugin para poder verificar

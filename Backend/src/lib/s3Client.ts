@@ -27,7 +27,10 @@ async function asegurarBucketExiste(s3ClientParam: S3Client = s3Client, bucketNa
   try {
     await s3ClientParam.send(new HeadBucketCommand({ Bucket: bucketName }));
   } catch (error: any) {
-    if (error.$metadata?.httpStatusCode === 404 || error.name === "NotFound") {
+    const status = error?.$metadata?.httpStatusCode;
+    const nombre = error?.name;
+    const code = error?.Code;
+    if (status === 404 || nombre === "NotFound" || nombre === "NoSuchBucket" || code === "NoSuchBucket") {
       console.log(`El bucket ${bucketName} no existe. Creándolo automáticamente...`);
       await s3ClientParam.send(new CreateBucketCommand({ Bucket: bucketName }));
       console.log("¡Bucket creado con éxito!");

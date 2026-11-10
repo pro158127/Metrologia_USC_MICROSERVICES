@@ -3,26 +3,31 @@
 // 1. IMPORTS
 import React, { useCallback, useState } from "react";
 import { signOut } from "next-auth/react";
+import dynamic from "next/dynamic";
 import { Sidebar, ModuleKey } from "./components/sidebar";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { permisionMapping } from "@/app/lib/permissions/mapping";
 import { Header } from "./components/Header";
 import Perfil from "./components/Perfil";
-import { Administracion } from "./module/Administracion";
-import ClientMainRenderer from "./module/gestion_clientes/page";
-import ClienteDetailPage from "./module/gestion_clientes/perfil/[id]/page";
-import Cotizaciones from "./module/cotizacion";
-import SeguimientoComercial from "./module/seguimiento";
-import Dashboard from "./dashboard";
-import OrdenesTrabajo from "./module/ordenes_ot";
-import  { MainRenderers } from  "./module/recepciones";
-import SocketDebugger from "../componets/debugges_webscoekt ";
-import RevisionCertificados from "./module/Revison_certifados";
-import CalibracionInformesMockup from "./module/Calibracion_informes";
-import MainRendererenv from "./module/Envio_entrega";
-import MainRendererreport from "./module/reportes";
+
+// Carga perezosa (code-splitting): evita que Next compile todos los módulos
+// pesados (xlsx, @univerjs, pdfjs, recharts, etc.) en el primer render del
+// dashboard tras el login. Cada módulo solo se compila cuando se navega a él.
+const Administracion = dynamic(() => import("./module/Administracion").then((m) => m.Administracion), { ssr: false });
+const ClientMainRenderer = dynamic(() => import("./module/gestion_clientes/page"), { ssr: false });
+const ClienteDetailPage = dynamic(() => import("./module/gestion_clientes/perfil/[id]/page"), { ssr: false });
+const Cotizaciones = dynamic(() => import("./module/cotizacion"), { ssr: false });
+const SeguimientoComercial = dynamic(() => import("./module/seguimiento"), { ssr: false });
+const Dashboard = dynamic(() => import("./dashboard"), { ssr: false });
+const OrdenesTrabajo = dynamic(() => import("./module/ordenes_ot"), { ssr: false });
+const MainRenderers = dynamic(() => import("./module/recepciones").then((m) => m.MainRenderers), { ssr: false });
+const SocketDebugger = dynamic(() => import("../componets/debugges_webscoekt "), { ssr: false });
+const RevisionCertificados = dynamic(() => import("./module/Revison_certifados"), { ssr: false });
+const CalibracionInformesMockup = dynamic(() => import("./module/Calibracion_informes"), { ssr: false });
+const MainRendererenv = dynamic(() => import("./module/Envio_entrega"), { ssr: false });
+const MainRendererreport = dynamic(() => import("./module/reportes"), { ssr: false });
+const MainRenderer2 = dynamic(() => import("./module/import_ot"), { ssr: false });
 // Tipado formal para las funciones de navegación
-import MainRenderer2 from "./module/import_ot";
 export interface Perfil {
   change_id_cliente: (n: number) => void;
   change_module: () => void;
