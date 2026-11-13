@@ -748,8 +748,10 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       }
 
       // ==============================================================
-      // 4. VALIDACIÓN DE TARIFAS (reporte agregado, sin insertar nada si falla)
+      // 4. VALIDACIÓN DE TARIFAS (solo Flujo 1, sin cotización vinculada).
+      //    En Flujo 2 el nombre/tipo/magnitud/precio salen de la cotización.
       // ==============================================================
+      if (!idCotizacionFinal) {
       const tarifasActivas = await tx.tarifas.findMany({
         where: { ESTADO: 'ACTIVO' },
         include: {
@@ -817,6 +819,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
             instrumentosSinTarifa,
           )}`,
         );
+      }
       }
 
       // ==============================================================
@@ -932,43 +935,75 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           );
         }
 
-        // 2. Instrumentos con cantidad exacta.
-        const claveDetalle = (instrumento: string, tipo: string) =>
-          `${familiaDe(instrumento)}|${normalizar(tipo)}`;
+        // 2. Resolver cada instrumento del Excel contra las líneas de la
+        //    cotización por coincidencia exacta de nombre (normalizado).
+        const lineasCotizacion = cotizacionExistente.cotizacion_detalles;
 
-        const cantidadCotizada = new Map<string, number>();
-        for (const d of cotizacionExistente.cotizacion_detalles) {
-          const k = claveDetalle(d.EQUIPO_DESCRIPCION, d.TIPO_SERVICIO);
-          cantidadCotizada.set(k, (cantidadCotizada.get(k) ?? 0) + (d.CANTIDAD || 0));
+        const lineasPorNombre = new Map<string, typeof lineasCotizacion>();
+        for (const d of lineasCotizacion) {
+          const nombre = normalizar(d.EQUIPO_DESCRIPCION);
+          const lista = lineasPorNombre.get(nombre) ?? [];
+          lista.push(d);
+          lineasPorNombre.set(nombre, lista);
         }
 
-        const cantidadImportada = new Map<string, number>();
+        const conteoImportado = new Map<string, number>();
         for (const item of datosExtraidos.tablas) {
-          const k = claveDetalle(
-            item.instrumento_tarifa ?? item.instrumento,
-            item.tipo_servicio_real || item.tipo_servicio || '',
-          );
-          cantidadImportada.set(k, (cantidadImportada.get(k) ?? 0) + 1);
+          const nombre = normalizar(item.instrumento);
+
+          const lineas = lineasPorNombre.get(nombre);
+          if (!lineas || lineas.length === 0) {
+            throw new Error(
+              `Validación fallida: el instrumento '${item.instrumento}' no existe en la cotización '${cotizacionExistente.CODIGO_COTIZACION}'.`,
+            );
+          }
+
+          // Desambiguar por sitio cuando el mismo nombre aparece en varias
+          // líneas (LABORATORIO vs CLIENTE).
+          let linea: (typeof lineas)[number] | undefined;
+          if (lineas.length === 1) {
+            linea = lineas[0];
+          } else {
+            const sitioExcel = normalizarSitio(item.sitio);
+            linea =
+              lineas.find((d) => normalizarSitio(d.sitio) === sitioExcel) ??
+              lineas[0];
+          }
+
+          // Nombre, tipo, magnitud y precio desde la cotización.
+          item.instrumento = linea.EQUIPO_DESCRIPCION;
+          item.instrumento_tarifa = linea.EQUIPO_DESCRIPCION;
+          item.tipo_servicio = linea.TIPO_SERVICIO;
+          item.tipo_servicio_real = linea.TIPO_SERVICIO;
+          item.magnitud_real = linea.MAGNITUD;
+          item.valor_estimado = Number(linea.VALOR_UNITARIO);
+          item.sitio = normalizarSitio(linea.sitio);
+
+          const clave = `${normalizar(linea.EQUIPO_DESCRIPCION)}|${normalizarSitio(linea.sitio)}`;
+          conteoImportado.set(clave, (conteoImportado.get(clave) ?? 0) + 1);
         }
 
+        // 3. Cantidad exacta: lo importado debe igualar la CANTIDAD de cada línea.
         const discrepancias: {
           instrumento: string;
-          tipoServicio: string;
           esperado: number;
           encontrado: number;
         }[] = [];
-        const claves = new Set([...cantidadCotizada.keys(), ...cantidadImportada.keys()]);
-        for (const k of claves) {
-          const esperado = cantidadCotizada.get(k) ?? 0;
-          const encontrado = cantidadImportada.get(k) ?? 0;
+        for (const d of lineasCotizacion) {
+          const clave = `${normalizar(d.EQUIPO_DESCRIPCION)}|${normalizarSitio(d.sitio)}`;
+          const esperado = d.CANTIDAD || 0;
+          const encontrado = conteoImportado.get(clave) ?? 0;
           if (esperado !== encontrado) {
-            const [instrumento, tipoServicio] = k.split('|');
-            discrepancias.push({ instrumento, tipoServicio, esperado, encontrado });
+            discrepancias.push({
+              instrumento: d.EQUIPO_DESCRIPCION,
+              esperado,
+              encontrado,
+            });
           }
         }
 
         if (discrepancias.length > 0) {
-          const detalle = `los instrumentos del archivo no coinciden con la cotización '${cotizacionExistente.CODIGO_COTIZACION}'. Detalle: ${JSON.stringify(discrepancias)}`;
+          const detalle = `las cantidades del archivo no coinciden con la cotización '${cotizacionExistente.CODIGO_COTIZACION}'. Detalle: ${JSON.stringify(discrepancias)}`;
           if (BLOQUEAR_DISCREPANCIA_COTIZACION) {
             throw new Error(`Validación fallida: ${detalle}`);
           }
