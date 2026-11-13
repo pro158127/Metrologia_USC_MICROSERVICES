@@ -67,9 +67,25 @@ interface ExtractedData {
 
 function cleanString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  if (typeof value === 'object' && value && 'result' in value) {
-    return cleanString((value as any).result);
+
+  // ExcelJS puede entregar celdas como objetos (fórmula, texto enriquecido o
+  // hipervínculo). Hay que resolverlas a texto plano para no guardar "[object Object]".
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if ('result' in obj && obj.result !== undefined) return cleanString(obj.result);
+    if (Array.isArray(obj.richText)) {
+      const joined = obj.richText
+        .map((r) => (r && typeof r === 'object' && 'text' in r ? String((r as any).text) : ''))
+        .join('');
+      const out = joined.trim();
+      return out === '' ? null : out;
+    }
+    if ('text' in obj && obj.text !== undefined) return cleanString(obj.text);
+    if ('hyperlink' in obj && obj.hyperlink !== undefined && obj.text === undefined) {
+      return cleanString(obj.hyperlink);
+    }
   }
+
   const text = String(value).trim();
   return text === '' ? null : text;
 }
@@ -1016,11 +1032,11 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       // 6. DATOS DE CABECERA DE LA OT (se aplican a cada OT generada)
       // ==============================================================
       const datosOT = {
-        // Área certificado / cliente
-        Razon_social: cliente.RAZON_SOCIAL,
-        NIT: cliente.NIT,
-        dirrecion: cliente.dirrecion,
-        ciudad: cliente.ciudad,
+        // Área certificado / cliente (desde el Excel, con fallback al cliente).
+        Razon_social: getString(datosExtraidos, 'cert_razon_social') || cliente.RAZON_SOCIAL,
+        NIT: getString(datosExtraidos, 'cert_nit') || cliente.NIT,
+        dirrecion: getString(datosExtraidos, 'cert_direccion') || cliente.dirrecion,
+        ciudad: getString(datosExtraidos, 'cert_ciudad') || cliente.ciudad,
         CORREO_CERTIFICADO: getString(datosExtraidos, 'cert_email_certificados') || cliente.CORREO,
         CORREO_FACTURA: getString(datosExtraidos, 'cert_email_factura') || cliente.CORREO,
         FECHA_LIMITE_FACTURACION: getDate(

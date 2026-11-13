@@ -67,6 +67,13 @@ const tipoServicioADB = (v?: string | null): string => {
   return s.includes("NO") ? "NO ACREDITADO" : "ACREDITADO";
 };
 
+// Limpia los placeholders de BD ("sin nit", "sin ciudad", "sin dirreccion",
+// "sin razon_social", ...) para poder caer al fallback del cliente.
+const limpiarPlaceholder = (v?: string | null): string => {
+  const s = (v ?? "").trim();
+  return s.toLowerCase().startsWith("sin ") ? "" : s;
+};
+
 const buildOrderDraft = (ot: OTType): EditableOrderFields => ({
   razonSocialCert: ot.razonSocialCert ?? ot.cliente ?? "",
   nitCert: ot.nitCert ?? "",
@@ -1515,12 +1522,12 @@ const instrumentos_cot = useMemo(() => {
       retraso: otPreview.retraso || false,
       equipos: instrumentosMapeados.length,
       tipo: "Acreditado",
-      razonSocialCert: clienteData?.razonSocial || "",
-      nitCert: clienteData?.nitCedula || "",
+      razonSocialCert: limpiarPlaceholder(otCompleta.Razon_social) || clienteData?.razonSocial || "",
+      nitCert: limpiarPlaceholder(otCompleta.NIT) || clienteData?.nitCedula || "",
       correoCertificados: otCompleta.correoCertificado || clienteData?.correo || "",
       fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion ? new Date(otCompleta.fechaLimiteFacturacion).toLocaleDateString() : '',
-      direccionCert: clienteData?.dirrecion || "",
-      ciudadCert: clienteData?.ciudad || "",
+      direccionCert: limpiarPlaceholder(otCompleta.dirrecion) || clienteData?.dirrecion || "",
+      ciudadCert: limpiarPlaceholder(otCompleta.ciudad) || clienteData?.ciudad || "",
       correoFactura: otCompleta.correoFactura || clienteData?.correo || "",
       lugarCalibracion: otCompleta.esInternoUSC
         ? "Interno USC"
