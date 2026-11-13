@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { 
   Ruler, 
   X,
@@ -10,7 +11,6 @@ import {
   Package, 
   FlaskConical, 
   CheckSquare, 
-  PenTool, 
   Truck, 
   BarChart3, 
   Settings, 
@@ -20,6 +20,7 @@ import {
 import UscLabLogo from "./logo";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { permisionMapping } from "@/app/lib/permissions/mapping";
+import { obtenerCertificadosRevision } from "@/app/action_module/certificados";
 export type ModuleKey =
   | "dashboard"
   | "clientes"
@@ -77,8 +78,7 @@ const sections: SidebarSection[] = [
     title: "TÉCNICO",
     items: [
       { key: "calibracion", label: "Calibración e Informes", icon: <FlaskConical size={16} /> },
-      { key: "revision", label: "Revisión de Certificados", icon: <CheckSquare size={16} />, badge: 12 },
-      { key: "firma", label: "Firma y Sello", icon: <PenTool size={16} /> },
+      { key: "revision", label: "Revisión de Certificados", icon: <CheckSquare size={16} /> },
     ],
   },
   {
@@ -92,13 +92,32 @@ const sections: SidebarSection[] = [
     title: "SISTEMA",
     items: [
       { key: "administracion", label: "Administración", icon: <Settings size={16} /> },
-      { key: "configuracion", label: "Configuración General", icon: <Settings size={16} /> },
     ],
   },
 ];
 
 export function Sidebar({ activeModule, onNavigate, onLogout, isOpen, onClose }: SidebarProps) {
   const { hasModule } = usePermissions();
+  const [pendientesRevision, setPendientesRevision] = useState(0);
+
+  useEffect(() => {
+    let activo = true;
+    obtenerCertificadosRevision()
+      .then((certs) => {
+        if (!activo) return;
+        const pendientes = certs.filter(
+          (c) => c.estadoRevision !== "APROBADO" && c.estadoRevision !== "RECHAZADO"
+        ).length;
+        setPendientesRevision(pendientes);
+      })
+      .catch(() => {
+        if (activo) setPendientesRevision(0);
+      });
+    return () => {
+      activo = false;
+    };
+  }, []);
+
   return (
     <>
       {isOpen && (
@@ -149,6 +168,7 @@ export function Sidebar({ activeModule, onNavigate, onLogout, isOpen, onClose }:
                 </div>
                 {visibleItems.map((item) => {
                   const isActive = activeModule === item.key;
+                  const badge = item.key === "revision" ? pendientesRevision : (item.badge ?? 0);
                   return (
                     <button
                       key={item.key}
@@ -169,9 +189,9 @@ export function Sidebar({ activeModule, onNavigate, onLogout, isOpen, onClose }:
                         {item.icon}
                       </span>
                       <span className="flex-1 text-left">{item.label}</span>
-                      {item.badge && (
+                      {badge > 0 && (
                         <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-semibold text-white">
-                          {item.badge}
+                          {badge}
                         </span>
                       )}
                     </button>

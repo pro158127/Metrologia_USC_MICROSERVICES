@@ -41,6 +41,7 @@ import type {
   RecentActivityItem,
 } from "@/tipos/dashboard";
 import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { useSession } from "next-auth/react";
 
 // ========== UTILIDADES DE FORMATO ==========
 const formatMoneda = (val: number) =>
@@ -73,7 +74,7 @@ const cardContainerStyle =
 
 // 2. Declaración de Componentes Hijos (Extraídos)
 
-const WelcomeHeaderSection: React.FC<WelcomeHeaderSectionProps> = ({ systemStats }) => {
+const WelcomeHeaderSection: React.FC<WelcomeHeaderSectionProps> = ({ systemStats, userName }) => {
   return (
     <div className={`mb-6 ${cardContainerStyle}`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -82,7 +83,7 @@ const WelcomeHeaderSection: React.FC<WelcomeHeaderSectionProps> = ({ systemStats
             PANEL DE CONTROL
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-500 pl-4">
-            Bienvenido, Luis Burgos.
+            Bienvenido, {userName ?? "usuario"}.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -304,6 +305,7 @@ const FooterSection: React.FC = () => {
 // 3. Declaración del Componente Padre (`MainRenderer` / `Dashboard`)
 
 export function Dashboard({ onNavigate }: DashboardProps) {
+  const { data: session } = useSession();
   const cotizaciones = useDbTable("cotizaciones");
   const ordenes = useDbTable("ordenes_trabajo");
   const certificados = useDbTable("certificados");
@@ -543,7 +545,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </div>
       ) : (
         <>
-          <WelcomeHeaderSection systemStats={systemStats} />
+          <WelcomeHeaderSection systemStats={systemStats} userName={session?.user?.name} />
           <KpiGridSection kpiData={kpiData} />
           <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
             <PendingCertificatesSection onNavigate={onNavigate} pendingCerts={pendingCerts} pendingCount={pendingCerts.length} />

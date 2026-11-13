@@ -68,6 +68,7 @@ export interface PendingCertsTableProps {
 
 export interface WelcomeHeaderSectionProps {
   systemStats: SystemStat[];
+  userName?: string | null;
 }
 
 export interface KpiGridSectionProps {
