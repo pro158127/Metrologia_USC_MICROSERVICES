@@ -1525,7 +1525,7 @@ const instrumentos_cot = useMemo(() => {
       razonSocialCert: limpiarPlaceholder(otCompleta.Razon_social) || clienteData?.razonSocial || "",
       nitCert: limpiarPlaceholder(otCompleta.NIT) || clienteData?.nitCedula || "",
       correoCertificados: otCompleta.correoCertificado || clienteData?.correo || "",
-      fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion ? new Date(otCompleta.fechaLimiteFacturacion).toLocaleDateString() : '',
+      fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion ? new Date(otCompleta.fechaLimiteFacturacion).toISOString().split('T')[0] : '',
       direccionCert: limpiarPlaceholder(otCompleta.dirrecion) || clienteData?.dirrecion || "",
       ciudadCert: limpiarPlaceholder(otCompleta.ciudad) || clienteData?.ciudad || "",
       correoFactura: otCompleta.correoFactura || clienteData?.correo || "",
@@ -1547,7 +1547,7 @@ const instrumentos_cot = useMemo(() => {
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
       responsableUsc: otCompleta.responsable || "",
-      fechaDiligenciamiento: otCompleta.createdAt?.toString() || "",
+      fechaDiligenciamiento: otCompleta.createdAt ? new Date(otCompleta.createdAt).toISOString().split('T')[0] : "",
       requiereAnexo: otCompleta.requireAnexo ? "Si" : "No",
       estadoOrden: otCompleta.estado ?? "",
       observacionesGenerales: otCompleta.observaciones || "",
@@ -1615,12 +1615,6 @@ const saveOrderEdits = async () => {
     if (!selectedOT || !orderDraft) return;
 
     // 🟢 1. Validaciones
-    const sinTecnico = instrumentDrafts.some(inst => !inst.asignado || inst.asignado === 0);
-    if (sinTecnico) {
-      showToast("⚠️ Faltan técnicos por asignar en los instrumentos.");
-      return;
-    }
-
     if (!orderDraft.responsableUsc) {
       showToast("⚠️ Debes seleccionar un Responsable USC para la orden.");
       return;
