@@ -8,6 +8,7 @@ import { Readable } from 'stream';
 import { promisify } from 'util';
 import { urls_schema,url } from '../routes/schema-checkStatus.js'; 
 import { firmarTokenAprobacion } from '../lib/approval-token.js';
+import { PDFDocument } from 'pdf-lib';
 
 // 1. Declaramos el módulo con la ruta exacta para satisfacer al linter de TypeScript
 declare module 'libreoffice-convert/index.js';
@@ -39,6 +40,76 @@ function inyectarValorSeguro(cell: exceljs.Cell, newValue: any) {
     cell.font = fuenteCelda;
   }
 }
+
+// ============================================================================
+// ETIQUETAS CANÓNICAS PARA LA ORDEN DE TRABAJO
+// ============================================================================
+const LISTA_UNIDADES = [
+  'psi', 'bar', 'mbar', 'kPa', 'MPa', 'Pa', 'mmHg', 'inHg',
+  'kgf/cm²', 'cmH2O', 'kg', 'g', 'mg', 'lb', '°C', '°F', '%HR',
+];
+
+const LISTAS_DESPLEGABLES_OT: Record<string, string[]> = {
+  tipo_servicio: ['Acreditado', 'No_acreditado'],
+  sitio_calibracion: ['Laboratorio permanente', 'En sitio'],
+  unidad: LISTA_UNIDADES,
+};
+
+function mapearTipoServicio(valor?: string | null): string {
+  const v = (valor ?? '').toString().trim();
+  const upper = v.toUpperCase().replace(/_/g, ' ');
+  if (!v) return 'Acreditado';
+  if (upper.includes('NO') && upper.includes('ACREDIT')) return 'No_acreditado';
+  return 'Acreditado';
+}
+
+function mapearSitioCalibracion(valor?: string | null): string {
+  const v = (valor ?? '').toString().trim().toUpperCase();
+  if (v.startsWith('CLI')) return 'En sitio';
+  return 'Laboratorio permanente';
+}
+
+function aplicarListasDesplegablesOT(workbook: exceljs.Workbook, mappingConfig: MappingConfig): void {
+  for (const table of mappingConfig.mappings.tables) {
+    const maxRows = table.key === 'tabla_instrumentos_anexo' ? 20 : 10;
+    for (const col of table.columns) {
+      const opciones = LISTAS_DESPLEGABLES_OT[col.key];
+      if (!opciones || !col.column) continue;
+
+      const sheet = workbook.getWorksheet(table.sheet || 1) || workbook.worksheets[0];
+      if (!sheet) continue;
+
+      const startRow = table.startRow;
+      const endRow = startRow + maxRows - 1;
+      const rango = `${col.column}${startRow}:${col.column}${endRow}`;
+
+      try {
+        (sheet as any).dataValidations.add(rango, {
+          type: 'list',
+          allowBlank: true,
+          formulae: [`"${opciones.join(',')}"`],
+        });
+      } catch (e) {
+        console.warn(`[generador_excel] No se pudo aplicar validación en ${rango}:`, e);
+      }
+    }
+  }
+}
+
+async function limitarPdfAPaginas(pdfBuffer: Buffer, maxPaginas: number): Promise<Buffer> {
+  try {
+    const pdfDoc = await PDFDocument.load(pdfBuffer as any);
+    const total = pdfDoc.getPageCount();
+    for (let i = total - 1; i >= maxPaginas; i--) {
+      pdfDoc.removePage(i);
+    }
+    return Buffer.from(await pdfDoc.save());
+  } catch (e) {
+    console.warn('[generador_excel] No se pudo limitar el PDF, se usa el original:', e);
+    return pdfBuffer;
+  }
+}
+
   //cotizaciones_pasrse
 
 export function resolverDatosCotizacionConCeldas(cotizacion: any, mappingConfig: MappingConfig) {
@@ -254,9 +325,9 @@ if (Array.isArray(col.columnsList) && col.columnsList.length > 0) {
         // Mapeo directo contra el modelo orden_trabajo_detalles[cite: 1]
         switch (col.key) {
           case 'item': rawValue = item.ITEM; break;
-          case 'tipo_servicio': rawValue = item.TIPO_SERVICIO; break;
+          case 'tipo_servicio': rawValue = mapearTipoServicio(item.TIPO_SERVICIO); break;
           case 'instrumento': rawValue = item.INSTRUMENTO; break;
-          case 'sitio_calibracion': rawValue = item.sitio_calibracion; break;
+          case 'sitio_calibracion': rawValue = mapearSitioCalibracion(item.sitio_calibracion); break;
           case 'fabricante': 
           case 'marca': rawValue = item.FABRICANTE; break; 
           case 'modelo': rawValue = item.MODELO; break;
@@ -746,6 +817,7 @@ datosPlantillaCorreo = {
         }
       }
     }
+     aplicarListasDesplegablesOT(workbook, mappingConfig);
      datosPlantillaCorreo = {
   // Dato interno para el worker de correos (A quién se lo enviamos)
   emailDestino:ordenTrabajo.clientes.CORREO, 
@@ -813,10 +885,15 @@ datosPlantillaCorreo = {
   const s3Key_pdf = `${prefix}/${nombreBase}.pdf`; 
 
   const pdfBuffer = await convertAsync(Buffer.from(updatedBuffer), '.pdf', undefined);
+
+  // 🔥 Cotización: limitar el PDF a las 2 primeras páginas.
+  const pdfBufferFinal = tipo === 1
+    ? await limitarPdfAPaginas(Buffer.from(pdfBuffer), 2)
+    : Buffer.from(pdfBuffer);
   
   await Promise.all([
     s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key, Body: Buffer.from(updatedBuffer), ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })),
-    s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key_pdf, Body: pdfBuffer, ContentType: 'application/pdf' }))
+    s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key_pdf, Body: pdfBufferFinal, ContentType: 'application/pdf' }))
   ]);
 
   const parse: url = { excel: s3Key, url_pdf: s3Key_pdf };

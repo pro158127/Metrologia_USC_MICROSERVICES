@@ -45,6 +45,13 @@ import { consolidarOrdenTrabajoAction } from "@/app/action_module/ordenes";
 // ==========================================
 // (tipos e interfaces en @/tipos/tipo_ordenes_de_trabajo.ts)
 
+const TIPOS_SERVICIO = ["Acreditado", "No_acreditado"];
+
+const UNIDADES = [
+  "psi", "bar", "mbar", "kPa", "MPa", "Pa", "mmHg", "inHg",
+  "kgf/cm²", "cmH2O", "kg", "g", "mg", "lb", "°C", "°F", "%HR",
+];
+
 const buildOrderDraft = (ot: OTType): EditableOrderFields => ({
   razonSocialCert: ot.razonSocialCert ?? ot.cliente ?? "",
   nitCert: ot.nitCert ?? "",
@@ -370,12 +377,6 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
 }) => {
   const itemOptions = Array.from({ length: instrumentDrafts.length }, (_, i) => i + 1);
 
-  // Listas únicas para los combos
-  const tiposServicio = useMemo(() => {
-    const tipos = tarifas.map((t) => t.tipoServicio).filter(Boolean);
-    return Array.from(new Set(tipos)).sort();
-  }, [tarifas]);
-
   const instrumentosList = useMemo(() => {
     const nombres = tarifas.map((t) => t.Instrumento).filter(Boolean);
     return Array.from(new Set(nombres)).sort();
@@ -461,14 +462,20 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                     </select>
                   </td>
 
-                  {/* Tipo de Servicio: Combobox editable */}
+                  {/* Tipo de Servicio: lista fija */}
                   <td className="p-2 border-r border-slate-200">
-                    <ComboboxInstrumento
+                    <select
                       value={inst.tipoServicio}
-                      options={tiposServicio}
-                      onChange={(value) => updateInstrumentDraft(inst.id, "tipoServicio", value)}
-                      placeholder="Tipo de servicio"
-                    />
+                      onChange={(e) => updateInstrumentDraft(inst.id, "tipoServicio", e.target.value)}
+                      className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm cursor-pointer"
+                    >
+                      <option value="">Seleccionar...</option>
+                      {TIPOS_SERVICIO.map((tipo) => (
+                        <option key={tipo} value={tipo}>
+                          {tipo}
+                        </option>
+                      ))}
+                    </select>
                   </td>
 
                   {/* Instrumento: Combobox editable */}
@@ -538,10 +545,10 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
                   </td>
 
                   <td className="p-2 border-r border-slate-200">
-                    <input
+                    <ComboboxInstrumento
                       value={inst.unidad ?? ""}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "unidad", e.target.value)}
-                      className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm"
+                      options={UNIDADES}
+                      onChange={(value) => updateInstrumentDraft(inst.id, "unidad", value)}
                       placeholder="Unidad"
                     />
                   </td>
