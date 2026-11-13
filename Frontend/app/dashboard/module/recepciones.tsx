@@ -27,6 +27,8 @@ import {
 import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables_recharge";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
+import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
 import { VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
 import type { QuoteItem, TarifaOption, cambiospayload } from "@/tipos/cotizacion";
 import type {
@@ -914,6 +916,7 @@ export function MainRenderers() {
   const nombreUsuarioSesion = session?.user?.name ?? "";
   const { can } = usePermissions();
   const puedeRegistrar = can("recepcion_de_equipos", "registrar");
+  const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
@@ -1359,6 +1362,10 @@ useEffect(() => {
 
   // --- Inicializar nueva recepción ---
   const inicializarNuevaRecepcion = useCallback(() => {
+    if (!plantillasCompletas) {
+      showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      return;
+    }
     const hoy = new Date().toISOString().split("T")[0];
     setSelectedRecepcionId("NUEVA");
     setFormulario({
@@ -1383,7 +1390,7 @@ useEffect(() => {
     setRecepcionActual(null);
     setActaGuardada(false);
     showToast("📋 Nueva recepción creada.");
-  }, [showToast]);
+  }, [showToast, plantillasCompletas]);
 
   // --- Volver a la lista ---
   const volverALista = useCallback(() => {
@@ -1413,6 +1420,10 @@ useEffect(() => {
 
   // --- Mutación: Guardar recepción ---
 const handleGenerarActa = useCallback(async () => {
+    if (!plantillasCompletas) {
+      showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      return;
+    }
     // 🟢 1. EVALUACIÓN NO BLOQUEANTE (Soft Validation)
     // Verificamos si la cabecera tiene lo mínimo
     const cabeceraLista = !!(formulario.nombreQuienEntrega && formulario.fechaRecepcion);
@@ -1533,7 +1544,7 @@ const handleGenerarActa = useCallback(async () => {
     } finally {
       setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion]);
+  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion, plantillasCompletas]);
 
   // --- Trazabilidad: cargar historial de cambios de la cotización ---
   const abrirHistorial = useCallback(async () => {
@@ -1590,6 +1601,7 @@ const handleGenerarActa = useCallback(async () => {
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification message={toast} />
+      <PlantillasIncompletasBanner estado={estadoPlantillas} />
 
       <VersionModal
         usu_rol={nombreUsuarioSesion || "no hay"}

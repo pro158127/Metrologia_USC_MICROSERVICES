@@ -146,6 +146,7 @@ export interface HeaderBarProps {
   setView: (v: ViewCotizacion) => void;
   setStep: (s: number) => void;
   onNewQuote?: () => void;
+  plantillasCompletas?: boolean;
 }
 
 export interface ItemsTableProps {

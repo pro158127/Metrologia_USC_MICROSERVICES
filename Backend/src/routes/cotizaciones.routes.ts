@@ -21,6 +21,7 @@ import {
   notificarUsuario,
 } from '../services/notificacion.service.js';
 import { generarOrdenesTrabajoAprobacion } from '../services/cotizacion-aprobacion.service.js';
+import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import { firmarTokenAprobacion, verificarTokenAprobacion } from '../lib/approval-token.js';
 const transicionesValidas: Record<Estados, Estados[]> = {
   BORRADOR: [Estados.ENVIADA],
@@ -97,7 +98,12 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
   app.post(
     '/api/v1/cotizaciones',
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [
+        fastify.authenticate,
+        async () => {
+          await verificarPlantillasOperativas(fastify.prisma);
+        },
+      ],
       schema: {
         body: crearCotizacionBodySchema,
         response: { 200: respuestaCotizacionSchema },

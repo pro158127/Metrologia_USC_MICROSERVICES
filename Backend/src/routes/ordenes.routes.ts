@@ -14,6 +14,7 @@ import {
 } from './ordenes.schemas.js';
 import { getimportOT } from '../lib/queue/queue.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
+import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import {
   evaluarTransicionesOT,
   validarAsignacionPermitida,
@@ -27,7 +28,12 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
   app.post(
     '/api/v1/ordenes/importar-ote',
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [
+        fastify.authenticate,
+        async () => {
+          await verificarPlantillasOperativas(fastify.prisma);
+        },
+      ],
       schema: {
         body: importarOtExcelBodySchema,
         response: { 200: importarOtExcelResponseSchema,500:importarOtExcelResponseSchema },

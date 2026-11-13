@@ -456,3 +456,36 @@ export async function firmador(s3Key: string): Promise<{ succes: boolean; url: s
     return { succes: false, error: error, url: null };
   }
 }
+
+// ============================================================================
+// ESTADO DE PLANTILLAS OPERATIVAS (formato + mapeo completos)
+// ============================================================================
+
+export interface EstadoPlantillaOperativa {
+  id: number;
+  modulo: string;
+  completa: boolean;
+  tieneArchivo: boolean;
+  mapeoCompleto: boolean;
+  faltantes: string[];
+}
+
+export interface EstadoPlantillasOperativas {
+  todasCompletas: boolean;
+  detalle: EstadoPlantillaOperativa[];
+  mensaje: string;
+}
+
+export async function obtenerEstadoPlantillas(): Promise<EstadoPlantillasOperativas | null> {
+  try {
+    const session = await auth();
+    const res = await fastifyRequest<{ success: boolean; data: EstadoPlantillasOperativas }>(
+      session,
+      '/api/v1/plantillas/estado'
+    );
+    return res.data ?? null;
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - obtenerEstadoPlantillas]:', error);
+    return null;
+  }
+}

@@ -9,6 +9,8 @@
   import { subirArchivoDocumento } from "@/app/action_module/archivos";
 import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
+import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
 
   // Interfaces y Tipos
   interface GeneratedOT {
@@ -87,7 +89,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
     return null;
   };
 
-  const OTFormSection: React.FC<any> = ({ tipoFlujo, cotizacionExtraida, otNumber, date, client, cotizacionSeleccionada, recepciones, isProcessing, onCotizacionChange, onGenerateOT }) => (
+  const OTFormSection: React.FC<any> = ({ tipoFlujo, cotizacionExtraida, otNumber, date, client, cotizacionSeleccionada, recepciones, isProcessing, plantillasCompletas, onCotizacionChange, onGenerateOT }) => (
     <div className="mt-4 space-y-5 border-t border-slate-100 pt-4 animate-fadeIn">
       {tipoFlujo === "estandar" && cotizacionExtraida && (
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
@@ -122,7 +124,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
           ))}
         </select>
       </div>
-      <button onClick={onGenerateOT} disabled={isProcessing || (tipoFlujo === "inverso" && !cotizacionSeleccionada)} className="w-full bg-blue-600 text-white py-2.5 rounded-xl hover:bg-blue-700 font-bold text-xs shadow-sm border-none cursor-pointer transition disabled:bg-slate-400 disabled:cursor-not-allowed">
+      <button onClick={onGenerateOT} disabled={isProcessing || !plantillasCompletas || (tipoFlujo === "inverso" && !cotizacionSeleccionada)} className="w-full bg-blue-600 text-white py-2.5 rounded-xl hover:bg-blue-700 font-bold text-xs shadow-sm border-none cursor-pointer transition disabled:bg-slate-400 disabled:cursor-not-allowed">
         {isProcessing ? "Procesando importación y validando reglas..." : (cotizacionSeleccionada ? `Procesar OT Vinculada a ${cotizacionSeleccionada}` : "Procesar Orden de Trabajo Autónoma")}
       </button>
     </div>
@@ -257,6 +259,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
     const loadingOTs = useDbLoading("ordenes_trabajo");
     const { can } = usePermissions();
     const tieneAcceso = can("ordenesOt", "acceso");
+    const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
 
     const [file, setFile] = useState<File | null>(null);
     const [showForm, setShowForm] = useState(false);
@@ -352,6 +355,9 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
     };
 
     const handleGenerateOT = async () => {
+      if (!plantillasCompletas) {
+        return setToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      }
       if (!file) return setToast("⚠️ Por favor adjunta el archivo Excel primero.");
       
       setIsProcessing(true);
@@ -396,6 +402,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
     return (
       <div className="p-6 bg-gray-50 min-h-screen font-sans text-gray-800">
         <ToastNotification message={toast} />
+        <PlantillasIncompletasBanner estado={estadoPlantillas} />
         <section className="mb-8">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-slate-800"><FileText size={20} className="text-blue-600" /> Importar Orden de Trabajo</h2>
           {tieneAcceso ? (
@@ -403,7 +410,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
             <FlowSelector tipoFlujo={tipoFlujo} onSelectFlow={(f) => { setTipoFlujo(f); setCotizacionSeleccionada(""); setShowForm(false); setFile(null); }} />
             <FileUploadZone tipoFlujo={tipoFlujo} file={file} showForm={showForm} onFileChange={handleFileChange} onRemoveFile={() => setFile(null)} onExtract={handleExtract} onStartManual={handleStartManual} />
             {showForm && (
-              <OTFormSection tipoFlujo={tipoFlujo} cotizacionExtraida={cotizacionExtraida} otNumber={otNumber} date={date} client={client} cotizacionSeleccionada={cotizacionSeleccionada} recepciones={cotizacionesVinculables} isProcessing={isProcessing} onCotizacionChange={handleCotizacionChange} onGenerateOT={handleGenerateOT} />
+              <OTFormSection tipoFlujo={tipoFlujo} cotizacionExtraida={cotizacionExtraida} otNumber={otNumber} date={date} client={client} cotizacionSeleccionada={cotizacionSeleccionada} recepciones={cotizacionesVinculables} isProcessing={isProcessing} plantillasCompletas={plantillasCompletas} onCotizacionChange={handleCotizacionChange} onGenerateOT={handleGenerateOT} />
             )}
           </div>
           ) : (

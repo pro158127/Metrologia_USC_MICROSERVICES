@@ -33,6 +33,8 @@ import type {
 import { transicionesValidas } from "@/tipos/cotizacion";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
+import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
 
 // ==========================================
 // Tipos y Estilos
@@ -61,6 +63,7 @@ const HeaderBar = ({
   setView,
   setStep,
   onNewQuote,
+  plantillasCompletas = true,
 }: HeaderBarProps) => {
   const { can } = usePermissions();
   const puedeGestionarTarifas = can("cotizaciones", "gestionar_catalogo_tarifas");
@@ -93,7 +96,8 @@ const HeaderBar = ({
           {puedeCrearEditar && (
             <button
               onClick={onNewQuote || (() => setView("create"))}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#5680F9] text-white text-xs font-bold border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-[0_2px_8px_rgba(86,128,249,0.25)]"
+              disabled={!plantillasCompletas}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#5680F9] text-white text-xs font-bold border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-[0_2px_8px_rgba(86,128,249,0.25)] disabled:bg-slate-300 disabled:cursor-not-allowed"
             >
               <Plus size={15} /> Nueva cotización
             </button>
@@ -689,6 +693,7 @@ export default function Cotizaciones() {
   const [isOpenTable,setOpenTable]=useState(false)
   const [rejectTargetId, setRejectTargetId] = useState<number | null>(null);
   const [rejectMotivo, setRejectMotivo] = useState("");
+  const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
@@ -827,6 +832,10 @@ export default function Cotizaciones() {
 
   const guardarCotizacion = useCallback(async (estado: Estados) => {
     if (!idClienteSeleccionado) return;
+    if (!plantillasCompletas) {
+      showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      return;
+    }
     setIsSaving(true);
     try {
       const res = await crearCotizacion({
@@ -859,7 +868,7 @@ export default function Cotizaciones() {
     } finally {
       setIsSaving(false);
     }
-  }, [idClienteSeleccionado, viaticos, descuento, items, showToast, cargarCotizaciones]);
+  }, [idClienteSeleccionado, viaticos, descuento, items, showToast, cargarCotizaciones, plantillasCompletas]);
 
   const handleEstadoChange = useCallback(async (id: number, nuevoEstado: Estados) => {
     if (nuevoEstado === Estados.RECHAZADA) {
@@ -1076,6 +1085,7 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification toast={toast} />
+      <PlantillasIncompletasBanner estado={estadoPlantillas} />
 
       <VersionModal
          usu_rol={nombre_ROL??"no hay"}
@@ -1104,6 +1114,7 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
         setView={setView}
         setStep={setStep}
         onNewQuote={handleNuevaCotizacion}
+        plantillasCompletas={plantillasCompletas}
       />
 
       {view === "list" && (

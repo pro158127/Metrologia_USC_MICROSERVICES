@@ -6,6 +6,7 @@ import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
+import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import {
   clienteRawToDtoSchema,
   cotizacionConDetallesRawToDtoSchema,
@@ -206,7 +207,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
   app.post(
     '/api/v1/recepciones',
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [
+        fastify.authenticate,
+        async () => {
+          await verificarPlantillasOperativas(fastify.prisma);
+        },
+      ],
       schema: {
         body: recepcionBodySchema,
         response: { 200: respuestaRecepcionMutacionSchema },

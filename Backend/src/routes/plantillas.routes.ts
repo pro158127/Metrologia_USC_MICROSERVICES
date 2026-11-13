@@ -10,6 +10,7 @@ import {
   getTarifasQueue,
 } from '../lib/queue/queue.js';
 import { asegurarBucketExiste } from '../lib/s3Client.js';
+import { evaluarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import {
   actualizarMappingBodySchema,
   consolidarTarifasBodySchema,
@@ -666,6 +667,15 @@ console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la
     };
   }
 );
+
+  app.get(
+    '/api/v1/plantillas/estado',
+    { preHandler: [fastify.authenticate] },
+    async () => {
+      const estado = await evaluarPlantillasOperativas(fastify.prisma);
+      return { success: true as const, data: estado };
+    }
+  );
 
 }
 
