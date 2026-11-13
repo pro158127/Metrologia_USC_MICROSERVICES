@@ -20,6 +20,8 @@ import type {
 } from "@/tipos/clientes";
 import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada, crearDocumento, actualizarCliente, cambiarEstadoCliente } from "@/app/action_module/modulo_cliente";
 import { subirArchivoDocumento } from "@/app/action_module/archivos";
+import { validarArchivo } from "@/app/lib/upload";
+import { toast } from "sonner";
 
 const CIUDADES_COLOMBIA = [
   "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena", 
@@ -128,7 +130,13 @@ export const ClientFormModal = ({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+      const archivo = e.target.files[0];
+      const error = validarArchivo(archivo, { extensionesPermitidas: ["pdf", "png", "jpg", "jpeg"] });
+      if (error) {
+        toast.error(error);
+        return;
+      }
+      setSelectedFile(archivo);
     }
   };
 

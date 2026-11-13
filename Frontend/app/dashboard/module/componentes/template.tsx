@@ -43,6 +43,7 @@ import {
 import { firmador } from '@/app/action_module/template';
 import type {responseQuote,url} from 'backend/src/routes/schema-checkStatus'
 import downloadFromPresignedUrl from '@/app/lib/downlowad';
+import { validarArchivo } from '@/app/lib/upload';
 // ============================================================================
 // 1. COMPONENTE UNIVER (CARGA DINÁMICA)
 // ============================================================================
@@ -997,7 +998,16 @@ if (faltanEscalares || faltanTablas) {
                 type="file"
                 accept=".xlsx"
                 className="hidden"
-                onChange={(e) => setFileForUpdate(e.target.files?.[0] ?? null)}
+                onChange={(e) => {
+                  const archivo = e.target.files?.[0] ?? null;
+                  if (!archivo) return;
+                  const error = validarArchivo(archivo, { extensionesPermitidas: ["xlsx"] });
+                  if (error) {
+                    toast.error(error);
+                    return;
+                  }
+                  setFileForUpdate(archivo);
+                }}
               />
               {!fileForUpdate ? (
                 <button

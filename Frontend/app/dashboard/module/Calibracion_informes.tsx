@@ -4,6 +4,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Upload, FileText, AlertTriangle, RefreshCw, ChevronDown, CheckCircle2, Clock, XCircle, Layers } from "lucide-react";
 import { getMisInstrumentos, subirCertificadoCalibracion } from "@/app/action_module/calibraciones";
+import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import type {
   InstrumentoAsignado,
@@ -436,9 +437,15 @@ export const CalibracionInformes: React.FC = () => {
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setSelectedFile(e.target.files[0]);
+      const archivo = e.target.files[0];
+      const error = validarArchivo(archivo, { extensionesPermitidas: ["pdf"] });
+      if (error) {
+        showToast(`❌ ${error}`);
+        return;
+      }
+      setSelectedFile(archivo);
     }
-  }, []);
+  }, [showToast]);
 
   const ejecutarSubidaCertificado = useCallback(async () => {
     if (!selectedInstrumento || !selectedFile) return;

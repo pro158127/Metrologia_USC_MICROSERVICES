@@ -7,6 +7,7 @@
   import { useDbLoading } from "@/app/componets/tables_recharge";
   import { procesarImportacionOTAction, consultarEstadoJobAction } from "@/app/action_module/ordenes";
   import { subirArchivoDocumento } from "@/app/action_module/archivos";
+import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 
   // Interfaces y Tipos
@@ -324,6 +325,19 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
       }
     };
 
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const archivo = e.target.files?.[0] ?? null;
+      if (!archivo) return;
+
+      const error = validarArchivo(archivo, { extensionesPermitidas: ["xlsx"] });
+      if (error) {
+        setToast(`⚠️ ${error}`);
+        return;
+      }
+
+      setFile(archivo);
+    };
+
     const handleExtract = () => {
       setOtNumber(`Asignación Automática`);
       setDate(new Date().toISOString().split("T")[0]);
@@ -387,7 +401,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
           {tieneAcceso ? (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
             <FlowSelector tipoFlujo={tipoFlujo} onSelectFlow={(f) => { setTipoFlujo(f); setCotizacionSeleccionada(""); setShowForm(false); setFile(null); }} />
-            <FileUploadZone tipoFlujo={tipoFlujo} file={file} showForm={showForm} onFileChange={(e: any) => setFile(e.target.files?.[0])} onRemoveFile={() => setFile(null)} onExtract={handleExtract} onStartManual={handleStartManual} />
+            <FileUploadZone tipoFlujo={tipoFlujo} file={file} showForm={showForm} onFileChange={handleFileChange} onRemoveFile={() => setFile(null)} onExtract={handleExtract} onStartManual={handleStartManual} />
             {showForm && (
               <OTFormSection tipoFlujo={tipoFlujo} cotizacionExtraida={cotizacionExtraida} otNumber={otNumber} date={date} client={client} cotizacionSeleccionada={cotizacionSeleccionada} recepciones={cotizacionesVinculables} isProcessing={isProcessing} onCotizacionChange={handleCotizacionChange} onGenerateOT={handleGenerateOT} />
             )}

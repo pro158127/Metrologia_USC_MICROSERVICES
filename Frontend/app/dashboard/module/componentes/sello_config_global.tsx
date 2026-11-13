@@ -1,5 +1,7 @@
 'use client';
 import { generarPrevisualizacionSello } from '@/app/action_module/sellos';
+import { toast } from 'sonner';
+import { validarArchivo } from '@/app/lib/upload';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   X,
@@ -218,7 +220,7 @@ export function SelloManagementDashboard() {
     if (res.success) {
       fetchSellos();
     } else {
-      alert(res.error ?? 'Error al eliminar el sello');
+      toast.error(res.error ?? 'Error al eliminar el sello');
     }
   };
 
@@ -233,7 +235,7 @@ export function SelloManagementDashboard() {
       setIsModalOpen(false);
       setEditingSeal(null);
     } else {
-      alert(res.error ?? 'Error al guardar la configuración');
+      toast.error(res.error ?? 'Error al guardar la configuración');
     }
   };
 
@@ -536,6 +538,11 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const error = validarArchivo(file, { extensionesPermitidas: ["pdf", "png", "jpg", "jpeg"] });
+    if (error) {
+      toast.error(error);
+      return;
+    }
     setTemplateFile(file);
     revokeBlobUrl(config.templatePdfUrl);
     const url = createBlobUrl(file);
@@ -545,6 +552,11 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
   const handleSampleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const error = validarArchivo(file, { extensionesPermitidas: ["pdf", "png", "jpg", "jpeg"] });
+    if (error) {
+      toast.error(error);
+      return;
+    }
     setSampleDocFile(file);
     revokeBlobUrl(sampleDocUrl);
     const url = createBlobUrl(file);
@@ -659,7 +671,7 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
   // Petición al Backend para generar y descargar la prueba estampada
 const handleDownloadBackendPreview = async () => {
   if (!sampleDocFile) {
-    alert('Debes seleccionar un archivo PDF de prueba.');
+    toast.error('Debes seleccionar un archivo PDF de prueba.');
     return;
   }
 
@@ -714,7 +726,7 @@ const handleDownloadBackendPreview = async () => {
     link.click();
     URL.revokeObjectURL(url);
   } catch (err: any) {
-    alert(err.message ?? 'Error al generar la previsualización');
+    toast.error(err.message ?? 'Error al generar la previsualización');
   } finally {
     setIsDownloadingPreview(false);
   }

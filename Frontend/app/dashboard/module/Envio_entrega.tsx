@@ -26,6 +26,7 @@ import {
   type DocumentosEnvio,
 } from "@/app/action_module/envios";
 import { generarUrlArchivo } from "@/app/action_module/archivos";
+import { validarArchivo } from "@/app/lib/upload";
 
 const ESTADOS_ENVIO = ["Certificado_en_revisión", "Certificado_enviado"] as const;
 
@@ -140,9 +141,20 @@ const GestionPanel: React.FC<{
 
   const handleUpload = useCallback(
     async (files: File[]) => {
+      const validos: File[] = [];
+      for (const file of files) {
+        const error = validarArchivo(file, { extensionesPermitidas: ["pdf", "png", "jpg", "jpeg"] });
+        if (error) {
+          onToast(`❌ ${error}`);
+        } else {
+          validos.push(file);
+        }
+      }
+      if (validos.length === 0) return;
+
       setSubiendo(true);
       let fallos = 0;
-      for (const file of files) {
+      for (const file of validos) {
         const res = await subirComprobante(idOT, file);
         if (!res.ok) fallos += 1;
       }
@@ -150,7 +162,7 @@ const GestionPanel: React.FC<{
       if (fallos > 0) {
         onToast(`❌ No se pudieron subir ${fallos} comprobante(s).`);
       } else {
-        onToast(`✅ ${files.length} comprobante(s) registrado(s).`);
+        onToast(`✅ ${validos.length} comprobante(s) registrado(s).`);
       }
       recargar();
       onRefresh();

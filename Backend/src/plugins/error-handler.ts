@@ -54,6 +54,12 @@ async function errorHandlerPlugin(fastify: FastifyInstance) {
           .send(error.code ? { error: error.message, code: error.code } : { error: error.message });
       }
 
+      // Archivo subido que supera el límite de @fastify/multipart (15 MB).
+      if (error.code === 'FST_REQ_FILE_TOO_LARGE' || error.statusCode === 413) {
+        request.log.warn({ err: error }, 'Archivo demasiado grande');
+        return reply.code(413).send({ error: 'El archivo excede el tamaño máximo permitido (15 MB).' });
+      }
+
       const statusCode = (error as FastifyError & { statusCode?: number }).statusCode;
       if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500) {
         request.log.warn({ err: error }, 'Error del cliente');

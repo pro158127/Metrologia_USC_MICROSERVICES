@@ -10,6 +10,7 @@ const nextConfig = {
 
   experimental: {
     serverActions: {
+      bodySizeLimit: '20mb',
       allowedOrigins: [
         'localhost:3000',
         'qcwngnfx-3000.use2.devtunnels.ms',
