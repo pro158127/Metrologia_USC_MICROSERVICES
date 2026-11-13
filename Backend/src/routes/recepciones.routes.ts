@@ -5,6 +5,7 @@ import { AppError } from '../lib/errors.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
+import { sincronizarCotizacionDesdeRecepcion } from '../services/cotizacion-sync.service.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import {
@@ -481,6 +482,23 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                   },
                 });
               }
+            } else {
+              // Instrumento nuevo en recepción: crear su detalle en la OT.
+              otCambio = true;
+              await tx.orden_trabajo_detalles.create({
+                data: {
+                  ID_ORDEN_TRABAJO_FK: actual.ID_ORDEN_TRABAJO_FK,
+                  ITEM: item,
+                  INSTRUMENTO: inst.instrumento,
+                  TIPO_SERVICIO: 'Calibración',
+                  FABRICANTE: inst.marca ?? null,
+                  MODELO: inst.modelo ?? null,
+                  SERIE: inst.serie ?? null,
+                  CODIGO_INVENTARIO: inst.codigoInventario ?? null,
+                  asignado: null,
+                  activacion: true,
+                },
+              });
             }
           }
 
@@ -500,6 +518,16 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           }
 
           await evaluarTransicionesOT(tx, actual.ID_ORDEN_TRABAJO_FK);
+        }
+
+        // 5. Sincronizar la cotización: agrupar por cantidad y recalcular monto.
+        if (actual.ID_COTIZACION_FK) {
+          await sincronizarCotizacionDesdeRecepcion(
+            tx,
+            actual.ID_COTIZACION_FK,
+            body.instrumentos,
+            actual.SITIO_CALIBRACION ?? 'LABORATORIO',
+          );
         }
 
         const final = await tx.recepciones_equipo.findUnique({
@@ -617,40 +645,38 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           }
         }
 
-        // 3. Soft delete en Cotización + recálculo financiero
+        // 3. Sincronizar cotización (agrupar por cantidad + recalcular monto).
         const cotizacionId = rec.ID_COTIZACION_FK;
         if (cotizacionId) {
-          const cotDet = await tx.cotizacion_detalles.findFirst({
-            where: {
-              ID_COTIZACION_FK: cotizacionId,
-              activacion: true,
-              EQUIPO_DESCRIPCION: detalle.INSTRUMENTO,
-            },
+          const activosRec = await tx.recepcion_equipo_detalles.findMany({
+            where: { ID_RECEPCION_FK: id, activacion: { not: false } },
           });
-          if (cotDet) {
-            await tx.cotizacion_detalles.update({
-              where: { ID_DETALLE: cotDet.ID_DETALLE },
-              data: { activacion: false },
+          await sincronizarCotizacionDesdeRecepcion(
+            tx,
+            cotizacionId,
+            activosRec.map((d) => ({ instrumento: d.INSTRUMENTO })),
+            rec.SITIO_CALIBRACION ?? 'LABORATORIO',
+          );
+        }
+
+        // 4. Versionar OT y recepción para reflejar el cambio en sus consecutivos.
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          const otActual = await tx.ordenes_trabajo.findUnique({
+            where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
+            select: { CODIGO_OT: true },
+          });
+          if (otActual) {
+            await tx.ordenes_trabajo.update({
+              where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
+              data: { CODIGO_OT: await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT) },
             });
           }
-
-          const activos = await tx.cotizacion_detalles.findMany({
-            where: { ID_COTIZACION_FK: cotizacionId, activacion: true },
-          });
-          const subtotal = activos.reduce((acc, d) => acc + Number(d.VALOR_TOTAL), 0);
-          const cot = await tx.cotizaciones.findUnique({
-            where: { ID_COTIZACION: cotizacionId },
-          });
-          const viaticos = Number(cot?.viaticos ?? 0);
-          const descuento = Number(cot?.descuento ?? 0);
-          const base = subtotal + viaticos;
-          const montoTotal = base - base * (descuento / 100);
-
-          await tx.cotizaciones.update({
-            where: { ID_COTIZACION: cotizacionId },
-            data: { MONTO_TOTAL: montoTotal, UPDATED_AT: new Date() },
-          });
         }
+        codigoRecepcion = await generarConsecutivo(tx, 'REC', rec.CODIGO_RECEPCION);
+        await tx.recepciones_equipo.update({
+          where: { ID_RECEPCION: id },
+          data: { CODIGO_RECEPCION: codigoRecepcion },
+        });
 
         // 4. Auditoría (bitácora compartida)
         await registrarBitacora(tx, {
@@ -715,7 +741,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
         idCotizacionFinal = cotizacionId;
         idOrdenTrabajoFinal = rec.ID_ORDEN_TRABAJO_FK ?? null;
-        codigoRecepcion = rec.CODIGO_RECEPCION;
       });
 
       // 7. Regenerar documentos dependientes (nueva versión visible en Gestión de Clientes).
