@@ -641,187 +641,14 @@ const trackingJobs: Record<string, string> = {};
         const dataOTs: any[] = [];
         const dataRecs: any[] = [];
 
-        // 4. Interceptar APROBACIÓN: generar OT(s) según homogeneidad de sitio.
+        // 4. Interceptar APROBACIÓN: generar OT(s) + recepción(es) según homogeneidad de sitio.
         if (nuevoEstado === 'APROBADA') {
-          const detalles = cotizacionActualizada.cotizacion_detalles.filter(
-            (d) => d.activacion !== false
+          const generacion = await generarOrdenesTrabajoAprobacion(
+            tx,
+            cotizacionActualizada as any,
           );
-
-          const grupos = new Map<'LABORATORIO' | 'CLIENTE', typeof detalles>();
-          for (const detalle of detalles) {
-            const sitio = detalle.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
-            const lista = grupos.get(sitio) ?? [];
-            lista.push(detalle);
-            grupos.set(sitio, lista);
-          }
-
-          const esHeterogenea = grupos.size > 1;
-
-          const desdoblarDetallesOT = (
-            dets: typeof detalles,
-            sitio: 'LABORATORIO' | 'CLIENTE',
-          ) => {
-            const result: any[] = [];
-            let itemCounter = 1;
-            for (const detalle of dets) {
-              for (let i = 0; i < (detalle.CANTIDAD || 1); i++) {
-                result.push({
-                  ITEM: itemCounter,
-                  INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
-                  TIPO_SERVICIO: detalle.TIPO_SERVICIO,
-                  asignado: null,
-                  sitio_calibracion: sitio,
-                });
-                itemCounter++;
-              }
-            }
-            return result;
-          };
-
-          if (esHeterogenea) {
-            // ==========================================================
-            // HETEROGÉNEA: una única OT Master (SITIO_CALIBRACION = null).
-            // Cada fila conserva su propio sitio_calibracion.
-            // ==========================================================
-            const detallesOT: any[] = [];
-            let itemCounter = 1;
-            for (const detalle of detalles) {
-              const sitioFila =
-                detalle.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
-              for (let i = 0; i < (detalle.CANTIDAD || 1); i++) {
-                detallesOT.push({
-                  ITEM: itemCounter,
-                  INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
-                  TIPO_SERVICIO: detalle.TIPO_SERVICIO,
-                  asignado: null,
-                  sitio_calibracion: sitioFila,
-                });
-                itemCounter++;
-              }
-            }
-
-            const masterExistente = await tx.ordenes_trabajo.findFirst({
-              where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: null },
-            });
-
-            let ot: any;
-            if (masterExistente) {
-              ot = await tx.ordenes_trabajo.update({
-                where: { ID_ORDEN_TRABAJO: masterExistente.ID_ORDEN_TRABAJO },
-                data: {
-                  SITIO_CALIBRACION: null,
-                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
-                },
-              });
-
-              const estadoOT = masterExistente.estado ?? 'Creada';
-              if (estadoOT === 'Creada' || estadoOT === 'En_recepción') {
-                await tx.orden_trabajo_detalles.deleteMany({
-                  where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO },
-                });
-                await tx.orden_trabajo_detalles.createMany({
-                  data: detallesOT.map((d) => ({
-                    ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
-                    ...d,
-                  })),
-                });
-              }
-            } else {
-              const codigoOT = await generarConsecutivo(tx, 'OT');
-              ot = await tx.ordenes_trabajo.create({
-                data: {
-                  
-                  CODIGO_OT: codigoOT,
-                  
-                  // ✅ REEMPLAZO AQUÍ (Elimina ID_COTIZACION_FK y ID_CLIENTE_FK)
-                  cotizaciones: {
-                    connect: { ID_COTIZACION: cotizacionActualizada.ID_COTIZACION }
-                  },
-                  clientes: {
-                    connect: { ID_CLIENTE: Number(cotizacionActualizada.ID_CLIENTE_FK) }
-                  },
-
-                  razon_social_solicitante: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? '',
-                  no_cotizacion: cotizacionActualizada.CODIGO_COTIZACION,
-                  NIT_solicitante: cotizacionActualizada.clientes?.NIT ?? '',
-                  dirrecion_solcitante: cotizacionActualizada.clientes?.dirrecion ?? '',
-                  ciudad_solcitante: cotizacionActualizada.clientes?.ciudad ?? '',
-                  estado: 'Creada',
-                  SITIO_CALIBRACION: null,
-                  ES_EN_SITIO: false,
-                  ES_LAB_PERMANENTE: false,
-                  ES_INTERNO_USC: false,
-                  orden_trabajo_detalles: { create: detallesOT },
-                },
-              });
-            }
-
-            dataOTs.push(ot);
-          } else {
-            // ==========================================================
-            // HOMOGÉNEA: una única OT operativa con SITIO_CALIBRACION fijo.
-            // ==========================================================
-            const [sitio, detallesGrupo] = Array.from(grupos.entries())[0];
-            const esSitio = sitio === 'CLIENTE';
-
-            const detallesOT = desdoblarDetallesOT(detallesGrupo, sitio);
-
-            const otExistente = await tx.ordenes_trabajo.findFirst({
-              where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: sitio },
-            });
-
-            let ot: any;
-            if (otExistente) {
-              ot = await tx.ordenes_trabajo.update({
-                where: { ID_ORDEN_TRABAJO: otExistente.ID_ORDEN_TRABAJO },
-                data: {
-                  SITIO_CALIBRACION: sitio,
-                  ES_EN_SITIO: esSitio,
-                  ES_LAB_PERMANENTE: !esSitio,
-                  ID_CLIENTE_FK: cotizacionActualizada.ID_CLIENTE_FK,
-                },
-              });
-
-              const estadoOT = otExistente.estado ?? 'Creada';
-              if (estadoOT === 'Creada' || estadoOT === 'En_recepción') {
-                await tx.orden_trabajo_detalles.deleteMany({
-                  where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO },
-                });
-                await tx.orden_trabajo_detalles.createMany({
-                  data: detallesOT.map((d) => ({
-                    ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
-                    ...d,
-                  })),
-                });
-              }
-            } else {
-              const codigoOT = await generarConsecutivo(tx, 'OT');
-              ot = await tx.ordenes_trabajo.create({
-                data: {
-                  CODIGO_OT: codigoOT,
-                  cotizaciones: {
-                    connect: { ID_COTIZACION: cotizacionActualizada.ID_COTIZACION }
-                  },
-                  clientes: {
-                    connect: { ID_CLIENTE: Number(cotizacionActualizada.ID_CLIENTE_FK) }
-                  },
-                  razon_social_solicitante: cotizacionActualizada.clientes?.RAZON_SOCIAL ?? '',
-                  no_cotizacion: cotizacionActualizada.CODIGO_COTIZACION,
-                  NIT_solicitante: cotizacionActualizada.clientes?.NIT ?? '',
-                  dirrecion_solcitante: cotizacionActualizada.clientes?.dirrecion ?? '',
-                  ciudad_solcitante: cotizacionActualizada.clientes?.ciudad,
-                  estado: 'Creada',
-                  SITIO_CALIBRACION: null,
-                  ES_EN_SITIO: false,
-                  ES_LAB_PERMANENTE: false,
-                  ES_INTERNO_USC: false,
-                  orden_trabajo_detalles: { create: detallesOT },
-                },
-              });
-            }
-
-            dataOTs.push(ot);
-          }
+          dataOTs.push(...generacion.ots);
+          dataRecs.push(...generacion.recs);
         }
 
         await registrarBitacora(tx, {
@@ -1000,6 +827,7 @@ const trackingJobs: Record<string, string> = {};
       }
 
       let ots: any[] = [];
+      let recs: any[] = [];
 
       const resultado = await fastify.prisma.$transaction(async (tx) => {
         const actualizada = await tx.cotizaciones.update({
@@ -1020,6 +848,7 @@ const trackingJobs: Record<string, string> = {};
 
         const generacion = await generarOrdenesTrabajoAprobacion(tx, actualizada);
         ots = generacion.ots;
+        recs = generacion.recs;
 
         await registrarBitacora(tx, {
           action: 'APROBACION_ENLACE',
@@ -1068,6 +897,18 @@ const trackingJobs: Record<string, string> = {};
             action: 'ot_create',
             codigo_actual: ot.CODIGO_OT,
             tipo: 2,
+          });
+        }
+
+        for (const rec of recs) {
+          const quoteTrackerRec = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+          await excelquue.add('generar_recepcion_excel', {
+            id_job: quoteTrackerRec.id,
+            tipo_entry: 'prod',
+            id_registro: rec.ID_RECEPCION,
+            action: 'rec_create',
+            codigo_actual: rec.CODIGO_RECEPCION,
+            tipo: 3,
           });
         }
       } catch (error) {

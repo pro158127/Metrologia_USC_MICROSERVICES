@@ -209,20 +209,22 @@ export async function reimportarFamiliaOTVersionada(
     ots.push({ id: nuevo.ID_ORDEN_TRABAJO, codigo: nuevo.CODIGO_OT, esNueva: true });
   }
 
-  // 3. Versionar cada hija (SITIO no null), enlazando a la nueva Master si aplica.
-  const hijas = familia.filter((o) => o.SITIO_CALIBRACION != null);
-  for (const hija of hijas) {
-    const sitio: SitioCalibracion = hija.SITIO_CALIBRACION === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+  // 3. Versionar las hijas por cada sitio presente en los instrumentos entrantes.
+  const sitios = [...new Set(input.instrumentosResueltos.map((i) => i.sitio))];
+  for (const sitio of sitios) {
     const instrumentosSitio = input.instrumentosResueltos.filter((i) => i.sitio === sitio);
     const esSitio = sitio === 'CLIENTE';
+    const hija = familia.find((o) => o.SITIO_CALIBRACION === sitio);
 
-    const nuevoCodigo = await generarConsecutivo(tx, 'OT', hija.CODIGO_OT);
+    const nuevoCodigo = hija
+      ? await generarConsecutivo(tx, 'OT', hija.CODIGO_OT)
+      : await generarConsecutivo(tx, 'OT');
     const nuevo = await tx.ordenes_trabajo.create({
       data: {
         CODIGO_OT: nuevoCodigo,
         ID_COTIZACION_FK: input.idCotizacion,
         ID_CLIENTE_FK: input.idCliente,
-        ID_OT_PADRE_FK: nuevoMasterId ?? hija.ID_OT_PADRE_FK,
+        ID_OT_PADRE_FK: nuevoMasterId ?? hija?.ID_OT_PADRE_FK ?? null,
         ID_OT_RAIZ: raiz,
         VERSION: nuevaVersion,
         VIGENTE: true,
@@ -259,7 +261,7 @@ export async function reimportarFamiliaOTVersionada(
     ots.push({ id: nuevo.ID_ORDEN_TRABAJO, codigo: nuevo.CODIGO_OT, esNueva: true });
 
     // Recepción anclada: versionar, re-enlazar o crear según corresponda.
-    const recepcionActual = hija.recepciones_equipo[0];
+    const recepcionActual = hija?.recepciones_equipo[0] ?? null;
     if (recepcionActual) {
       if (cambioTabular) {
         const nuevaVersionRec = Math.max(1, recepcionActual.VERSION ?? 1) + 1;
