@@ -258,19 +258,62 @@ export async function reimportarFamiliaOTVersionada(
     });
     ots.push({ id: nuevo.ID_ORDEN_TRABAJO, codigo: nuevo.CODIGO_OT, esNueva: true });
 
-    // Recepción anclada: solo se versiona si hubo cambio tabular.
+    // Recepción anclada: versionar, re-enlazar o crear según corresponda.
     const recepcionActual = hija.recepciones_equipo[0];
-    if (cambioTabular && recepcionActual) {
-      const nuevaVersionRec = Math.max(1, recepcionActual.VERSION ?? 1) + 1;
-      const recRaiz = recepcionActual.ID_RECEPCION_RAIZ ?? recepcionActual.ID_RECEPCION;
-      const nuevoCodigoRec = await generarConsecutivo(tx, 'REC', recepcionActual.CODIGO_RECEPCION);
+    if (recepcionActual) {
+      if (cambioTabular) {
+        const nuevaVersionRec = Math.max(1, recepcionActual.VERSION ?? 1) + 1;
+        const recRaiz = recepcionActual.ID_RECEPCION_RAIZ ?? recepcionActual.ID_RECEPCION;
+        const nuevoCodigoRec = await generarConsecutivo(tx, 'REC', recepcionActual.CODIGO_RECEPCION);
+        const nuevaRec = await tx.recepciones_equipo.create({
+          data: {
+            CODIGO_RECEPCION: nuevoCodigoRec,
+            ID_COTIZACION_FK: input.idCotizacion,
+            ID_ORDEN_TRABAJO_FK: nuevo.ID_ORDEN_TRABAJO,
+            ID_RECEPCION_RAIZ: recRaiz,
+            VERSION: nuevaVersionRec,
+            VIGENTE: true,
+            SOLICITANTE: input.solicitante,
+            SITIO_CALIBRACION: sitio,
+            ESTADO: 'BORRADOR',
+            activacion: true,
+            recepcion_equipo_detalles: {
+              create: instrumentosSitio.map((inst, index) => ({
+                ITEM: index + 1,
+                INSTRUMENTO: inst.instrumento,
+                MARCA: inst.fabricante || null,
+                MODELO: inst.modelo || null,
+                SERIE: inst.serie || null,
+                CODIGO_INVENTARIO: inst.codigo_interno || null,
+                RESOLUCION: inst.resolucion_division || null,
+                activacion: true,
+              })),
+            },
+          },
+        });
+        recepciones.push({ id: nuevaRec.ID_RECEPCION, codigo: nuevaRec.CODIGO_RECEPCION, esNueva: true });
+
+        // Marcar recepción anterior como no vigente.
+        await tx.recepciones_equipo.update({
+          where: { ID_RECEPCION: recepcionActual.ID_RECEPCION },
+          data: { VIGENTE: false },
+        });
+      } else {
+        // Cambio solo escalar: re-enlazar la recepción a la OT nueva (sin versionarla).
+        await tx.recepciones_equipo.update({
+          where: { ID_RECEPCION: recepcionActual.ID_RECEPCION },
+          data: { ID_ORDEN_TRABAJO_FK: nuevo.ID_ORDEN_TRABAJO },
+        });
+      }
+    } else {
+      // Sin recepción previa: crearla con sus datos tabulares (igual que splitHeterogeneousOT).
+      const codigoRec = await generarConsecutivo(tx, 'REC');
       const nuevaRec = await tx.recepciones_equipo.create({
         data: {
-          CODIGO_RECEPCION: nuevoCodigoRec,
+          CODIGO_RECEPCION: codigoRec,
           ID_COTIZACION_FK: input.idCotizacion,
           ID_ORDEN_TRABAJO_FK: nuevo.ID_ORDEN_TRABAJO,
-          ID_RECEPCION_RAIZ: recRaiz,
-          VERSION: nuevaVersionRec,
+          VERSION: 1,
           VIGENTE: true,
           SOLICITANTE: input.solicitante,
           SITIO_CALIBRACION: sitio,
@@ -285,24 +328,13 @@ export async function reimportarFamiliaOTVersionada(
               SERIE: inst.serie || null,
               CODIGO_INVENTARIO: inst.codigo_interno || null,
               RESOLUCION: inst.resolucion_division || null,
+              ESTAMPILLA: null,
               activacion: true,
             })),
           },
         },
       });
       recepciones.push({ id: nuevaRec.ID_RECEPCION, codigo: nuevaRec.CODIGO_RECEPCION, esNueva: true });
-
-      // Marcar recepción anterior como no vigente.
-      await tx.recepciones_equipo.update({
-        where: { ID_RECEPCION: recepcionActual.ID_RECEPCION },
-        data: { VIGENTE: false },
-      });
-    } else if (!cambioTabular && recepcionActual) {
-      // Cambio solo escalar: re-enlazar la recepción a la OT nueva (sin versionarla).
-      await tx.recepciones_equipo.update({
-        where: { ID_RECEPCION: recepcionActual.ID_RECEPCION },
-        data: { ID_ORDEN_TRABAJO_FK: nuevo.ID_ORDEN_TRABAJO },
-      });
     }
   }
 
