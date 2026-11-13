@@ -52,6 +52,21 @@ const UNIDADES = [
   "kgf/cm²", "cmH2O", "kg", "g", "mg", "lb", "°C", "°F", "%HR",
 ];
 
+// Normaliza el TIPO_SERVICIO almacenado en BD ("ACREDITADO"/"NO ACREDITADO"/etc.)
+// a la etiqueta canónica que usa el desplegable del formulario.
+const normalizarTipoServicio = (v?: string | null): string => {
+  const s = (v ?? "").trim().toUpperCase();
+  if (!s) return "";
+  if (s.includes("NO") && s.includes("ACREDIT")) return "No_acreditado";
+  return "Acreditado";
+};
+
+// Convierte la etiqueta del formulario de vuelta al valor canónico de BD.
+const tipoServicioADB = (v?: string | null): string => {
+  const s = (v ?? "").trim().toUpperCase();
+  return s.includes("NO") ? "NO ACREDITADO" : "ACREDITADO";
+};
+
 const buildOrderDraft = (ot: OTType): EditableOrderFields => ({
   razonSocialCert: ot.razonSocialCert ?? ot.cliente ?? "",
   nitCert: ot.nitCert ?? "",
@@ -1460,7 +1475,7 @@ const instrumentos_cot = useMemo(() => {
       (detalle) => ({
         id: detalle.idDetalle?.toString() || crypto.randomUUID(),
         item: detalle.item || 1,
-        tipoServicio: detalle.tipoServicio || "",
+        tipoServicio: normalizarTipoServicio(detalle.tipoServicio),
         instrumento: detalle.instrumento || "",
         fabricante: detalle.fabricante ?? null,
         modelo: detalle.modelo ?? null,
@@ -1502,10 +1517,11 @@ const instrumentos_cot = useMemo(() => {
       tipo: "Acreditado",
       razonSocialCert: clienteData?.razonSocial || "",
       nitCert: clienteData?.nitCedula || "",
-      correoCertificados: otCompleta.correoCertificado || "",
+      correoCertificados: otCompleta.correoCertificado || clienteData?.correo || "",
       fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion ? new Date(otCompleta.fechaLimiteFacturacion).toLocaleDateString() : '',
+      direccionCert: clienteData?.dirrecion || "",
       ciudadCert: clienteData?.ciudad || "",
-      correoFactura: otCompleta.correoFactura || "",
+      correoFactura: otCompleta.correoFactura || clienteData?.correo || "",
       lugarCalibracion: otCompleta.esInternoUSC
         ? "Interno USC"
         : otCompleta.esEnSitio
@@ -1520,7 +1536,7 @@ const instrumentos_cot = useMemo(() => {
       direccionSolicitante: otCompleta.cliente?.dirrecion ?? "",
       ciudadSolicitante: otCompleta.cliente?.ciudad || "sin ciudad",
       contactoSolicitante: otCompleta.cliente?.nombreContacto || "sin contacto",
-      telefonoSolicitante: otCompleta?.telefonoContacto_solcitante|| "",
+      telefonoSolicitante: otCompleta?.telefonoContacto_solcitante || clienteData?.telefono || "",
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
       responsableUsc: otCompleta.responsable || "",
@@ -1618,7 +1634,7 @@ const saveOrderEdits = async () => {
           // Si el ID tiene guiones (UUID de front), lo mandamos como undefined para que Fastify sepa que es nuevo
           idDetalle: inst.id.includes('-') ? undefined : Number(inst.id),
           item: inst.item,
-          tipoServicio: inst.tipoServicio,
+          tipoServicio: tipoServicioADB(inst.tipoServicio),
           instrumento: inst.instrumento,
           fabricante: inst.fabricante ?? null,
           modelo: inst.modelo ?? null,

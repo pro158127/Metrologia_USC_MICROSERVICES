@@ -1021,8 +1021,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         NIT: cliente.NIT,
         dirrecion: cliente.dirrecion,
         ciudad: cliente.ciudad,
-        CORREO_CERTIFICADO: getString(datosExtraidos, 'cert_email_certificados'),
-        CORREO_FACTURA: getString(datosExtraidos, 'cert_email_factura'),
+        CORREO_CERTIFICADO: getString(datosExtraidos, 'cert_email_certificados') || cliente.CORREO,
+        CORREO_FACTURA: getString(datosExtraidos, 'cert_email_factura') || cliente.CORREO,
         FECHA_LIMITE_FACTURACION: getDate(
           datosExtraidos,
           'cert_fecha_limite_facturacion',
@@ -1053,7 +1053,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         TELEFONO_CONTACTO_SOLICITANTE: getString(
           datosExtraidos,
           'solicitante_telefono',
-        ),
+        ) || cliente.TELEFONO,
         no_orden_trabajo: getString(datosExtraidos, 'no_orden_trabajo'),
         no_cotizacion: getString(datosExtraidos, 'no_cotizacion'),
         RESPONSABLE: getString(datosExtraidos, 'responsable'),
