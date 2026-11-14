@@ -189,12 +189,12 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
 
   const master = await fastify.prisma.ordenes_trabajo.findFirst({
     where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: null, VIGENTE: true },
-    select: { CODIGO_OT: true, CORREO_CERTIFICADO: true },
+    select: { ID_ORDEN_TRABAJO: true, CODIGO_OT: true, CORREO_CERTIFICADO: true },
   });
 
   const cotizacion = await fastify.prisma.cotizaciones.findUnique({
     where: { ID_COTIZACION: idCotizacion },
-    select: { CODIGO_COTIZACION: true },
+    select: { CODIGO_COTIZACION: true, MONTO_TOTAL: true, ID_CLIENTE_FK: true },
   });
 
   return {
@@ -274,6 +274,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       const idOT = request.params.id;
       const { ot, certificados, todosAprobados } = await cargarContextoOT(fastify, idOT);
 
+      const cotizacion = ot.ID_COTIZACION_FK
+        ? await fastify.prisma.cotizaciones.findUnique({
+            where: { ID_COTIZACION: ot.ID_COTIZACION_FK },
+            select: { CODIGO_COTIZACION: true, MONTO_TOTAL: true, ID_CLIENTE_FK: true },
+          })
+        : null;
+
       if (!todosAprobados) {
         throw new AppError(
           409,
@@ -326,6 +333,28 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
 
         // El pago registrado dispara automáticamente el estado "Certificado_enviado".
         await evaluarTransicionesOT(tx, idOT);
+
+        // Crear (idempotente) la factura asociada a la cotización.
+        const numeroFactura = cotizacion?.CODIGO_COTIZACION
+          ? `FAC-${cotizacion.CODIGO_COTIZACION}`
+          : null;
+        if (numeroFactura) {
+          const facturaExistente = await tx.facturas.findUnique({
+            where: { NUMERO_FACTURA: numeroFactura },
+          });
+          if (!facturaExistente) {
+            await tx.facturas.create({
+              data: {
+                NUMERO_FACTURA: numeroFactura,
+                ID_ORDEN_TRABAJO_FK: idOT,
+                ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? ot.ID_CLIENTE_FK ?? null,
+                FECHA: new Date(),
+                VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
+                ESTADO: 'EMITIDA',
+              },
+            });
+          }
+        }
 
         // Trazabilidad comercial: solo en la transición no-PAGADO -> PAGADO.
         if (!yaPagada && ot.ID_COTIZACION_FK) {
@@ -532,10 +561,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idCotizacion = request.params.id;
-      const { hijas, certificados, todosAprobados } = await cargarContextoCotizacion(
-        fastify,
-        idCotizacion
-      );
+      const { hijas, master, cotizacion, certificados, todosAprobados } =
+        await cargarContextoCotizacion(fastify, idCotizacion);
 
       if (!todosAprobados) {
         throw new AppError(
@@ -581,6 +608,28 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             data: { estado_pago: 'PAGADO' },
           });
           await evaluarTransicionesOT(tx, hija.ID_ORDEN_TRABAJO);
+        }
+
+        // Crear (idempotente) la factura asociada a la cotización.
+        const numeroFactura = cotizacion?.CODIGO_COTIZACION
+          ? `FAC-${cotizacion.CODIGO_COTIZACION}`
+          : null;
+        if (numeroFactura) {
+          const existente = await tx.facturas.findUnique({
+            where: { NUMERO_FACTURA: numeroFactura },
+          });
+          if (!existente) {
+            await tx.facturas.create({
+              data: {
+                NUMERO_FACTURA: numeroFactura,
+                ID_ORDEN_TRABAJO_FK: master?.ID_ORDEN_TRABAJO ?? hijas[0].ID_ORDEN_TRABAJO,
+                ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? null,
+                FECHA: new Date(),
+                VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
+                ESTADO: 'EMITIDA',
+              },
+            });
+          }
         }
 
         await registrarBitacora(tx, {
