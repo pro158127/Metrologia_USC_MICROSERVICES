@@ -705,12 +705,13 @@ const trackingJobs: Record<string, string> = {};
 
       // 2. DETONAR TIPO 2 (Orden de Trabajo) — una por cada OT generada/reutilizada
       for (const ot of resultado.ots) {
+        const esMaster = ot.SITIO_CALIBRACION == null;
         const quoteTrackerOT = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
         await excelquue.add('generar_ot_excel', {
           id_job: quoteTrackerOT.id, 
           tipo_entry: 'prod',
           id_registro: ot.ID_ORDEN_TRABAJO,
-          action:"ot_create",
+          action: esMaster ? "ot_create" : "ot_update",
           codigo_actual: ot.CODIGO_OT,
           tipo: 2
         });
@@ -889,12 +890,13 @@ const trackingJobs: Record<string, string> = {};
         });
 
         for (const ot of ots) {
+          const esMaster = ot.SITIO_CALIBRACION == null;
           const quoteTrackerOT = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
           await excelquue.add('generar_ot_excel', {
             id_job: quoteTrackerOT.id,
             tipo_entry: 'prod',
             id_registro: ot.ID_ORDEN_TRABAJO,
-            action: 'ot_create',
+            action: esMaster ? 'ot_create' : 'ot_update',
             codigo_actual: ot.CODIGO_OT,
             tipo: 2,
           });
