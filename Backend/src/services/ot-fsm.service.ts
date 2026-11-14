@@ -275,11 +275,24 @@ export async function transicionarOT(
   return { estadoAnterior: actual, estadoNuevo: nuevoEstado };
 }
 
-/** Bloquea la asignación de técnico si ya hay instrumentos calibrados. */
+/** Bloquea la asignación de técnico si la OT no pasó recepción o ya está calibrada. */
 export async function validarAsignacionPermitida(
   tx: Prisma.TransactionClient,
   idOT: number
 ): Promise<void> {
+  const ot = await tx.ordenes_trabajo.findUnique({
+    where: { ID_ORDEN_TRABAJO: idOT },
+    select: { estado: true },
+  });
+
+  const estado = ot?.estado ?? EstadoOT.Creada;
+  if (estado !== EstadoOT.En_recepción && estado !== EstadoOT.Asignada) {
+    throw new AppError(
+      409,
+      'Solo se puede asignar o cambiar el técnico después de la recepción y antes de la calibración.'
+    );
+  }
+
   const conCalibracion = await tx.calibraciones.findFirst({
     where: {
       recepcion_equipo_detalles: {

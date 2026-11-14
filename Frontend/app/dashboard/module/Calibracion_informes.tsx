@@ -196,6 +196,8 @@ const UploadDock: React.FC<UploadDockProps> = ({
   const { can } = usePermissions();
   const puedeAdjuntar = can("calibracion_e_informes", "adjuntar_pdf");
   const isDevuelto = selectedInstrumento.status === "Devuelto";
+  const bloqueadoPorEstado =
+    selectedInstrumento.status === "En revisión" || selectedInstrumento.status === "Firmado";
 
   return (
     <section className="mb-6 animate-in fade-in duration-200">
@@ -259,6 +261,12 @@ const UploadDock: React.FC<UploadDockProps> = ({
         <div className="flex flex-col items-center justify-center border border-slate-200/80 bg-slate-50/50 p-4 rounded-xl min-h-[150px]">
           {!puedeAdjuntar ? (
             <span className="text-xs text-slate-400 font-bold">Sin permisos para adjuntar certificados.</span>
+          ) : bloqueadoPorEstado ? (
+            <span className="text-xs text-amber-600 font-bold text-center px-4">
+              {selectedInstrumento.status === "Firmado"
+                ? "Certificado aprobado: no se permite modificar."
+                : "Certificado en revisión: esperando respuesta."}
+            </span>
           ) : selectedFile ? (
             <div className="text-center w-full space-y-3">
               <div className="inline-flex p-2 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200/60">
@@ -451,6 +459,14 @@ export const CalibracionInformes: React.FC = () => {
 
   const ejecutarSubidaCertificado = useCallback(async () => {
     if (!selectedInstrumento || !selectedFile) return;
+
+    if (
+      selectedInstrumento.status === "En revisión" ||
+      selectedInstrumento.status === "Firmado"
+    ) {
+      showToast("⚠️ No se puede subir: el certificado ya fue enviado o está aprobado.");
+      return;
+    }
 
     if (!sellosCompletas) {
       showToast("⚠️ Las plantillas de sello no están completas. Configúrelas en Administración → Sellos.");

@@ -4,7 +4,6 @@
 import { PrismaClient } from '@prisma/client';
 import {
   composeCertificate,
-  stampDocumentWithSeal,
   AreaBoxDTO,
   WatermarkAreaDTO,
 } from './pdf-stamper.service.js';
@@ -179,23 +178,21 @@ export async function generarCertificadoFinal(
     (wm) => wm && wm.box && wm.box.width > 0 && wm.box.height > 0
   );
 
-  // El PDF del técnico es la BASE y el sello (TEMPLATE_PDF_KEY) se superpone.
-  // Si no hay áreas de marca de agua, se usa DOCUMENT_AREA como área del sello.
-  const areas: WatermarkAreaDTO[] =
-    watermarkAreas.length > 0
-      ? watermarkAreas
-      : [{ id: 'default', box: documentArea, opacity: 0.85 }];
-
-  const [sealBuffer, documentBuffer] = await Promise.all([
+  // La plantilla/sello (TEMPLATE_PDF_KEY) es la BASE y el PDF del técnico se
+  // coloca dentro del documentArea (mismo método que Administración / preview-stamp).
+  const [templateBuffer, documentBuffer] = await Promise.all([
     resolvePdfBuffer(plantilla.TEMPLATE_PDF_KEY),
     resolvePdfBuffer(cert.documentos.RUTA_URL),
   ]);
 
-  const result = await stampDocumentWithSeal({
+  const result = await composeCertificate({
+    templateBytes: templateBuffer,
     documentBytes: documentBuffer,
-    sealBytes: sealBuffer,
-    areas,
-    defaultOpacity: 0.85,
+    layout: {
+      documentArea,
+      watermarkAreas,
+      documentOpacity: 0.88,
+    },
   });
 
   const outputName = `${cert.CODIGO_CERTIFICADO}.pdf`;
