@@ -28,10 +28,11 @@ import {
 import { generarUrlArchivo } from "@/app/action_module/archivos";
 import { validarArchivo } from "@/app/lib/upload";
 
-const ESTADOS_ENVIO = ["Certificado_en_revisión", "Certificado_enviado"] as const;
+const ESTADOS_ENVIO = ["Certificado_en_revisión", "Certificado_aprobado", "Certificado_enviado"] as const;
 
 const ESTADO_BADGE: Record<string, string> = {
   "Certificado_en_revisión": "bg-amber-50 text-amber-700 border-amber-200",
+  Certificado_aprobado: "bg-emerald-50 text-emerald-700 border-emerald-200",
   Certificado_enviado: "bg-indigo-50 text-indigo-700 border-indigo-200",
 };
 
@@ -394,6 +395,9 @@ export function MainRendererenv() {
           id: ot.idOrdenTrabajo,
           codigo: ot.codigo,
           cliente: cliente?.razonSocial ?? ot.cliente?.razonSocial ?? "—",
+          cotizacion: ot.cotizacion?.codigo ?? "—",
+          master:
+            ordenes.find((o) => o.idOrdenTrabajo === ot.idOrdenTrabajoPadre)?.codigo ?? "—",
           correo: ot.correoCertificado ?? cliente?.correo ?? "—",
           certs: ot.instrumentos?.length ?? 0,
           estado: ot.estado ?? "—",
@@ -479,7 +483,7 @@ export function MainRendererenv() {
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
-              {["OT", "Cliente", "Correo", "Certificados", "Estado", "Fecha", "Acciones"].map((h) => (
+              {["OT", "Cotización", "OT Master", "Cliente", "Correo", "Certificados", "Estado", "Fecha", "Acciones"].map((h) => (
                 <th
                   key={h}
                   className="px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px]"
@@ -493,14 +497,14 @@ export function MainRendererenv() {
             {loadingEnvio ? (
               [1, 2, 3, 4, 5].map((n) => (
                 <tr key={n}>
-                  <td colSpan={7} className="px-4 py-3.5">
+                  <td colSpan={9} className="px-4 py-3.5">
                     <div className="h-4 rounded bg-slate-200 animate-pulse" />
                   </td>
                 </tr>
               ))
             ) : filas.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                <td colSpan={9} className="px-4 py-10 text-center text-slate-400">
                   No hay órdenes que coincidan con los filtros.
                 </td>
               </tr>
@@ -508,6 +512,8 @@ export function MainRendererenv() {
               filas.map((f) => (
                 <tr key={f.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-4 py-3.5 font-mono font-bold text-[#5680F9]">{f.codigo}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500">{f.cotizacion}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500">{f.master}</td>
                   <td className="px-4 py-3.5 font-semibold text-slate-700">{f.cliente}</td>
                   <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">
                     {f.correo}
