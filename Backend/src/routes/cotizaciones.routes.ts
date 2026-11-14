@@ -357,33 +357,48 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         })
         
         // ==========================================
-        // 4. CASCADA: SINCRONIZAR OT Y RECEPCIÓN 
-        // (Se ejecuta solo si se enviaron detalles nuevos/modificados)
+        // 4. CASCADA: sincronizar TODAS las OTs y recepciones según su sitio.
         // ==========================================
-        const instrumentosDesdoblados: any[] = [];
-        let itemCounter = 1;
-        for (const d of detalles) {
-          for (let i = 0; i < d.cantidad; i++) {
-            instrumentosDesdoblados.push({
-              ITEM: itemCounter++,
-              INSTRUMENTO: d.equipoDescripcion,
-              TIPO_SERVICIO: d.tipoServicio
-            });
+        const desdoblarDetalles = (dets: typeof detalles) => {
+          const out: any[] = [];
+          let item = 1;
+          for (const d of dets) {
+            for (let i = 0; i < d.cantidad; i++) {
+              out.push({
+                ITEM: item++,
+                INSTRUMENTO: d.equipoDescripcion,
+                TIPO_SERVICIO: d.tipoServicio,
+              });
+            }
           }
+          return out;
+        };
+
+        const detallesPorSitio = new Map<'LABORATORIO' | 'CLIENTE', typeof detalles>();
+        for (const d of detalles) {
+          const sitio = d.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+          const lista = detallesPorSitio.get(sitio) ?? [];
+          lista.push(d);
+          detallesPorSitio.set(sitio, lista);
         }
 
-        // 4.1 Sincronizar OT
-        if (existente.ordenes_trabajo.length > 0) {
-          const ot = existente.ordenes_trabajo[0];
+        // 4.1 Sincronizar cada OT (Master con todos; hijas con su sitio).
+        let masterOtActualizado: any = null;
+        let otUnicaActualizada: any = null;
+        for (const ot of existente.ordenes_trabajo) {
+          const esMaster = ot.SITIO_CALIBRACION == null;
+          const dets = esMaster
+            ? detalles
+            : (detallesPorSitio.get((ot.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE') ?? []);
+          const instrumentosDesdoblados = desdoblarDetalles(dets);
           const detallesOTActuales = ot.orden_trabajo_detalles;
 
           for (let i = 0; i < instrumentosDesdoblados.length; i++) {
             const nuevo = instrumentosDesdoblados[i];
             if (i < detallesOTActuales.length) {
-              
               await tx.orden_trabajo_detalles.update({
                 where: { ID_DETALLE: detallesOTActuales[i].ID_DETALLE },
-                data: { INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO }
+                data: { INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO },
               });
             } else {
               await tx.orden_trabajo_detalles.create({
@@ -392,24 +407,43 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                   ITEM: nuevo.ITEM,
                   INSTRUMENTO: nuevo.INSTRUMENTO,
                   TIPO_SERVICIO: nuevo.TIPO_SERVICIO,
-                  asignado: null
-                }
+                  asignado: null,
+                },
               });
             }
           }
           if (instrumentosDesdoblados.length < detallesOTActuales.length) {
-            const idsEliminar = detallesOTActuales.slice(instrumentosDesdoblados.length).map(d => d.ID_DETALLE);
+            const idsEliminar = detallesOTActuales
+              .slice(instrumentosDesdoblados.length)
+              .map((d) => d.ID_DETALLE);
             await tx.orden_trabajo_detalles.deleteMany({ where: { ID_DETALLE: { in: idsEliminar } } });
           }
-         const consecutivo_ot=await generarConsecutivo(tx, "OT",existente.ordenes_trabajo[0].CODIGO_OT);
-          const update_ot=await tx.ordenes_trabajo.update({where:{ID_ORDEN_TRABAJO:existente.ordenes_trabajo[0].ID_ORDEN_TRABAJO},data:{CODIGO_OT:consecutivo_ot}})
-          codigo_actual_ot=update_ot.CODIGO_OT
-          id_registro_ot=update_ot.ID_ORDEN_TRABAJO
+
+          const consecutivo_ot = await generarConsecutivo(tx, 'OT', ot.CODIGO_OT);
+          const update_ot = await tx.ordenes_trabajo.update({
+            where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
+            data: { CODIGO_OT: consecutivo_ot },
+          });
+
+          if (esMaster) masterOtActualizado = update_ot;
+          if (existente.ordenes_trabajo.length === 1) otUnicaActualizada = update_ot;
+
+          await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
         }
 
-        // 4.2 Sincronizar Recepción
-        if (existente.recepciones_equipo.length > 0) {
-          const recep = existente.recepciones_equipo[0];
+        if (masterOtActualizado) {
+          codigo_actual_ot = masterOtActualizado.CODIGO_OT;
+          id_registro_ot = masterOtActualizado.ID_ORDEN_TRABAJO;
+        } else if (otUnicaActualizada) {
+          codigo_actual_ot = otUnicaActualizada.CODIGO_OT;
+          id_registro_ot = otUnicaActualizada.ID_ORDEN_TRABAJO;
+        }
+
+        // 4.2 Sincronizar cada Recepción según su sitio.
+        for (const recep of existente.recepciones_equipo) {
+          const sitioRec = (recep.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE';
+          const dets = detallesPorSitio.get(sitioRec) ?? [];
+          const instrumentosDesdoblados = desdoblarDetalles(dets);
           const detallesRecepActuales = recep.recepcion_equipo_detalles;
 
           for (let i = 0; i < instrumentosDesdoblados.length; i++) {
@@ -417,34 +451,32 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             if (i < detallesRecepActuales.length) {
               await tx.recepcion_equipo_detalles.update({
                 where: { ID_INSTRUMENTO: detallesRecepActuales[i].ID_INSTRUMENTO },
-                data: { INSTRUMENTO: nuevo.INSTRUMENTO, ITEM: nuevo.ITEM }
+                data: { INSTRUMENTO: nuevo.INSTRUMENTO, ITEM: nuevo.ITEM },
               });
             } else {
-              // Estampilla temporal para satisfacer el @unique de Prisma
-        
               await tx.recepcion_equipo_detalles.create({
                 data: {
-
                   ID_RECEPCION_FK: recep.ID_RECEPCION,
                   ITEM: nuevo.ITEM,
                   INSTRUMENTO: nuevo.INSTRUMENTO,
-                }
+                },
               });
             }
           }
           if (instrumentosDesdoblados.length < detallesRecepActuales.length) {
-            const idsEliminar = detallesRecepActuales.slice(instrumentosDesdoblados.length).map(d => d.ID_INSTRUMENTO);
+            const idsEliminar = detallesRecepActuales
+              .slice(instrumentosDesdoblados.length)
+              .map((d) => d.ID_INSTRUMENTO);
             await tx.recepcion_equipo_detalles.deleteMany({ where: { ID_INSTRUMENTO: { in: idsEliminar } } });
           }
-              const consec=await generarConsecutivo(tx,"REC",existente.recepciones_equipo[0].CODIGO_RECEPCION)
-             const update_rec= await tx.recepciones_equipo.update({where:{CODIGO_RECEPCION:existente.recepciones_equipo[0].CODIGO_RECEPCION},data:{CODIGO_RECEPCION:consec}})
-             codigo_actual_recep=update_rec.CODIGO_RECEPCION
-             id_registro_recp=update_rec.ID_RECEPCION
-        }
 
-        // 4.3 Recalcular el estado automático de la OT (FSM) tras sincronizar.
-        if (existente.ordenes_trabajo.length > 0) {
-          await evaluarTransicionesOT(tx, existente.ordenes_trabajo[0].ID_ORDEN_TRABAJO);
+          const consec = await generarConsecutivo(tx, 'REC', recep.CODIGO_RECEPCION);
+          const update_rec = await tx.recepciones_equipo.update({
+            where: { CODIGO_RECEPCION: recep.CODIGO_RECEPCION },
+            data: { CODIGO_RECEPCION: consec },
+          });
+          codigo_actual_recep = update_rec.CODIGO_RECEPCION;
+          id_registro_recp = update_rec.ID_RECEPCION;
         }
       } else {
         subtotal = existente.cotizacion_detalles.reduce(
@@ -552,6 +584,7 @@ const trackingJobs: Record<string, string> = {};
         tipo_entry: 'prod', 
         id_registro: id_registro_ot,
         codigo_actual: codigo_actual_ot,
+        action: 'ot_actualizar',
         tipo: 2
       });
       trackingJobs.ot = ordeneo_tracke.id;
@@ -704,6 +737,7 @@ const trackingJobs: Record<string, string> = {};
       trackingJobs.cot = quoteTrackerCot.id;
 
       // 2. DETONAR TIPO 2 (Orden de Trabajo) — una por cada OT generada/reutilizada
+      const hayMasterResultado = resultado.ots.some((o: any) => o.SITIO_CALIBRACION == null);
       for (const ot of resultado.ots) {
         const esMaster = ot.SITIO_CALIBRACION == null;
         const quoteTrackerOT = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
@@ -711,7 +745,7 @@ const trackingJobs: Record<string, string> = {};
           id_job: quoteTrackerOT.id, 
           tipo_entry: 'prod',
           id_registro: ot.ID_ORDEN_TRABAJO,
-          action: esMaster ? "ot_create" : "ot_update",
+          action: esMaster || !hayMasterResultado ? "ot_create" : "ot_update",
           codigo_actual: ot.CODIGO_OT,
           tipo: 2
         });
@@ -889,6 +923,7 @@ const trackingJobs: Record<string, string> = {};
           tipo: 1,
         });
 
+        const hayMasterOts = ots.some((o: any) => o.SITIO_CALIBRACION == null);
         for (const ot of ots) {
           const esMaster = ot.SITIO_CALIBRACION == null;
           const quoteTrackerOT = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
@@ -896,7 +931,7 @@ const trackingJobs: Record<string, string> = {};
             id_job: quoteTrackerOT.id,
             tipo_entry: 'prod',
             id_registro: ot.ID_ORDEN_TRABAJO,
-            action: esMaster ? 'ot_create' : 'ot_update',
+            action: esMaster || !hayMasterOts ? 'ot_create' : 'ot_update',
             codigo_actual: ot.CODIGO_OT,
             tipo: 2,
           });

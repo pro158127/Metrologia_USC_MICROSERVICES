@@ -179,6 +179,18 @@ generador_excel.on('completed', async(job,returnvalue) => {
     id_registro: job.data.id_registro
   });
 }
+
+      if (returnvalue.action === "ot_actualizar") {
+  await emailQueue.add('actualizacion_ordenes', {
+    to: returnvalue.datos_correo.emailDestino,
+    subject: `📋 Orden de Trabajo actualizada ${returnvalue.datos_correo.numeroOT} - MetroSoft`,
+    template_type: 'actualizacion_ordenes',
+    context_data: returnvalue.datos_correo,
+    minio_links: [returnvalue.url_excel],
+    tipo_entry: job.data.tipo_entry,
+    id_registro: job.data.id_registro
+  });
+}
     
     
     console.log(`➡️ [Orquestador] Correo encolado exitosamente.`);

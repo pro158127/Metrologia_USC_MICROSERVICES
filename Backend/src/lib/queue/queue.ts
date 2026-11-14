@@ -218,6 +218,7 @@ export type EmailTemplateType =
   | 'bienvenida_cliente'
   | 'aproved'
   | 'crear_ot'
+  | 'actualizacion_ordenes'
   | 'envia_certifiados'
   | 'crear_usuario'
   | 'restablecer_contrasena'
