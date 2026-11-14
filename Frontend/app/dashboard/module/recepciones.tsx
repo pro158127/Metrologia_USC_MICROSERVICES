@@ -375,7 +375,8 @@ const DatosGeneralesSection = ({
           </label>
           <input
             list={!camposRaizBloqueados ? "cotizaciones-datalist" : undefined}
-            value={camposRaizBloqueados ? "Automático" : cotizacionCodigo}
+            value={cotizacionCodigo}
+            placeholder="Automático"
             disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("cotizacionCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
@@ -393,7 +394,8 @@ const DatosGeneralesSection = ({
           </label>
           <input
             list={!camposRaizBloqueados ? "ordenes-datalist" : undefined}
-            value={camposRaizBloqueados ? "Automático" : ordenTrabajoCodigo}
+            value={ordenTrabajoCodigo}
+            placeholder="Automático"
             disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
@@ -1337,7 +1339,12 @@ useEffect(() => {
         nombreQuienEntrega: recepcion.nombreEntrega || "",
         cotizacionCodigo,
         ordenTrabajoCodigo,
-        sitioCalibracion: recepcion.sitioCalibracion || "",
+        sitioCalibracion:
+          recepcion.sitioCalibracion === "CLIENTE"
+            ? "Instalaciones del cliente"
+            : recepcion.sitioCalibracion === "LABORATORIO"
+            ? "Laboratorio permanente"
+            : "",
         fechaRecepcion: recepcion.fechaRecepcion
           ? new Date(recepcion.fechaRecepcion).toISOString().split("T")[0]
           : "",

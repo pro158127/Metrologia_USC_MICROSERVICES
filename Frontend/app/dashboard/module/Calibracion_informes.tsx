@@ -6,6 +6,7 @@ import { Upload, FileText, AlertTriangle, RefreshCw, ChevronDown, CheckCircle2, 
 import { getMisInstrumentos, subirCertificadoCalibracion } from "@/app/action_module/calibraciones";
 import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { useSellosOperativos } from "@/app/lib/useSellosOperativos";
 import type {
   InstrumentoAsignado,
   EstadoInstrumento,
@@ -380,6 +381,7 @@ const InstrumentCard: React.FC<InstrumentCardProps> = ({
 export const CalibracionInformes: React.FC = () => {
   const [instrumentos, setInstrumentos] = useState<InstrumentoAsignado[]>([]);
   const [cargando, setCargando] = useState(true);
+  const { estado: estadoSellos, todasCompletas: sellosCompletas } = useSellosOperativas();
 
   useEffect(() => {
     let activo = true;
@@ -450,6 +452,11 @@ export const CalibracionInformes: React.FC = () => {
   const ejecutarSubidaCertificado = useCallback(async () => {
     if (!selectedInstrumento || !selectedFile) return;
 
+    if (!sellosCompletas) {
+      showToast("⚠️ Las plantillas de sello no están completas. Configúrelas en Administración → Sellos.");
+      return;
+    }
+
     // El endpoint espera el ID de detalle de recepción (ID_INSTRUMENTO).
     const idInstrumento = selectedInstrumento.idInstrumento;
     if (!idInstrumento || Number.isNaN(idInstrumento)) {
@@ -486,7 +493,7 @@ export const CalibracionInformes: React.FC = () => {
     showToast(`✅ PDF vinculado al instrumento ${estampillaMostrada}`);
     setSelectedFile(null);
     setSelectedInstrumento(null);
-  }, [selectedInstrumento, selectedFile, showToast]);
+  }, [selectedInstrumento, selectedFile, showToast, sellosCompletas]);
 
   const obtenerBadgeEstado = useCallback((status: EstadoInstrumento) => {
     const config: Record<EstadoInstrumento, string> = {
@@ -502,6 +509,26 @@ export const CalibracionInformes: React.FC = () => {
   return (
     <div className="p-6 bg-slate-50 min-h-screen font-sans text-slate-800 antialiased">
       <ToastNotification toast={toast} />
+
+      {estadoSellos && !sellosCompletas && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
+          <div className="text-xs leading-snug">
+            <p className="font-bold">Plantillas de sello incompletas</p>
+            <p className="mt-1">
+              Para subir certificados, todas las plantillas de sello deben tener su PDF (MinIO) y su
+              mapeo de caja. Ve a <span className="font-semibold">Administración → Sellos</span>.
+            </p>
+            <ul className="mt-1 list-inside list-disc text-[11px] text-amber-800">
+              {estadoSellos.detalle.filter((d) => !d.completa).map((s) => (
+                <li key={s.id}>
+                  {s.nombre}: {s.faltantes.length > 0 ? s.faltantes.join(', ') : 'incompleta'}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <HeaderKPIs instrumentos={instrumentos} />
 

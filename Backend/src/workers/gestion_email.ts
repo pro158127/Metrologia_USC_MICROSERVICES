@@ -50,6 +50,18 @@ const renderHtml = (templateType: string, contextData: any): string => {
   return template(contextData);
 };
 
+// Logo corporativo incrustado en base64 (sin exponer URL pública).
+const LOGO_PATH = path.join(__dirname, '../templates', 'logo.png');
+
+function getLogoBase64(): string {
+  try {
+    return fs.readFileSync(LOGO_PATH).toString('base64');
+  } catch (err) {
+    console.warn('[EmailWorker] No se pudo leer el logo para incrustarlo:', (err as Error).message);
+    return '';
+  }
+}
+
 // 4. Procesador de Archivos Optimizado para Nodemailer (Sin Base64)
 const procesarAdjuntosNodemailer = async (links?: string[]) => {
   if (!links || links.length === 0) return [];
@@ -107,7 +119,11 @@ export const emailWorker = new Worker<EmailJobData>(
 
     try {
       // Construir cuerpo y extraer archivos desde MinIO
-      const htmlContent = renderHtml(template_type, context_data);
+      const logoBase64 = getLogoBase64();
+      const htmlContent = renderHtml(template_type, {
+        ...(context_data || {}),
+        logoBase64,
+      });
       const emailAttachments = await procesarAdjuntosNodemailer(minio_links);
 
       console.log(`[EmailWorker] 🚀 Despachando SMTP... Archivos listos: ${emailAttachments.length}`);

@@ -228,7 +228,7 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   onAssignTechnician,
   estadoActual, // <-- Nuevo prop
 }) => {
- const puedeAsignar = estadoActual === "En_recepción";
+ const puedeAsignar = !["En_calibración", "Certificado_en_revisión", "Certificado_aprobado", "Certificado_enviado"].includes(estadoActual);
  const { can } = usePermissions();
  const tienePermisoAsignar = can("ordenes_de_trabajo", "asignar_tecnico");
 

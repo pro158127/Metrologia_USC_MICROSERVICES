@@ -211,12 +211,12 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             };
 
             if (inst.idDetalle) {
-              // Guard Clause: bloquear cambio de técnico si la OT no está en recepción.
+              // Guard Clause: bloquear cambio de técnico si ya hay instrumentos calibrados.
               const detalleActual = existentes.find((d) => d.ID_DETALLE === inst.idDetalle);
               const tecnicoCambia =
                 detalleActual != null && asignadoFinal !== detalleActual.asignado;
               if (tecnicoCambia) {
-                validarAsignacionPermitida(otActualizada.estado);
+                await validarAsignacionPermitida(tx, id);
               }
 
               await tx.orden_trabajo_detalles.update({

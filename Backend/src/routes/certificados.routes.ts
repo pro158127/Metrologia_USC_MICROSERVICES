@@ -82,8 +82,15 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
   app.get(
     '/api/v1/certificados/revision',
     { preHandler: [fastify.authenticate] },
-    async () => {
+    async (request) => {
+      // Separación de funciones: el revisor no ve certificados cuya calibración
+      // hizo él mismo (quien calibra no certifica).
+      const idUsuario = Number(request.user?.sub ?? 0);
+
       const certificados = await fastify.prisma.certificados.findMany({
+        where: idUsuario
+          ? { calibraciones: { ID_TECNICO_FK: { not: idUsuario } } }
+          : {},
         include: {
           documentos: true,
           calibraciones: {

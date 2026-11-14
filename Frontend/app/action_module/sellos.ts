@@ -24,6 +24,33 @@ export async function obtenerSellos(): Promise<{ success: boolean; data?: SelloM
   }
 }
 
+export interface EstadoSellosOperativos {
+  todasCompletas: boolean;
+  detalle: {
+    id: number;
+    nombre: string;
+    completa: boolean;
+    tienePdf: boolean;
+    tieneMapeo: boolean;
+    faltantes: string[];
+  }[];
+  mensaje: string;
+}
+
+export async function obtenerEstadoSellos(): Promise<EstadoSellosOperativos | null> {
+  try {
+    const session = await auth();
+    const res = await fastifyRequest<{ success: boolean; data: EstadoSellosOperativos }>(
+      session,
+      '/api/v1/sellos/estado'
+    );
+    return res.data ?? null;
+  } catch (error) {
+    console.error('[SERVER ACTION ERROR - obtenerEstadoSellos]:', error);
+    return null;
+  }
+}
+
 // ============================================================================
 // Plantillas de Sello (modelo plantillas_sellos)
 // ============================================================================

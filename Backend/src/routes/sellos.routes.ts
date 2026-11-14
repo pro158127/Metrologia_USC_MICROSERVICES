@@ -11,6 +11,7 @@ import {
   uploadBuffer,
 } from '../lib/minioClient.js';
 import { getRedisConnection, getStampPdfQueue } from '../lib/queue/queue.js';
+import { evaluarSellosOperativos } from '../services/sellos-readiness.service.js';
 import {
   idParamSchema,
   jobIdParamSchema,
@@ -125,6 +126,15 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         orderBy: { ID_SELLO: 'asc' },
       });
       return { ok: true as const, data: sellos.map((s) => selloRawToDtoSchema.parse(s)) };
+    }
+  );
+
+  app.get(
+    '/api/v1/sellos/estado',
+    { preHandler: [fastify.authenticate] },
+    async () => {
+      const estado = await evaluarSellosOperativos(fastify.prisma);
+      return { success: true as const, data: estado };
     }
   );
 
