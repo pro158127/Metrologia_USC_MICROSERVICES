@@ -1,12 +1,15 @@
 import { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
+import { obtenerDatosReporte } from '../services/reportes.service.js';
+import { getReportesQueue } from '../lib/queue/queue.js';
+import { AppError } from '../lib/errors.js';
 import {
-  certificadoRawToDtoSchema,
-  cotizacionRawToDtoSchema,
-  facturaRawToDtoSchema,
-  ordenTrabajoRawToDtoSchema,
-  respuestaReportesSchema,
-  usuarioRawToDtoSchema,
+  exportarReporteBodySchema,
+  reporteJobParamsSchema,
+  reportesQuerySchema,
+  respuestaExportacionEncoladaSchema,
+  respuestaReportesDataSchema,
+  respuestaReporteJobSchema,
 } from './reportes.schemas.js';
 
 export default async function reportesRoutes(fastify: FastifyInstance) {
@@ -19,38 +22,89 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
     {
       preHandler: [fastify.authenticate],
       schema: {
-        response: { 200: respuestaReportesSchema },
+        querystring: reportesQuerySchema,
+        response: { 200: respuestaReportesDataSchema },
       },
     },
-    async () => {
-      const [cotizaciones, ordenes, certificados, facturas, usuarios] = await Promise.all([
-        fastify.prisma.cotizaciones.findMany({
-          include: {
-            clientes: true,
-            cotizacion_detalles: true,
-            historial_estado_cotizacion: true,
-          },
-        }),
-        fastify.prisma.ordenes_trabajo.findMany({
-          include: {
-            clientes: true,
-            orden_trabajo_detalles: true,
-            cotizaciones: { include: { clientes: true } },
-          },
-        }),
-        fastify.prisma.certificados.findMany({ include: { certificado_sellos: true } }),
-        fastify.prisma.facturas.findMany({ include: { ordenes_trabajo: true, clientes: true } }),
-        fastify.prisma.usuarios.findMany({ omit: { contrase_a: true } }),
-      ]);
+    async (request) => {
+      const data = await obtenerDatosReporte(fastify.prisma, request.query ?? {});
+      return { ok: true as const, data };
+    }
+  );
 
+  app.post(
+    '/api/v1/reportes/exportar-pdf',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        body: exportarReporteBodySchema,
+        response: { 202: respuestaExportacionEncoladaSchema },
+      },
+    },
+    async (request, reply) => {
+      const queue = getReportesQueue();
+      const job = await queue.add('exportar-reporte-pdf', {
+        formato: 'pdf',
+        filtros: request.body ?? {},
+      });
+      return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
+    }
+  );
+
+  app.post(
+    '/api/v1/reportes/exportar-excel',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        body: exportarReporteBodySchema,
+        response: { 202: respuestaExportacionEncoladaSchema },
+      },
+    },
+    async (request, reply) => {
+      const queue = getReportesQueue();
+      const job = await queue.add('exportar-reporte-excel', {
+        formato: 'excel',
+        filtros: request.body ?? {},
+      });
+      return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
+    }
+  );
+
+  app.get(
+    '/api/v1/reportes/job/:jobId',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: reporteJobParamsSchema,
+        response: { 200: respuestaReporteJobSchema },
+      },
+    },
+    async (request) => {
+      const queue = getReportesQueue();
+      const job = await queue.getJob(request.params.jobId);
+      if (!job) throw new AppError(404, 'Job no encontrado');
+
+      const state = await job.getState();
+
+      if (state === 'completed') {
+        const rv = job.returnvalue as { url?: string } | undefined;
+        return {
+          ok: true as const,
+          data: { status: 'completed', url: rv?.url ?? null, error: null },
+        };
+      }
+      if (state === 'failed') {
+        return {
+          ok: true as const,
+          data: { status: 'failed', url: null, error: job.failedReason || 'Procesamiento fallido' },
+        };
+      }
       return {
         ok: true as const,
         data: {
-          cotizaciones: cotizaciones.map((c) => cotizacionRawToDtoSchema.parse(c)),
-          ordenes: ordenes.map((o) => ordenTrabajoRawToDtoSchema.parse(o)),
-          certificados: certificados.map((c) => certificadoRawToDtoSchema.parse(c)),
-          facturas: facturas.map((f) => facturaRawToDtoSchema.parse(f)),
-          usuarios: usuarios.map((u) => usuarioRawToDtoSchema.parse(u)),
+          status: state === 'active' ? 'processing' : state || 'pending',
+          url: null,
+          error: null,
         },
       };
     }

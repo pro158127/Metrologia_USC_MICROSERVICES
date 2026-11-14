@@ -663,3 +663,89 @@ export const respuestaReportesSchema = z.object({
   }),
 });
 export type RespuestaReportes = z.infer<typeof respuestaReportesSchema>;
+
+// ============================================================
+// REPORTES CONSOLIDADOS (endpoint enriquecido + exportación)
+// ============================================================
+export const reportesQuerySchema = z.object({
+  fechaInicio: z.string().optional(),
+  fechaFin: z.string().optional(),
+  tipoServicio: z.string().optional(),
+  cliente: z.string().optional(),
+  tecnico: z.string().optional(),
+});
+export type ReportesQuery = z.infer<typeof reportesQuerySchema>;
+
+export const reportesCertificadoDtoSchema = z.object({
+  codigo: z.string(),
+  instrumento: z.string(),
+  estampilla: z.string().nullable(),
+  cliente: z.string(),
+  nit: z.string(),
+  tecnico: z.string(),
+  ot: z.string(),
+  fecha: z.string().nullable(),
+  rutaUrl: z.string().nullable(),
+  tipoServicio: z.string().nullable(),
+});
+
+export const reportesTecnicoDtoSchema = z.object({
+  tecnico: z.string(),
+  ots: z.number(),
+  equipos: z.number(),
+  promedioDias: z.number(),
+});
+
+export const reportesTrazabilidadDtoSchema = z.object({
+  factura: z.string(),
+  cliente: z.string(),
+  fecha: z.string().nullable(),
+  valor: z.number(),
+  ots: z.string(),
+  equipos: z.number(),
+  cert: z.string().nullable(),
+});
+
+export const reportesKpisDtoSchema = z.object({
+  cotizacionesEmitidas: z.number(),
+  tasaConversion: z.number(),
+  ingresos: z.number(),
+  ordenesInternas: z.number(),
+});
+
+export const reportesDataSchema = z.object({
+  kpis: reportesKpisDtoSchema,
+  certificados: z.array(reportesCertificadoDtoSchema),
+  tecnicos: z.array(reportesTecnicoDtoSchema),
+  trazabilidad: z.array(reportesTrazabilidadDtoSchema),
+});
+
+export const respuestaReportesDataSchema = z.object({
+  ok: z.literal(true),
+  data: reportesDataSchema,
+});
+
+export const exportarReporteBodySchema = z.object({
+  fechaInicio: z.string().optional(),
+  fechaFin: z.string().optional(),
+  tipoServicio: z.string().optional(),
+  cliente: z.string().optional(),
+  tecnico: z.string().optional(),
+});
+export type ExportarReporteBody = z.infer<typeof exportarReporteBodySchema>;
+
+export const reporteJobParamsSchema = z.object({ jobId: z.string().min(1) });
+
+export const respuestaExportacionEncoladaSchema = z.object({
+  ok: z.literal(true),
+  data: z.object({ jobId: z.string() }),
+});
+
+export const respuestaReporteJobSchema = z.object({
+  ok: z.literal(true),
+  data: z.object({
+    status: z.string(),
+    url: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});

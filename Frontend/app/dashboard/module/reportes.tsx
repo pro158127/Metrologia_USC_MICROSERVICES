@@ -13,10 +13,19 @@ import {
   Line,
   CartesianGrid,
 } from "recharts";
-import { Download, Search, FileText } from "lucide-react";
+import { Download, Search, FileText, X } from "lucide-react";
 import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import type { BarChartData, ConversionData, TecnicoResumen, CertificadoHistorico, Kpi, AuditTraceabilityRow, AuditTraceabilityReportProps } from "@/tipos/reportes";
+import {
+  obtenerReportes,
+  exportarReportePdf,
+  exportarReporteExcel,
+  consultarEstadoJobReporte,
+  type DatosReporte,
+  type FiltrosReporte,
+} from "@/app/action_module/reportes";
+import { generarUrlArchivo } from "@/app/action_module/archivos";
+import type { BarChartData, ConversionData, TecnicoResumen, Kpi, AuditTraceabilityRow, AuditTraceabilityReportProps } from "@/tipos/reportes";
 
 // Reusable Tailwind Style Maps (Sugerencia por alta repetibilidad de inputs/selects)
 const inputBaseStyles =
@@ -38,7 +47,11 @@ const mesesUltimos = (n: number): string[] => {
 
 // 2. Declaración de Componentes Hijos (Extraídos)
 
-const HeaderSection: React.FC = () => {
+const HeaderSection: React.FC<{
+  onExportarPdf: () => void;
+  onExportarExcel: () => void;
+  exportando: boolean;
+}> = ({ onExportarPdf, onExportarExcel, exportando }) => {
   const { can } = usePermissions();
   const puedeExportar = can("reportes_y_consolidados", "exportar_base_de_datos");
   return (
@@ -48,11 +61,19 @@ const HeaderSection: React.FC = () => {
       </h1>
       {puedeExportar && (
       <div className="flex gap-2">
-        <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-slate-600 border border-slate-200 text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-sm">
-          <Download size={14} /> Exportar PDF
+        <button
+          onClick={onExportarPdf}
+          disabled={exportando}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-slate-600 border border-slate-200 text-xs font-semibold hover:bg-slate-50 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Download size={14} /> {exportando ? "Generando..." : "Exportar PDF"}
         </button>
-        <button className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#5680F9] text-white text-xs font-semibold hover:bg-blue-600 transition-all cursor-pointer shadow-sm">
-          <Download size={14} /> Exportar Excel
+        <button
+          onClick={onExportarExcel}
+          disabled={exportando}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#5680F9] text-white text-xs font-semibold hover:bg-blue-600 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Download size={14} /> {exportando ? "Generando..." : "Exportar Excel"}
         </button>
       </div>
       )}
@@ -64,42 +85,56 @@ const FilterBar: React.FC<{
   clientes: string[];
   tecnicos: string[];
   tiposServicio: string[];
-}> = ({ clientes, tecnicos, tiposServicio }) => {
+  filtros: FiltrosReporte;
+  onChange: (f: FiltrosReporte) => void;
+}> = ({ clientes, tecnicos, tiposServicio, filtros, onChange }) => {
+  const set = (k: keyof FiltrosReporte, v: string) => onChange({ ...filtros, [k]: v || undefined });
 
- const [fechaInicio, setFechaInicio] = useState<string>(() => 
-  new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0]
-);
-
-const [fechaFin, setFechaFin] = useState<string>(() => 
-  new Date().toISOString().split("T")[0]
-);
   return (
     <div className="flex items-center gap-3 mb-6 p-4 rounded-[16px] border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] flex-wrap">
       <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Filtros:</span>
-     <input
-  type="date"
-  value={fechaInicio}
-  onChange={(e) => setFechaInicio(e.target.value)}
-  className={inputBaseStyles}
-/>
-<input
-  type="date"
-  value={fechaFin}
-  onChange={(e) => setFechaFin(e.target.value)}
-  className={inputBaseStyles}
-/>
-      {[
-        { label: "Tipo servicio", options: tiposServicio },
-        { label: "Cliente", options: clientes },
-        { label: "Técnico", options: tecnicos },
-      ].map((f) => (
-        <select key={f.label} className={`${inputBaseStyles} cursor-pointer`}>
-          <option>{f.label} — Todos</option>
-          {f.options.slice(0, 20).map((o) => (
-            <option key={o}>{o}</option>
-          ))}
-        </select>
-      ))}
+      <input
+        type="date"
+        value={filtros.fechaInicio ?? ""}
+        onChange={(e) => set("fechaInicio", e.target.value)}
+        className={inputBaseStyles}
+      />
+      <input
+        type="date"
+        value={filtros.fechaFin ?? ""}
+        onChange={(e) => set("fechaFin", e.target.value)}
+        className={inputBaseStyles}
+      />
+      <select
+        value={filtros.tipoServicio ?? ""}
+        onChange={(e) => set("tipoServicio", e.target.value)}
+        className={`${inputBaseStyles} cursor-pointer`}
+      >
+        <option value="">Tipo servicio — Todos</option>
+        {tiposServicio.slice(0, 20).map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </select>
+      <select
+        value={filtros.cliente ?? ""}
+        onChange={(e) => set("cliente", e.target.value)}
+        className={`${inputBaseStyles} cursor-pointer`}
+      >
+        <option value="">Cliente — Todos</option>
+        {clientes.slice(0, 20).map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </select>
+      <select
+        value={filtros.tecnico ?? ""}
+        onChange={(e) => set("tecnico", e.target.value)}
+        className={`${inputBaseStyles} cursor-pointer`}
+      >
+        <option value="">Técnico — Todos</option>
+        {tecnicos.slice(0, 20).map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </select>
     </div>
   );
 };
@@ -238,7 +273,10 @@ const TecnicoSummaryTable: React.FC<{ tecnicoData: TecnicoResumen[] }> = ({ tecn
   );
 };
 
-const HistoricalCertificatesTable: React.FC<{ certHistoricos: CertificadoHistorico[] }> = ({ certHistoricos }) => {
+const HistoricalCertificatesTable: React.FC<{
+  certHistoricos: DatosReporte["certificados"];
+  onVerPdf: (rutaUrl: string | null, titulo: string) => void;
+}> = ({ certHistoricos, onVerPdf }) => {
   return (
     <div className="rounded-[20px] border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden mb-6">
       <div className="px-6 py-4 border-b border-slate-100">
@@ -246,24 +284,11 @@ const HistoricalCertificatesTable: React.FC<{ certHistoricos: CertificadoHistori
           Búsqueda de certificados históricos (RF-41)
         </span>
       </div>
-      <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 p-4 bg-slate-50/30 border-b border-slate-100">
-        <div className="relative flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            placeholder="N° certificado, NIT, nombre de instrumento..."
-            className={`w-full pl-9 pr-4 ${inputBaseStyles}`}
-          />
-        </div>
-        <div className="flex gap-2">
-          <input type="date" className={inputBaseStyles} />
-          <input type="date" className={inputBaseStyles} />
-        </div>
-      </div>
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="bg-slate-50/75 border-b border-slate-100">
-              {["N° Certificado", "Cliente", "NIT", "Instrumento", "Fecha emisión", "Técnico", "Acciones"].map((h) => (
+              {["N° Certificado", "Cliente", "NIT", "Instrumento", "Estampilla", "Fecha emisión", "Técnico", "Acciones"].map((h) => (
                 <th key={h} className="text-left px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   {h}
                 </th>
@@ -272,15 +297,19 @@ const HistoricalCertificatesTable: React.FC<{ certHistoricos: CertificadoHistori
           </thead>
           <tbody className="divide-y divide-slate-100">
             {certHistoricos.map((c) => (
-              <tr key={c.cert} className="hover:bg-slate-50/50 transition-colors">
-                <td className="px-6 py-4 text-sm font-bold text-[#5680F9]">{c.cert}</td>
+              <tr key={c.codigo} className="hover:bg-slate-50/50 transition-colors">
+                <td className="px-6 py-4 text-sm font-bold text-[#5680F9]">{c.codigo}</td>
                 <td className="px-6 py-4 text-sm font-semibold text-slate-700">{c.cliente}</td>
                 <td className="px-6 py-4 text-sm text-slate-500 font-medium">{c.nit}</td>
                 <td className="px-6 py-4 text-sm text-slate-600">{c.instrumento}</td>
-                <td className="px-6 py-4 text-sm text-slate-500">{c.fecha}</td>
+                <td className="px-6 py-4 text-sm text-slate-500 font-mono">{c.estampilla ?? "—"}</td>
+                <td className="px-6 py-4 text-sm text-slate-500">{c.fecha ? new Date(c.fecha).toLocaleDateString("es-CO") : "—"}</td>
                 <td className="px-6 py-4 text-sm text-slate-500 font-medium">{c.tecnico}</td>
                 <td className="px-6 py-4">
-                  <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 text-[#5680F9] hover:bg-blue-100 text-xs font-semibold transition-all border border-blue-100/50 cursor-pointer">
+                  <button
+                    onClick={() => onVerPdf(c.rutaUrl, c.codigo)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 text-[#5680F9] hover:bg-blue-100 text-xs font-semibold transition-all border border-blue-100/50 cursor-pointer"
+                  >
                     <FileText size={12} /> Ver PDF + trazabilidad
                   </button>
                 </td>
@@ -390,49 +419,61 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
 export function MainRendererreport() {
   const cotizaciones = useDbTable("cotizaciones");
   const ordenesTrabajo = useDbTable("ordenes_trabajo");
-  const certificados = useDbTable("certificados");
-  const calibraciones = useDbTable("calibraciones");
-  const facturas = useDbTable("facturas");
   const clientes = useDbTable("clientes");
   const tarifas = useDbTable("tarifas");
-  const usuarios = useDbTable("usuarios");
   const { loadTable } = useDbActions();
-  const loadingCertificados = useDbLoading("certificados");
   const loadingOrdenes = useDbLoading("ordenes_trabajo");
   const loadingCotizaciones = useDbLoading("cotizaciones");
-  const loadingFacturas = useDbLoading("facturas");
-  const loadingClientes = useDbLoading("clientes");
-  const loadingTarifas = useDbLoading("tarifas");
-  const loadingUsuarios = useDbLoading("usuarios");
-  const loading =
-    loadingCertificados ||
-    loadingOrdenes ||
-    loadingCotizaciones ||
-    loadingFacturas ||
-    loadingClientes ||
-    loadingTarifas ||
-    loadingUsuarios;
 
+  const [filtros, setFiltros] = useState<FiltrosReporte>({});
+  const [datos, setDatos] = useState<DatosReporte | null>(null);
+  const [cargandoReporte, setCargandoReporte] = useState(true);
+  const [exportando, setExportando] = useState(false);
+  const [toast, setToast] = useState("");
+  const [viewer, setViewer] = useState<{ url: string | null; titulo: string } | null>(null);
+  const [verificando, setVerificando] = useState(false);
   const [facturaSearch, setFacturaSearch] = useState("");
   const [showTrazabilidad, setShowTrazabilidad] = useState(false);
 
-  // Carga de tablas requeridas por el módulo
-  const inicializar = useCallback(() => {
-    loadTable("cotizaciones");
-    loadTable("ordenes_trabajo");
-    loadTable("facturas");
-    loadTable("clientes");
-    loadTable("tarifas");
-    loadTable("usuarios");
-    loadTable("certificados");
-  }, [loadTable]);
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3500);
+  }, []);
+
+  const cargarReporte = useCallback(async (f: FiltrosReporte) => {
+    const d = await obtenerReportes(f);
+    setDatos(d);
+    setCargandoReporte(false);
+  }, []);
 
   React.useEffect(() => {
-    inicializar();
-  }, [inicializar]);
+    loadTable("cotizaciones");
+    loadTable("ordenes_trabajo");
+    loadTable("clientes");
+    loadTable("tarifas");
+    let activo = true;
+    obtenerReportes({}).then((d) => {
+      if (activo) {
+        setDatos(d);
+        setCargandoReporte(false);
+      }
+    });
+    return () => {
+      activo = false;
+    };
+  }, [loadTable]);
+
+  const aplicarFiltros = useCallback(
+    (f: FiltrosReporte) => {
+      setFiltros(f);
+      setCargandoReporte(true);
+      cargarReporte(f);
+    },
+    [cargarReporte]
+  );
 
   // ==========================================
-  // DATOS DERIVADOS (useMemo)
+  // GRÁFICAS (desde el store)
   // ==========================================
   const meses = useMemo(() => mesesUltimos(6), []);
 
@@ -472,62 +513,22 @@ export function MainRendererreport() {
     });
   }, [meses, cotizaciones]);
 
-  const tecnicoData: TecnicoResumen[] = useMemo(() => {
-    const grupos = new Map<string, { ots: number; equipos: number; dias: number }>();
-    ordenesTrabajo.forEach((o) => {
-      const nombre = o.responsable || "Sin asignar";
-      const grupo = grupos.get(nombre) || { ots: 0, equipos: 0, dias: 0 };
-      grupo.ots += 1;
-      grupo.equipos += o.instrumentos?.length ?? 0;
-      if (o.createdAt && o.fechaCalibracion) {
-        grupo.dias += Math.max(0, (new Date(o.fechaCalibracion).getTime() - new Date(o.createdAt).getTime()) / 86400000);
-      }
-      grupos.set(nombre, grupo);
-    });
-    return Array.from(grupos.entries()).map(([tecnico, g]) => ({
-      tecnico,
-      ots: g.ots,
-      equipos: g.equipos,
-      promedioDias: g.ots > 0 ? g.dias / g.ots : 0,
-    }));
-  }, [ordenesTrabajo]);
-
-  const certHistoricos: CertificadoHistorico[] = useMemo(() => {
-    return certificados.slice(0, 50).map((cert) => {
-      const cal = calibraciones.find((c) => c.idCalibracion === cert.idCalibracion);
-      const instrumento = cal
-        ? (ordenesTrabajo.flatMap((o) => o.instrumentos ?? []).find((i) => i.idDetalle === cal.idInstrumento)?.instrumento ?? "—")
-        : "—";
-      const orden = cal
-        ? ordenesTrabajo.find((o) => (o.instrumentos ?? []).some((i) => i.idDetalle === cal.idInstrumento))
-        : undefined;
-      const cliente = orden
-        ? clientes.find((c) => c.idCliente === orden.idCliente)
-        : undefined;
-      return {
-        cert: cert.codigo,
-        cliente: cliente?.razonSocial ?? "—",
-        nit: cliente?.nitCedula ?? "—",
-        instrumento,
-        fecha: new Date(cal?.createdAt ?? new Date()).toLocaleDateString("es-CO"),
-        tecnico: orden?.responsable ?? "—",
-      };
-    });
-  }, [certificados, calibraciones, ordenesTrabajo, clientes]);
-
+  // ==========================================
+  // DATOS DEL ENDPOINT DE REPORTES
+  // ==========================================
   const kpis: Kpi[] = useMemo(() => {
-    const emitidas = cotizaciones.length;
-    const aprobadas = cotizaciones.filter((c) => c.estado === "APROBADA").length;
-    const conversion = emitidas > 0 ? Math.round((aprobadas / emitidas) * 100) : 0;
-    const ingresos = facturas.reduce((acc, f) => acc + Number(f.valor ?? 0), 0);
-    const internos = ordenesTrabajo.filter((o) => o.esInternoUSC === true).length;
+    const k = datos?.kpis;
+    if (!k) return [];
     return [
-      { label: "Cotizaciones emitidas", val: String(emitidas), sub: "registradas en el sistema", color: "#5680F9", bg: "#EEF2FF", trend: "" },
-      { label: "Tasa de conversión", val: `${conversion}%`, sub: "aprobadas sobre emitidas", color: "#22C55E", bg: "#F0FDF4", trend: "" },
-      { label: "Ingresos facturados", val: formatearMoneda(ingresos), sub: "total facturado registrado", color: "#9A8CF3", bg: "#F5F3FF", trend: "" },
-      { label: "Órdenes internas USC", val: String(internos), sub: "servicios internos imputados", color: "#F59C0B", bg: "#FFFBEB", trend: "" },
+      { label: "Cotizaciones emitidas", val: String(k.cotizacionesEmitidas), sub: "registradas en el sistema", color: "#5680F9", bg: "#EEF2FF", trend: "" },
+      { label: "Tasa de conversión", val: `${k.tasaConversion}%`, sub: "aprobadas sobre emitidas", color: "#22C55E", bg: "#F0FDF4", trend: "" },
+      { label: "Ingresos facturados", val: formatearMoneda(k.ingresos), sub: "total facturado registrado", color: "#9A8CF3", bg: "#F5F3FF", trend: "" },
+      { label: "Órdenes internas USC", val: String(k.ordenesInternas), sub: "servicios internos imputados", color: "#F59C0B", bg: "#FFFBEB", trend: "" },
     ];
-  }, [cotizaciones, facturas, ordenesTrabajo]);
+  }, [datos]);
+
+  const tecnicoData: TecnicoResumen[] = datos?.tecnicos ?? [];
+  const certHistoricos = datos?.certificados ?? [];
 
   const tiposServicio = useMemo(() => {
     const set = new Set<string>();
@@ -535,33 +536,63 @@ export function MainRendererreport() {
     return Array.from(set).filter(Boolean);
   }, [tarifas]);
 
-  const tecnicos = useMemo(() => {
-    const set = new Set<string>();
-    ordenesTrabajo.forEach((o) => o.responsable && set.add(o.responsable));
-    return Array.from(set);
-  }, [ordenesTrabajo]);
-
+  const tecnicos = useMemo(() => (datos?.tecnicos ?? []).map((t) => t.tecnico), [datos]);
   const clientesFiltro = useMemo(() => clientes.map((c) => c.razonSocial), [clientes]);
 
   const filasAuditoria: AuditTraceabilityRow[] = useMemo(() => {
-    return facturas
-      .filter((f) => f.numero.toLowerCase().includes(facturaSearch.toLowerCase()))
-      .slice(0, 10)
-      .map((f) => {
-        const orden = ordenesTrabajo.find((o) => o.idOrdenTrabajo === f.idOrdenTrabajo);
-        const cliente = f.cliente?.razonSocial ?? clientes.find((c) => c.idCliente === f.idCliente)?.razonSocial ?? "—";
-        const cert = orden ? (certificados.find((c) => c.idCalibracion === orden.idOrdenTrabajo)?.codigo ?? "—") : "—";
-        return {
-          factura: f.numero,
-          cliente,
-          fecha: new Date(f.fecha).toLocaleDateString("es-CO"),
-          valor: formatearMoneda(Number(f.valor ?? 0)),
-          ots: orden?.codigo ?? "—",
-          equipos: orden?.instrumentos?.length ?? 0,
-          cert,
-        };
-      });
-  }, [facturas, ordenesTrabajo, clientes, certificados, facturaSearch]);
+    return (datos?.trazabilidad ?? [])
+      .filter((t) => t.factura.toLowerCase().includes(facturaSearch.toLowerCase()))
+      .map((t) => ({
+        factura: t.factura,
+        cliente: t.cliente,
+        fecha: t.fecha ? new Date(t.fecha).toLocaleDateString("es-CO") : "—",
+        valor: formatearMoneda(t.valor),
+        ots: t.ots,
+        equipos: t.equipos,
+        cert: t.cert ?? "—",
+      }));
+  }, [datos, facturaSearch]);
+
+  const verPdf = useCallback(
+    async (rutaUrl: string | null, titulo: string) => {
+      if (!rutaUrl) {
+        showToast("El certificado no tiene documento PDF registrado.");
+        return;
+      }
+      setViewer({ url: null, titulo });
+      setVerificando(true);
+      const url = await generarUrlArchivo(rutaUrl);
+      setVerificando(false);
+      setViewer({ url, titulo });
+    },
+    [showToast]
+  );
+
+  const exportar = useCallback(
+    async (formato: "pdf" | "excel") => {
+      setExportando(true);
+      const jobId =
+        formato === "pdf" ? await exportarReportePdf(filtros) : await exportarReporteExcel(filtros);
+      if (!jobId) {
+        showToast("No se pudo encolar la exportación.");
+        setExportando(false);
+        return;
+      }
+      const interval = setInterval(async () => {
+        const st = await consultarEstadoJobReporte(jobId);
+        if (st?.status === "completed" && st.url) {
+          clearInterval(interval);
+          setExportando(false);
+          window.open(st.url, "_blank");
+        } else if (st?.status === "failed") {
+          clearInterval(interval);
+          setExportando(false);
+          showToast("Error al generar el archivo.");
+        }
+      }, 2000);
+    },
+    [filtros, showToast]
+  );
 
   const handleGenerateReport = useCallback(() => {
     if (facturaSearch) {
@@ -571,7 +602,13 @@ export function MainRendererreport() {
 
   return (
     <div className="module-page text-slate-900">
-      {loading ? (
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-lg">
+          {toast}
+        </div>
+      )}
+
+      {loadingOrdenes || loadingCotizaciones || cargandoReporte ? (
         <div className="space-y-5 animate-pulse">
           <div className="h-8 w-64 rounded bg-slate-200" />
           <div className="h-12 rounded-2xl bg-slate-200" />
@@ -584,12 +621,22 @@ export function MainRendererreport() {
         </div>
       ) : (
         <>
-          <HeaderSection />
-          <FilterBar clientes={clientesFiltro} tecnicos={tecnicos} tiposServicio={tiposServicio} />
+          <HeaderSection
+            onExportarPdf={() => exportar("pdf")}
+            onExportarExcel={() => exportar("excel")}
+            exportando={exportando}
+          />
+          <FilterBar
+            clientes={clientesFiltro}
+            tecnicos={tecnicos}
+            tiposServicio={tiposServicio}
+            filtros={filtros}
+            onChange={aplicarFiltros}
+          />
           <KpiGrid kpis={kpis} />
           <ChartsSection barData={barData} conversionData={conversionData} />
           <TecnicoSummaryTable tecnicoData={tecnicoData} />
-          <HistoricalCertificatesTable certHistoricos={certHistoricos} />
+          <HistoricalCertificatesTable certHistoricos={certHistoricos} onVerPdf={verPdf} />
           <AuditTraceabilityReport
             facturaSearch={facturaSearch}
             showTrazabilidad={showTrazabilidad}
@@ -598,6 +645,33 @@ export function MainRendererreport() {
             filas={filasAuditoria}
           />
         </>
+      )}
+
+      {viewer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-4xl h-dvh sm:h-[85vh] rounded-2xl bg-white shadow-xl border border-slate-100 flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                <FileText size={16} /> {viewer.titulo}
+              </div>
+              <button
+                onClick={() => setViewer(null)}
+                className="text-slate-400 hover:text-slate-700 border-none bg-transparent cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden rounded-b-2xl bg-slate-100">
+              {verificando || !viewer.url ? (
+                <div className="h-full flex items-center justify-center text-xs text-slate-500">
+                  {verificando ? "Generando visor..." : "No se pudo cargar el documento."}
+                </div>
+              ) : (
+                <iframe src={viewer.url} title={viewer.titulo} className="w-full h-full border-none" />
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

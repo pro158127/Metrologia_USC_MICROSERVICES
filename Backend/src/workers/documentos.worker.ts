@@ -13,6 +13,9 @@ import './pdfStampingWorker.js';
 // 3. Despierta al generador asíncrono de certificados PDF
 import './certificatePdf.worker.js';
 
+// 4. Despierta al generador de reportes (PDF / Excel)
+import './reportes.worker.js';
+
 import { iniciarSnapshotWorker } from '../workers/snapshot.worker.js';
 
 

@@ -13,6 +13,8 @@ export const STAMP_JOB_PREFIX = 'stamp:job:';
 
 export const CERTIFICATE_PDF_QUEUE = 'certificate-pdf-queue';
 
+export const REPORTES_QUEUE = 'reportes-queue';
+
 export const TARIFAS_QUEUE = 'tarifas-queue';
 
 export const CRON_QUEUE = 'cron-queue';
@@ -27,6 +29,7 @@ let stampPdfQueue: Queue | null = null;
 let tarifasQueue: Queue | null = null;
 let generationExcelQueue: Queue | null = null;
 let certificatePdfQueue: Queue | null = null;
+let reportesQueue: Queue | null = null;
 let importQueue: Queue | null = null;
 let cronQueue: Queue | null = null;
 
@@ -126,6 +129,32 @@ export function getCertificatePdfQueue(): Queue {
     });
   }
   return certificatePdfQueue;
+}
+
+export interface ReportesJobData {
+  formato: 'pdf' | 'excel';
+  filtros: {
+    fechaInicio?: string;
+    fechaFin?: string;
+    tipoServicio?: string;
+    cliente?: string;
+    tecnico?: string;
+  };
+}
+
+export function getReportesQueue(): Queue {
+  if (!reportesQueue) {
+    reportesQueue = new Queue<ReportesJobData>(REPORTES_QUEUE, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: { age: 60 * 60 * 24 },
+        removeOnFail: { age: 60 * 60 * 24 * 7 },
+      },
+    });
+  }
+  return reportesQueue;
 }
 
 export interface TarifasJobData {
