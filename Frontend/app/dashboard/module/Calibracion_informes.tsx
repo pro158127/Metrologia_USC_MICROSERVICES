@@ -381,7 +381,7 @@ const InstrumentCard: React.FC<InstrumentCardProps> = ({
 export const CalibracionInformes: React.FC = () => {
   const [instrumentos, setInstrumentos] = useState<InstrumentoAsignado[]>([]);
   const [cargando, setCargando] = useState(true);
-  const { estado: estadoSellos, todasCompletas: sellosCompletas } = useSellosOperativas();
+  const { estado: estadoSellos, todasCompletas: sellosCompletas } = useSellosOperativos();
 
   useEffect(() => {
     let activo = true;
