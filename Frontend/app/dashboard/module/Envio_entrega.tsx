@@ -1,6 +1,6 @@
 // ============================================================
 // Envio_entrega.tsx — Módulo de Envíos / Entregas (Secretaría)
-// Lista/tabla con filtros + reglas de comprobante + visor PDF integrado.
+// Lista agrupada por cotización (hijas) + reglas de comprobante + visor PDF.
 // ============================================================
 "use client";
 
@@ -20,21 +20,13 @@ import {
 import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
-  getDocumentosEnvio,
-  subirComprobante,
-  enviarCertificados,
-  type DocumentosEnvio,
+  getDocumentosEnvioCotizacion,
+  subirComprobanteCotizacion,
+  enviarCertificadosCotizacion,
+  type DocumentosEnvioCotizacion,
 } from "@/app/action_module/envios";
 import { generarUrlArchivo } from "@/app/action_module/archivos";
 import { validarArchivo } from "@/app/lib/upload";
-
-const ESTADOS_ENVIO = ["Certificado_en_revisión", "Certificado_aprobado", "Certificado_enviado"] as const;
-
-const ESTADO_BADGE: Record<string, string> = {
-  "Certificado_en_revisión": "bg-amber-50 text-amber-700 border-amber-200",
-  Certificado_aprobado: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  Certificado_enviado: "bg-indigo-50 text-indigo-700 border-indigo-200",
-};
 
 const formatFecha = (fecha: string | Date | null) => {
   if (!fecha) return "—";
@@ -88,13 +80,14 @@ const PdfViewerModal: React.FC<{
 );
 
 const GestionPanel: React.FC<{
-  idOT: number;
-  codigoOT: string;
+  idCotizacion: number;
+  codigoCotizacion: string;
   onClose: () => void;
   onToast: (msg: string) => void;
   onRefresh: () => void;
-}> = ({ idOT, codigoOT, onClose, onToast, onRefresh }) => {
-  const [docs, setDocs] = useState<DocumentosEnvio | null>(null);
+  onOpenOt: (id: number) => void;
+}> = ({ idCotizacion, codigoCotizacion, onClose, onToast, onRefresh, onOpenOt }) => {
+  const [docs, setDocs] = useState<DocumentosEnvioCotizacion | null>(null);
   const [cargando, setCargando] = useState(true);
   const [subiendo, setSubiendo] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -105,12 +98,12 @@ const GestionPanel: React.FC<{
   const puedeEnviarCertificados = can("entrega_y_envio", "enviar_certificados_lotes");
 
   const recargar = useCallback(() => {
-    getDocumentosEnvio(idOT).then((d) => setDocs(d));
-  }, [idOT]);
+    getDocumentosEnvioCotizacion(idCotizacion).then((d) => setDocs(d));
+  }, [idCotizacion]);
 
   useEffect(() => {
     let activo = true;
-    getDocumentosEnvio(idOT)
+    getDocumentosEnvioCotizacion(idCotizacion)
       .then((d) => {
         if (activo) {
           setDocs(d);
@@ -123,7 +116,7 @@ const GestionPanel: React.FC<{
     return () => {
       activo = false;
     };
-  }, [idOT]);
+  }, [idCotizacion]);
 
   const verDocumento = useCallback(
     async (rutaUrl: string | null, titulo: string) => {
@@ -156,7 +149,7 @@ const GestionPanel: React.FC<{
       setSubiendo(true);
       let fallos = 0;
       for (const file of validos) {
-        const res = await subirComprobante(idOT, file);
+        const res = await subirComprobanteCotizacion(idCotizacion, file);
         if (!res.ok) fallos += 1;
       }
       setSubiendo(false);
@@ -168,12 +161,12 @@ const GestionPanel: React.FC<{
       recargar();
       onRefresh();
     },
-    [idOT, onToast, recargar, onRefresh]
+    [idCotizacion, onToast, recargar, onRefresh]
   );
 
   const handleEnviar = useCallback(async () => {
     setEnviando(true);
-    const res = await enviarCertificados(idOT);
+    const res = await enviarCertificadosCotizacion(idCotizacion);
     setEnviando(false);
     if (!res.ok) {
       onToast(`❌ ${res.error ?? "No se pudo enviar."}`);
@@ -182,7 +175,7 @@ const GestionPanel: React.FC<{
     onToast(`✅ ${res.message ?? "Certificados enviados."}`);
     recargar();
     onRefresh();
-  }, [idOT, onToast, recargar, onRefresh]);
+  }, [idCotizacion, onToast, recargar, onRefresh]);
 
   const todosAprobados = docs?.todosAprobados ?? false;
   const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
@@ -193,7 +186,7 @@ const GestionPanel: React.FC<{
       <div className="w-full max-w-2xl h-full bg-white shadow-2xl overflow-y-auto">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-6 py-4">
           <div>
-            <div className="text-sm font-black text-slate-800">OT {codigoOT}</div>
+            <div className="text-sm font-black text-slate-800">Cotización {codigoCotizacion}</div>
             <div className="text-[11px] text-slate-400">
               {docs?.cliente ?? "Cargando..."} · {docs?.correo ?? "sin correo"}
             </div>
@@ -211,6 +204,29 @@ const GestionPanel: React.FC<{
             <div className="text-xs text-slate-400">Cargando documentos...</div>
           ) : (
             <>
+              {/* OTs vinculadas */}
+              <section>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Órdenes de Trabajo vinculadas
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {(docs?.ots ?? []).map((ot) => (
+                    <button
+                      key={ot.idOrdenTrabajo}
+                      onClick={() => onOpenOt(ot.idOrdenTrabajo)}
+                      className="font-mono text-[11px] font-bold text-[#5680F9] bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-1 hover:bg-blue-100 transition-colors cursor-pointer"
+                    >
+                      {ot.codigo}
+                    </button>
+                  ))}
+                </div>
+                {docs?.masterCodigo && (
+                  <div className="mt-2 text-[11px] text-slate-400">
+                    OT Master: <span className="font-mono font-semibold">{docs.masterCodigo}</span>
+                  </div>
+                )}
+              </section>
+
               {/* Estado de aprobación */}
               <div
                 className={`rounded-xl border px-4 py-3 text-xs font-bold ${
@@ -240,7 +256,7 @@ const GestionPanel: React.FC<{
                           {c.codigo}
                         </div>
                         <div className="text-[11px] text-slate-400 truncate">
-                          {c.instrumento} · {c.estampilla ?? "sin estampilla"}
+                          {c.instrumento} · {c.estampilla ?? "sin estampilla"} · OT {c.codigoOT}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -266,7 +282,7 @@ const GestionPanel: React.FC<{
                   ))}
                   {(docs?.certificados.length ?? 0) === 0 && (
                     <div className="text-[11px] text-slate-400 italic">
-                      No hay certificados registrados para esta OT.
+                      No hay certificados registrados para esta cotización.
                     </div>
                   )}
                 </div>
@@ -330,18 +346,18 @@ const GestionPanel: React.FC<{
 
               {/* Enviar */}
               {puedeEnviarCertificados && (
-              <button
-                onClick={handleEnviar}
-                disabled={!puedeEnviar || enviando}
-                className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold uppercase tracking-wider border-none transition-colors ${
-                  puedeEnviar && !enviando
-                    ? "bg-[#5680F9] text-white cursor-pointer hover:bg-[#4069E2]"
-                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
-                }`}
-              >
-                {enviando ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
-                {enviando ? "Enviando..." : "Enviar certificados al cliente"}
-              </button>
+                <button
+                  onClick={handleEnviar}
+                  disabled={!puedeEnviar || enviando}
+                  className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold uppercase tracking-wider border-none transition-colors ${
+                    puedeEnviar && !enviando
+                      ? "bg-[#5680F9] text-white cursor-pointer hover:bg-[#4069E2]"
+                      : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                  }`}
+                >
+                  {enviando ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
+                  {enviando ? "Enviando..." : "Enviar certificados al cliente"}
+                </button>
               )}
             </>
           )}
@@ -364,7 +380,7 @@ const GestionPanel: React.FC<{
 // Componente principal
 // -----------------------------------------------------------------------------
 
-export function MainRendererenv() {
+export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }) {
   const ordenes = useDbTable("ordenes_trabajo");
   const clientes = useDbTable("clientes");
   const { loadTable } = useDbActions();
@@ -375,10 +391,8 @@ export function MainRendererenv() {
     loadTable("clientes");
   }, [loadTable]);
 
-  const [filtroEstado, setFiltroEstado] = useState<string>("TODOS");
-  const [filtroFecha, setFiltroFecha] = useState<string>("");
   const [busqueda, setBusqueda] = useState<string>("");
-  const [gestionOT, setGestionOT] = useState<{ id: number; codigo: string } | null>(null);
+  const [gestion, setGestion] = useState<{ idCotizacion: number; codigoCotizacion: string } | null>(null);
   const [toast, setToast] = useState("");
 
   const showToast = useCallback((msg: string) => {
@@ -386,35 +400,51 @@ export function MainRendererenv() {
     setTimeout(() => setToast(""), 4000);
   }, []);
 
-  const filas = useMemo(() => {
-    return ordenes
-      .filter((ot) => ESTADOS_ENVIO.includes(ot.estado as (typeof ESTADOS_ENVIO)[number]))
-      .map((ot) => {
-        const cliente = clientes.find((c) => c.idCliente === ot.idCliente);
+  // Agrupa hijas por cotización; el grupo aparece cuando TODAS están en Certificado_aprobado.
+  const grupos = useMemo(() => {
+    const hijas = ordenes.filter((o) => o.sitioCalibracion != null && o.vigente !== false);
+    const map = new Map<number, typeof hijas>();
+    for (const h of hijas) {
+      if (h.idCotizacion == null) continue;
+      const lista = map.get(h.idCotizacion) ?? [];
+      lista.push(h);
+      map.set(h.idCotizacion, lista);
+    }
+    return Array.from(map.entries())
+      .map(([idCotizacion, hs]) => {
+        const master = ordenes.find(
+          (o) => o.idCotizacion === idCotizacion && o.sitioCalibracion == null
+        );
+        const cliente =
+          clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.razonSocial ??
+          hs[0]?.cliente?.razonSocial ??
+          "—";
+        const todosAprobados = hs.every((h) => h.estado === "Certificado_aprobado");
         return {
-          id: ot.idOrdenTrabajo,
-          codigo: ot.codigo,
-          cliente: cliente?.razonSocial ?? ot.cliente?.razonSocial ?? "—",
-          cotizacion: ot.cotizacion?.codigo ?? "—",
-          master:
-            ordenes.find((o) => o.idOrdenTrabajo === ot.idOrdenTrabajoPadre)?.codigo ?? "—",
-          correo: ot.correoCertificado ?? cliente?.correo ?? "—",
-          certs: ot.instrumentos?.length ?? 0,
-          estado: ot.estado ?? "—",
-          fecha: ot.createdAt,
+          idCotizacion,
+          codigoCotizacion: hs[0]?.cotizacion?.codigo ?? "—",
+          masterCodigo: master?.codigo ?? "—",
+          cliente,
+          correo:
+            hs[0]?.correoCertificado ??
+            clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.correo ??
+            "—",
+          totalHijas: hs.length,
+          todosAprobados,
+          fecha: hs[0]?.createdAt,
         };
       })
-      .filter((f) => {
-        const matchEstado = filtroEstado === "TODOS" || f.estado === filtroEstado;
-        const matchBusqueda =
-          !busqueda ||
-          f.cliente.toLowerCase().includes(busqueda.toLowerCase()) ||
-          f.codigo.toLowerCase().includes(busqueda.toLowerCase());
-        const matchFecha =
-          !filtroFecha || new Date(f.fecha as string).toISOString().slice(0, 10) === filtroFecha;
-        return matchEstado && matchBusqueda && matchFecha;
+      .filter((g) => g.todosAprobados)
+      .filter((g) => {
+        if (!busqueda) return true;
+        const q = busqueda.toLowerCase();
+        return (
+          g.cliente.toLowerCase().includes(q) ||
+          g.codigoCotizacion.toLowerCase().includes(q) ||
+          g.masterCodigo.toLowerCase().includes(q)
+        );
       });
-  }, [ordenes, clientes, filtroEstado, busqueda, filtroFecha]);
+  }, [ordenes, clientes, busqueda]);
 
   return (
     <div className="module-page" style={{ position: "relative" }}>
@@ -426,54 +456,22 @@ export function MainRendererenv() {
             Entrega y Envío de Certificados
           </h1>
           <p className="text-xs text-slate-400 mt-1 pl-3">
-            Previsualiza certificados, registra comprobantes y despacha al cliente.
+            Cotizaciones con todas sus órdenes aprobadas, listas para pago y despacho.
           </p>
         </div>
-        <span className="text-xs font-mono font-bold text-slate-500">
-          {filas.length} OT
-        </span>
+        <span className="text-xs font-mono font-bold text-slate-500">{grupos.length} cotizaciones</span>
       </div>
 
-      {/* Filtros */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm mb-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            <Filter size={11} className="inline mr-1" /> Estado
-          </label>
-          <select
-            value={filtroEstado}
-            onChange={(e) => setFiltroEstado(e.target.value)}
-            className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-[#5680F9]"
-          >
-            <option value="TODOS">Todos</option>
-            {ESTADOS_ENVIO.map((e) => (
-              <option key={e} value={e}>
-                {e.replaceAll("_", " ")}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            Fecha
-          </label>
-          <input
-            type="date"
-            value={filtroFecha}
-            onChange={(e) => setFiltroFecha(e.target.value)}
-            className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-[#5680F9]"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            Cliente / OT
-          </label>
+      {/* Búsqueda */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm mb-5 grid grid-cols-1 gap-4">
+        <div className="relative">
+          <Filter size={11} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar..."
-            className="w-full text-xs font-semibold px-3 py-2 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-[#5680F9]"
+            placeholder="Buscar por cliente o cotización..."
+            className="w-full pl-9 pr-3 py-2 text-xs font-semibold border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-[#5680F9]"
           />
         </div>
       </div>
@@ -483,7 +481,7 @@ export function MainRendererenv() {
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
-              {["OT", "Cotización", "OT Master", "Cliente", "Correo", "Certificados", "Estado", "Fecha", "Acciones"].map((h) => (
+              {["Cotización", "OT Master", "Cliente", "Correo", "Hijas", "Fecha", "Acciones"].map((h) => (
                 <th
                   key={h}
                   className="px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px]"
@@ -497,47 +495,29 @@ export function MainRendererenv() {
             {loadingEnvio ? (
               [1, 2, 3, 4, 5].map((n) => (
                 <tr key={n}>
-                  <td colSpan={9} className="px-4 py-3.5">
+                  <td colSpan={7} className="px-4 py-3.5">
                     <div className="h-4 rounded bg-slate-200 animate-pulse" />
                   </td>
                 </tr>
               ))
-            ) : filas.length === 0 ? (
+            ) : grupos.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-10 text-center text-slate-400">
-                  No hay órdenes que coincidan con los filtros.
+                <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                  No hay cotizaciones listas para entrega.
                 </td>
               </tr>
             ) : (
-              filas.map((f) => (
-                <tr key={f.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-4 py-3.5 font-mono font-bold text-[#5680F9]">{f.codigo}</td>
-                  <td className="px-4 py-3.5 font-mono text-slate-500">{f.cotizacion}</td>
-                  <td className="px-4 py-3.5 font-mono text-slate-500">{f.master}</td>
-                  <td className="px-4 py-3.5 font-semibold text-slate-700">{f.cliente}</td>
-                  <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">
-                    {f.correo}
-                  </td>
-                  <td className="px-4 py-3.5 text-slate-600">
-                    <span className="inline-flex items-center gap-1">
-                      <FileText size={12} /> {f.certs}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${
-                        ESTADO_BADGE[f.estado] ?? "bg-slate-50 text-slate-600 border-slate-200"
-                      }`}
-                    >
-                      {f.estado.replaceAll("_", " ")}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5 text-slate-400 font-mono">
-                    {formatFecha(f.fecha as string)}
-                  </td>
+              grupos.map((g) => (
+                <tr key={g.idCotizacion} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-4 py-3.5 font-mono font-bold text-[#5680F9]">{g.codigoCotizacion}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500">{g.masterCodigo}</td>
+                  <td className="px-4 py-3.5 font-semibold text-slate-700">{g.cliente}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">{g.correo}</td>
+                  <td className="px-4 py-3.5 text-slate-600">{g.totalHijas}</td>
+                  <td className="px-4 py-3.5 text-slate-400 font-mono">{formatFecha(g.fecha as string)}</td>
                   <td className="px-4 py-3.5">
                     <button
-                      onClick={() => setGestionOT({ id: f.id, codigo: f.codigo })}
+                      onClick={() => setGestion({ idCotizacion: g.idCotizacion, codigoCotizacion: g.codigoCotizacion })}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#5680F9] text-white text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:bg-[#4069E2] transition-colors border-none"
                     >
                       <CheckCircle size={12} /> Gestionar
@@ -554,14 +534,15 @@ export function MainRendererenv() {
         <Clock size={12} /> El comprobante se habilita solo cuando todos los certificados están aprobados.
       </div>
 
-      {gestionOT && (
+      {gestion && (
         <GestionPanel
-          key={gestionOT.id}
-          idOT={gestionOT.id}
-          codigoOT={gestionOT.codigo}
-          onClose={() => setGestionOT(null)}
+          key={gestion.idCotizacion}
+          idCotizacion={gestion.idCotizacion}
+          codigoCotizacion={gestion.codigoCotizacion}
+          onClose={() => setGestion(null)}
           onToast={showToast}
           onRefresh={() => loadTable("ordenes_trabajo")}
+          onOpenOt={onOpenOt}
         />
       )}
     </div>

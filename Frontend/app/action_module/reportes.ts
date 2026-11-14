@@ -92,11 +92,11 @@ async function exportarReporte(
   }
 }
 
-export function exportarReportePdf(filtros: FiltrosReporte = {}): Promise<string | null> {
+export async function exportarReportePdf(filtros: FiltrosReporte = {}): Promise<string | null> {
   return exportarReporte("pdf", filtros);
 }
 
-export function exportarReporteExcel(filtros: FiltrosReporte = {}): Promise<string | null> {
+export async function exportarReporteExcel(filtros: FiltrosReporte = {}): Promise<string | null> {
   return exportarReporte("excel", filtros);
 }
 

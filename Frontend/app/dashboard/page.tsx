@@ -118,7 +118,7 @@ const ModuloActivo = ({
     case "calibracion":
       return <CalibracionInformesMockup/>
     case "entrega":
-      return<MainRendererenv/>
+      return<MainRendererenv onOpenOt={onOpenOt} />
     case "reportes":
       return <MainRendererreport/>
     default:

@@ -84,3 +84,79 @@ export async function enviarCertificados(idOT: number): Promise<RespuestaEnvio> 
     return { ok: false, error: (error as Error).message };
   }
 }
+
+// ============================================================================
+// Cotización (agrupa hijas)
+// ============================================================================
+
+export interface OTEnvioCotizacion {
+  idOrdenTrabajo: number;
+  codigo: string;
+  sitioCalibracion: string | null;
+}
+
+export interface CertificadoEnvioCotizacion extends CertificadoEnvio {
+  codigoOT: string;
+}
+
+export interface DocumentosEnvioCotizacion {
+  idCotizacion: number;
+  codigoCotizacion: string | null;
+  masterCodigo: string | null;
+  cliente: string;
+  correo: string | null;
+  todosAprobados: boolean;
+  ots: OTEnvioCotizacion[];
+  certificados: CertificadoEnvioCotizacion[];
+  comprobantes: ComprobanteEnvio[];
+}
+
+export async function getDocumentosEnvioCotizacion(
+  idCotizacion: number
+): Promise<DocumentosEnvioCotizacion | null> {
+  try {
+    const session = await auth();
+    const res = await fastifyRequest<{ ok: boolean; data: DocumentosEnvioCotizacion }>(
+      session,
+      `/api/v1/cotizaciones/${idCotizacion}/documentos-envio`
+    );
+    return res.data ?? null;
+  } catch (error) {
+    console.error('Error al obtener documentos de envío por cotización:', error);
+    return null;
+  }
+}
+
+export async function subirComprobanteCotizacion(
+  idCotizacion: number,
+  file: File
+): Promise<RespuestaEnvio> {
+  try {
+    const session = await auth();
+    const form = new FormData();
+    form.append('comprobante', file, file.name);
+    const res = await fastifyRequest<{ ok: boolean; data: { rutaUrl: string } }>(
+      session,
+      `/api/v1/cotizaciones/${idCotizacion}/comprobante`,
+      { method: 'POST', body: form }
+    );
+    return { ok: true, rutaUrl: res.data?.rutaUrl };
+  } catch (error) {
+    console.error('Error al subir comprobante por cotización:', error);
+    return { ok: false, error: (error as Error).message };
+  }
+}
+
+export async function enviarCertificadosCotizacion(idCotizacion: number): Promise<RespuestaEnvio> {
+  try {
+    const session = await auth();
+    return await fastifyRequest<RespuestaEnvio>(
+      session,
+      `/api/v1/cotizaciones/${idCotizacion}/enviar-certificados`,
+      { method: 'POST' }
+    );
+  } catch (error) {
+    console.error('Error al enviar certificados por cotización:', error);
+    return { ok: false, error: (error as Error).message };
+  }
+}
