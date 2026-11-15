@@ -9,12 +9,20 @@ import { promisify } from 'util';
 import { urls_schema,url } from '../routes/schema-checkStatus.js'; 
 import { firmarTokenAprobacion } from '../lib/approval-token.js';
 import { PDFDocument } from 'pdf-lib';
+import { createRequire } from 'node:module';
 
-// 1. Declaramos el módulo con la ruta exacta para satisfacer al linter de TypeScript
-declare module 'libreoffice-convert/index.js';
+type LibreOfficeConvert = {
+  convert: (
+    document: Buffer,
+    format: string,
+    filter: string | undefined,
+    callback: (error: NodeJS.ErrnoException | null, result: Buffer) => void,
+  ) => void;
+};
 
-// 2. Importamos el paquete apuntando directamente al archivo final (la oficina exacta)
-import { convert } from 'libreoffice-convert/index.js';
+// El paquete publica una definición ambient incorrecta para ESM. Se carga su
+// entrada CommonJS real y se tipa únicamente la función que usa este worker.
+const { convert } = createRequire(import.meta.url)('libreoffice-convert') as LibreOfficeConvert;
   
 const prisma = new PrismaClient();
 

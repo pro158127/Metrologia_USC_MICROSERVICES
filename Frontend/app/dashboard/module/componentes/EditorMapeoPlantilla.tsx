@@ -12,6 +12,18 @@ type ColumnasExcel =
   | Record<string, string>;
 
 const AÑOS_REGEX = /^\d{4}$/;
+type MapeoConfigEditor = MapeoConfigTarifas & { anios: Record<string, string> };
+
+function letraColumna(indice: number): string {
+  let numero = indice + 1;
+  let letras = '';
+  while (numero > 0) {
+    const resto = (numero - 1) % 26;
+    letras = String.fromCharCode(65 + resto) + letras;
+    numero = Math.floor((numero - 1) / 26);
+  }
+  return letras;
+}
 
 function mensajeError(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -25,19 +37,19 @@ function headerColumna(columnasExcel: ColumnasExcel | undefined, idx: number): s
   return col[String(idx)] ?? '';
 }
 
-function detectarAnios(columnasExcel: ColumnasExcel | undefined): Record<string, number> {
-  const anios: Record<string, number> = {};
+function detectarAnios(columnasExcel: ColumnasExcel | undefined): Record<string, string> {
+  const anios: Record<string, string> = {};
   if (!columnasExcel) return anios;
   if (Array.isArray(columnasExcel)) {
     columnasExcel.forEach((v, idx) => {
       const header = String(v).trim();
-      if (AÑOS_REGEX.test(header)) anios[header] = idx;
+      if (AÑOS_REGEX.test(header)) anios[header] = letraColumna(idx);
     });
   } else {
     for (const [k, v] of Object.entries(columnasExcel)) {
       const idx = Number(k);
       const header = String(v).trim();
-      if (!Number.isNaN(idx) && AÑOS_REGEX.test(header)) anios[header] = idx;
+      if (!Number.isNaN(idx) && AÑOS_REGEX.test(header)) anios[header] = letraColumna(idx);
     }
   }
   return anios;
@@ -50,9 +62,10 @@ export function EditorMapeoPlantilla({
   idVersion: number;
   columnasExcel?: ColumnasExcel;
 }) {
-  const [mapeoState, setMapeoState] = useState<MapeoConfigTarifas>(() => ({
+  const [mapeoState, setMapeoState] = useState<MapeoConfigEditor>(() => ({
     filaInicialDatos: 1,
-    columnas: { magnitud: 0, instrumento: 2, norma: 4, tipoServicio: 1 },
+    filaEncabezados: 1,
+    columnas: { magnitud: 'A', instrumento: 'C', norma: 'E', tipoServicio: 'B' },
     anios: detectarAnios(columnasExcel),
   }));
   const [consolidando, setConsolidando] = useState(false);
@@ -73,11 +86,11 @@ export function EditorMapeoPlantilla({
     };
   }, []);
 
-  const setAnio = (anio: string, col: number) => {
+  const setAnio = (anio: string, col: string) => {
     setMapeoState((prev) => ({ ...prev, anios: { ...prev.anios, [anio]: col } }));
   };
 
-  const setColumna = (campo: keyof MapeoConfigTarifas['columnas'], col: number) => {
+  const setColumna = (campo: keyof MapeoConfigTarifas['columnas'], col: string) => {
     setMapeoState((prev) => ({ ...prev, columnas: { ...prev.columnas, [campo]: col } }));
   };
 
@@ -92,7 +105,11 @@ export function EditorMapeoPlantilla({
 
     try {
       // 2. Enviar la configuración del mapeo
-      const res = await consolidarTarifas(idVersion, mapeoState);
+      const { anios, ...configuracion } = mapeoState;
+      const res = await consolidarTarifas(idVersion, {
+        ...configuracion,
+        columnasPrecios: Object.keys(anios).sort().map((anio) => anios[anio]),
+      });
 
       if (!res.success) {
         throw new Error(res.error || 'No se pudo iniciar la consolidación');
@@ -150,15 +167,26 @@ export function EditorMapeoPlantilla({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="flex flex-col gap-1">
+          <span className="text-[11px] font-semibold text-slate-600">Fila de encabezados</span>
+          <input
+            type="number"
+            min={1}
+            value={mapeoState.filaEncabezados}
+            onChange={(e) => setMapeoState((prev) => ({ ...prev, filaEncabezados: Math.max(1, Number(e.target.value) || 1) }))}
+            className="w-full px-3 py-2 rounded-lg text-sm text-slate-900"
+            style={{ border: '1px solid #CBD2E1', outline: 'none', background: '#FFFFFF' }}
+          />
+        </label>
+        <label className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold text-slate-600">Fila inicial de datos</span>
           <input
             type="number"
-            min={0}
+            min={1}
             value={mapeoState.filaInicialDatos}
             onChange={(e) =>
               setMapeoState((prev) => ({
                 ...prev,
-                filaInicialDatos: Number(e.target.value) || 0,
+                filaInicialDatos: Math.max(1, Number(e.target.value) || 1),
               }))
             }
             className="w-full px-3 py-2 rounded-lg text-sm text-slate-900"
@@ -171,7 +199,7 @@ export function EditorMapeoPlantilla({
             <span className="text-[11px] font-semibold text-slate-600 capitalize">{campo}</span>
             <select
               value={mapeoState.columnas[campo] ?? ''}
-              onChange={(e) => setColumna(campo, Number(e.target.value))}
+              onChange={(e) => setColumna(campo, e.target.value)}
               className="w-full px-3 py-2 rounded-lg text-sm text-slate-900"
               style={{ border: '1px solid #CBD2E1', outline: 'none', background: '#FFFFFF' }}
             >
@@ -179,8 +207,8 @@ export function EditorMapeoPlantilla({
                 Seleccionar columna
               </option>
               {cabeceras.map((idx) => (
-                <option key={idx} value={idx}>
-                  {String.fromCharCode(65 + idx)} · {headerColumna(columnasExcel, idx) || '(sin nombre)'}
+                <option key={idx} value={letraColumna(idx)}>
+                  {letraColumna(idx)} · {headerColumna(columnasExcel, idx) || '(sin nombre)'}
                 </option>
               ))}
             </select>
@@ -194,7 +222,7 @@ export function EditorMapeoPlantilla({
         </span>
         {Object.keys(mapeoState.anios).length === 0 && (
           <p className="text-[11px] text-slate-400 italic">
-            No se detectaron años en las cabeceras. Agrégalos manualmente.
+            No se detectaron años en las cabeceras. Verifica el archivo y las cabeceras antes de consolidar.
           </p>
         )}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -203,13 +231,13 @@ export function EditorMapeoPlantilla({
               <span className="text-[11px] font-semibold text-slate-600">Año {anio}</span>
               <select
                 value={col}
-                onChange={(e) => setAnio(anio, Number(e.target.value))}
+                onChange={(e) => setAnio(anio, e.target.value)}
                 className="w-full px-3 py-2 rounded-lg text-sm text-slate-900"
                 style={{ border: '1px solid #CBD2E1', outline: 'none', background: '#FFFFFF' }}
               >
                 {cabeceras.map((idx) => (
-                  <option key={idx} value={idx}>
-                    {String.fromCharCode(65 + idx)} · {headerColumna(columnasExcel, idx) || '(sin nombre)'}
+                  <option key={idx} value={letraColumna(idx)}>
+                    {letraColumna(idx)} · {headerColumna(columnasExcel, idx) || '(sin nombre)'}
                   </option>
                 ))}
               </select>

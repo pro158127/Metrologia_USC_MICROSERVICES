@@ -124,7 +124,7 @@ const KpiGridSection: React.FC<KpiGridSectionProps> = ({ kpiData }) => {
 const PendingCertificatesSection: React.FC<PendingCertsTableProps & {
   title?: string;
   subtitle?: string;
-  navigateTo?: string;
+  navigateTo?: Parameters<PendingCertsTableProps["onNavigate"]>[0];
   actionLabel?: string;
 }> = ({
   onNavigate,
@@ -456,7 +456,12 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const esTecnico = rol === "Técnico";
   const esSecretaria = rol === "Secretaria";
 
-  const pendingSection = useMemo(() => {
+  const pendingSection = useMemo<{
+    title: string;
+    subtitle: string;
+    navigateTo: Parameters<PendingCertsTableProps["onNavigate"]>[0];
+    actionLabel: string;
+  }>(() => {
     if (esTecnico) {
       return {
         title: "Instrumentos para calibración",
