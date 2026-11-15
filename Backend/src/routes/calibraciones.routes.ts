@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { uploadBuffer } from '../lib/minioClient.js';
@@ -171,6 +172,7 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
       schema: { params: idInstrumentoParamsSchema },
     },
     async (request) => {
+      assertPermission(request, 'calibracion_e_informes', 'adjuntar_pdf');
       const idInstrumento = request.params.idInstrumento;
       const idUsuario = Number(request.user?.sub ?? 0);
 

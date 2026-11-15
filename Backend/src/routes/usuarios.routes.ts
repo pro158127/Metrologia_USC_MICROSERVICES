@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import { hashPassword, generarContrasenaTemporalSegura } from '../services/password.service.js';
 import { getEmailQueue } from '../lib/queue/queue.js';
 import {
@@ -57,7 +58,8 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
         response: { 200: respuestaListaUsuariosSchema },
       },
     },
-    async () => {
+    async (request) => {
+      assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       const usuarios = await fastify.prisma.usuarios.findMany({
         include: { roles: true },
         orderBy: { CREATED_AT: 'desc' },
@@ -79,6 +81,7 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       const { nombre, correo, idRol, estado } = request.body;
 
       const contraseñaTemporal = generarContrasenaTemporalSegura();
@@ -142,6 +145,7 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       const idUsuario = request.params.id;
       const datos = request.body;
 
@@ -189,6 +193,7 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       console.log('ENTRO A L ARUTA');
       const idUsuario = request.params.id;
       const userId = Number(request.user?.sub ?? 0);
@@ -233,6 +238,7 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       const idUsuario = request.params.id;
 
       const existente = await fastify.prisma.usuarios.findUnique({
@@ -273,6 +279,7 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       const idUsuario = request.params.id;
 
       const usuario = await fastify.prisma.usuarios.findUnique({
@@ -333,7 +340,8 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
         response: { 200: respuestaListaRolesSchema },
       },
     },
-    async () => {
+    async (request) => {
+      assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       const roles = await fastify.prisma.roles.findMany({
         orderBy: { ID_ROL_INCREMENT: 'asc' },
       });
@@ -352,7 +360,8 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
         response: { 200: respuestaListaBitacoraSchema },
       },
     },
-    async () => {
+    async (request) => {
+      assertPermission(request, 'administracion', 'consultar_bitacora_auditoria');
       const logs = await fastify.prisma.audit_logs.findMany({
         include: { usuarios: { include: { roles: true } } },
         orderBy: { createdAt: 'desc' },

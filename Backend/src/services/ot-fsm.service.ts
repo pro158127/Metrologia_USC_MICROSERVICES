@@ -41,12 +41,6 @@ function parseEstadoIbc(raw: Prisma.JsonValue | null | undefined): EstadoIbcNorm
   return { entrada, salida };
 }
 
-/** `estado_ibc_entrada` presente: al menos un flag de la entrada en `true`. */
-export function entradaIbcPresente(raw: Prisma.JsonValue | null | undefined): boolean {
-  const { entrada } = parseEstadoIbc(raw);
-  return Object.values(entrada).some((v) => v === true);
-}
-
 /**
  * Información del instrumento "llena", ignorando `numero_estampilla` (ESTAMPILLA)
  * y `numero_inventario` (CODIGO_INVENTARIO).
@@ -56,10 +50,23 @@ export function instrumentoRecepcionCompleto(det: {
   MARCA?: string | null;
   MODELO?: string | null;
   SERIE?: string | null;
+  CODIGO_INVENTARIO?: string | null;
   RESOLUCION?: string | null;
 }): boolean {
-  const requeridos = [det.INSTRUMENTO, det.MARCA, det.MODELO, det.SERIE, det.RESOLUCION];
+  const requeridos = [
+    det.INSTRUMENTO,
+    det.MARCA,
+    det.MODELO,
+    det.SERIE,
+    det.CODIGO_INVENTARIO,
+    det.RESOLUCION,
+  ];
   return requeridos.every((v) => v != null && String(v).trim() !== '');
+}
+
+function entradaIbcCompleta(raw: Prisma.JsonValue | null | undefined): boolean {
+  const { entrada } = parseEstadoIbc(raw);
+  return ['E', 'T', 'D', 'A'].every((key) => typeof entrada[key] === 'boolean');
 }
 
 export interface ResultadoFSM {
@@ -108,7 +115,15 @@ export async function evaluarTransicionesOT(
     where: { ID_ORDEN_TRABAJO: idOT },
     include: {
       orden_trabajo_detalles: true,
-      recepciones_equipo: { include: { recepcion_equipo_detalles: true } },
+      recepciones_equipo: {
+        where: { VIGENTE: true, activacion: { not: false } },
+        orderBy: { VERSION: 'desc' },
+        include: {
+          recepcion_equipo_detalles: {
+            where: { OR: [{ activacion: true }, { activacion: null }] },
+          },
+        },
+      },
     },
   });
 
@@ -139,13 +154,22 @@ export async function evaluarTransicionesOT(
 
   const hayInstrumentos = otDetallesActivos.length > 0;
 
+  const instrumentosRecepcionOk =
+    pares.length > 0 &&
+    pares.every(
+      ({ recDet }) =>
+        recDet != null &&
+        instrumentoRecepcionCompleto(recDet) &&
+        entradaIbcCompleta(recDet.ESTADO_IBC),
+    );
+
   const recepcionOk =
     !!recepcion &&
     recepcion.FECHA_RECEPCION != null &&
     nombreLleno(recepcion.NOMBRE_ENTREGA) &&
     nombreLleno(recepcion.NOMBRE_RECIBE) &&
     hayInstrumentos &&
-    pares.some((p) => p.recDet != null && entradaIbcPresente(p.recDet.ESTADO_IBC));
+    instrumentosRecepcionOk;
 
   const todosConTecnico =
     hayInstrumentos &&

@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { FrecuenciaEjecucion } from '@prisma/client';
+import { assertPermission } from '../lib/permissions.js';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { getCronQueue, patronCronRespaldo } from '../lib/queue/queue.js';
 import {
@@ -44,6 +45,7 @@ export default async function parametrosSistemaRoutes(fastify: FastifyInstance) 
       },
     },
     async (request) => {
+      assertPermission(request, 'administracion', 'configurar_catalogo_parametros');
       const { parametros } = request.body;
 
       for (const p of parametros) {

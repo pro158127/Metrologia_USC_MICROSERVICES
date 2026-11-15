@@ -836,6 +836,25 @@ export default function Cotizaciones() {
       showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
       return;
     }
+
+    // Validar que no haya filas incompletas
+    const incompletas = items.some((i) => !i.instrumento?.trim() || !i.tipoServicio?.trim() || !i.magnitud?.trim());
+    if (incompletas) {
+      showToast("⚠️ Todos los ítems deben tener servicio, magnitud e instrumento seleccionados.");
+      return;
+    }
+
+    // Validar tuplas únicas (instrumento + tipoServicio + lugarCalibracion)
+    const tuplasVistas = new Set<string>();
+    for (const item of items) {
+      const clave = `${item.instrumento.trim().toLowerCase()}|${item.tipoServicio.trim().toLowerCase()}|${item.lugarCalibracion}`;
+      if (tuplasVistas.has(clave)) {
+        showToast(`⚠️ El instrumento "${item.instrumento}" con servicio "${item.tipoServicio}" en "${item.lugarCalibracion}" está duplicado. Ajuste la cantidad en una sola fila.`);
+        return;
+      }
+      tuplasVistas.add(clave);
+    }
+
     setIsSaving(true);
     try {
       const res = await crearCotizacion({
@@ -910,6 +929,25 @@ export default function Cotizaciones() {
 
   const saveNewVersion = useCallback(async (_auditForm: cambiospayload) => {
     if (!selectedQuotation) return;
+
+    // Validar que no haya filas incompletas
+    const incompletas = modalItems.some((i) => !i.instrumento?.trim() || !i.tipoServicio?.trim() || !i.magnitud?.trim());
+    if (incompletas) {
+      showToast("⚠️ Todos los ítems deben tener servicio, magnitud e instrumento seleccionados.");
+      return;
+    }
+
+    // Validar tuplas únicas (instrumento + tipoServicio + lugarCalibracion)
+    const tuplasVistas = new Set<string>();
+    for (const item of modalItems) {
+      const clave = `${item.instrumento.trim().toLowerCase()}|${item.tipoServicio.trim().toLowerCase()}|${item.lugarCalibracion}`;
+      if (tuplasVistas.has(clave)) {
+        showToast(`⚠️ El instrumento "${item.instrumento}" con servicio "${item.tipoServicio}" en "${item.lugarCalibracion}" está duplicado. Ajuste la cantidad en una sola fila.`);
+        return;
+      }
+      tuplasVistas.add(clave);
+    }
+
     setIsSaving(true);
     try {
       const res = await actualizarCotizacion({
@@ -987,6 +1025,20 @@ const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
       fila.lugarCalibracion = "Laboratorio";
     }
   } else if (propiedad === "instrumento") {
+    const nuevoInst = (valor as string).trim();
+    if (nuevoInst) {
+      const yaExisteIdentico = listaOrigen.some(
+        (f, i) =>
+          i !== index &&
+          f.instrumento?.trim().toLowerCase() === nuevoInst.toLowerCase() &&
+          f.tipoServicio?.trim().toLowerCase() === fila.tipoServicio?.trim().toLowerCase() &&
+          f.lugarCalibracion === fila.lugarCalibracion
+      );
+      if (yaExisteIdentico) {
+        showToast(`⚠️ El instrumento "${nuevoInst}" ya está cotizado para "${fila.tipoServicio}" en ${fila.lugarCalibracion}. Modifique la cantidad en esa fila.`);
+        return;
+      }
+    }
     fila.instrumento = valor as string;
     const tarifaEncontrada = tarifasOptions.find(
       (t) =>
@@ -1001,6 +1053,22 @@ const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
       fila.norma = "N/A";
       fila.valorUnitario = 0;
     }
+  } else if (propiedad === "lugarCalibracion") {
+    const nuevoLugar = valor as QuoteItem["lugarCalibracion"];
+    if (fila.instrumento) {
+      const yaExisteIdentico = listaOrigen.some(
+        (f, i) =>
+          i !== index &&
+          f.instrumento?.trim().toLowerCase() === fila.instrumento.trim().toLowerCase() &&
+          f.tipoServicio?.trim().toLowerCase() === fila.tipoServicio?.trim().toLowerCase() &&
+          f.lugarCalibracion === nuevoLugar
+      );
+      if (yaExisteIdentico) {
+        showToast(`⚠️ Ya existe una fila para "${fila.instrumento}" en ${nuevoLugar} con servicio "${fila.tipoServicio}". Modifique la cantidad en esa fila.`);
+        return;
+      }
+    }
+    fila.lugarCalibracion = nuevoLugar;
   } else {
     // 👈 Solución: Mutamos directamente el borrador 'fila'
     fila[propiedad] = valor;
@@ -1011,7 +1079,7 @@ const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
 
   if (target === "create") setItems(filasActualizadas);
   else setModalItems(filasActualizadas);
-}, [items, modalItems, tarifasOptions]);
+}, [items, modalItems, tarifasOptions, showToast]);
 
   // ==========================================
   // DATOS DERIVADOS (useMemo)

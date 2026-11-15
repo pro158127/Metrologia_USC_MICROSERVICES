@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
@@ -33,7 +34,16 @@ const REC_INCLUDE = {
   recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
   documentos: true,
   cotizaciones: { include: { clientes: true } },
-  ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
+  ordenes_trabajo: {
+    include: {
+      clientes: true,
+      cotizaciones: true,
+      orden_trabajo_detalles: {
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+        include: { usuarios: { select: { NOMBRE_COMPLETO: true } } },
+      },
+    },
+  },
 } satisfies Prisma.recepciones_equipoInclude;
 
 /** Normaliza el sitio de calibración al enum `sitio_calibracion`. */
@@ -48,6 +58,18 @@ function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' {
 function parseVersion(numeroVersion?: string | null): number {
   const match = numeroVersion?.match(/V?(\d+)/i);
   return match ? Number(match[1]) : 0;
+}
+
+function validarRecepcionDefinitiva(body: InstrumentoInput[], cabecera: { nombreEntrega?: string | null; fechaRecepcion?: string | null }) {
+  return Boolean(
+    cabecera.nombreEntrega?.trim() && cabecera.fechaRecepcion && body.length > 0 &&
+    body.every((inst) => {
+      const entrada = (inst.estadoIBC as any)?.entrada;
+      return [inst.instrumento, inst.marca, inst.modelo, inst.serie, inst.codigoInventario, inst.resolucion]
+        .every((v) => v != null && String(v).trim() !== '') &&
+        ['E', 'T', 'D', 'A'].every((k) => typeof entrada?.[k] === 'boolean');
+    })
+  );
 }
 
 /** Nombre del usuario autenticado (para autocompletar NOMBRE_RECIBE). */
@@ -112,7 +134,16 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         include: {
           recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
           cotizaciones: { include: { clientes: true } },
-          ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
+          ordenes_trabajo: {
+            include: {
+              clientes: true,
+              cotizaciones: true,
+              orden_trabajo_detalles: {
+                where: { OR: [{ activacion: true }, { activacion: null }] },
+                include: { usuarios: { select: { NOMBRE_COMPLETO: true } } },
+              },
+            },
+          },
           documentos: true,
         },
         orderBy: { FECHA_RECEPCION: 'desc' },
@@ -220,7 +251,11 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const body = request.body;
+      if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
+        throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
+      }
       const idUsuario = Number(request.user?.sub ?? 0);
 
       const recepcion = await fastify.prisma.$transaction(async (tx) => {
@@ -366,8 +401,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const { id } = request.params;
       const body = request.body;
+      if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
+        throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
+      }
       const idUsuario = Number(request.user?.sub ?? 0);
 
       const recepcion = await fastify.prisma.$transaction(async (tx) => {
@@ -597,6 +636,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const { id, idInstrumento } = request.params;
       const idUsuario = Number(request.user?.sub ?? 0);
       const ip = request.ip;
@@ -798,6 +838,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const idUsuario = Number(request.user?.sub ?? 0);
       const ip = request.ip;
       const motivo = request.body?.descripcion ?? null;

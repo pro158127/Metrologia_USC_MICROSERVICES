@@ -12,24 +12,40 @@ export type EstadosZod = z.infer<typeof estadosEnum>;
 // ============================================================
 export const detalleInputSchema = z.object({
   idDetalle: z.number().optional(), // Si no viene, significa que es un ítem nuevo agregado en la edición
-  equipoDescripcion: z.string(),
-  tipoServicio: z.string(),
-  magnitud: z.string(),
+  equipoDescripcion: z.string().trim().min(1),
+  tipoServicio: z.string().trim().min(1),
+  magnitud: z.string().trim().min(1),
   normaTecnica: z.string().nullish(),
-  cantidad: z.number(),
-  valorUnitario: z.number(),
+  cantidad: z.number().int().min(1),
+  valorUnitario: z.number().min(0),
   sitio: z.enum(['LABORATORIO', 'CLIENTE']).optional(),
 });
 export type DetalleInput = z.infer<typeof detalleInputSchema>;
 
-export const crearCotizacionBodySchema = z.object({
-  codigo: z.string().optional(),
-  idCliente: z.number(),
-  viaticos: z.number().optional(),
-  descuento: z.number().optional(),
-  estado: estadosEnum.optional(),
-  detalles: z.array(detalleInputSchema).min(1),
-});
+export const crearCotizacionBodySchema = z
+  .object({
+    codigo: z.string().optional(),
+    idCliente: z.number(),
+    viaticos: z.number().min(0).optional(),
+    descuento: z.number().min(0).max(100).optional(),
+    estado: z.enum(['BORRADOR', 'ENVIADA']).optional(),
+    detalles: z.array(detalleInputSchema).min(1),
+  })
+  .superRefine((data, ctx) => {
+    const tuplasVistas = new Set<string>();
+    data.detalles.forEach((d, idx) => {
+      const sitio = d.sitio ?? 'LABORATORIO';
+      const clave = `${d.equipoDescripcion.trim().toLowerCase()}|${d.tipoServicio.trim().toLowerCase()}|${sitio}`;
+      if (tuplasVistas.has(clave)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `El instrumento "${d.equipoDescripcion}" con servicio "${d.tipoServicio}" en sitio "${sitio}" ya está agregado. Aumente la cantidad en la fila existente en lugar de duplicarla.`,
+          path: ['detalles', idx, 'equipoDescripcion'],
+        });
+      }
+      tuplasVistas.add(clave);
+    });
+  });
 export type CrearCotizacionBody = z.infer<typeof crearCotizacionBodySchema>;
 
 
@@ -336,16 +352,33 @@ export const historialCambioInputSchema = z.object({
 });
 
 // 2. Tu payload corregido usando el esquema de Input
-export const actualizarCotizacionBodySchema = z.object({
-  idCotizacion: z.number(),
-  codigo: z.string().optional(),
-  idCliente: z.number().optional(),
-  estado: estadosEnum.optional(),
-  viaticos: z.number().optional(),
-  descuento: z.number().optional(),
-  detalles: z.array(detalleInputSchema).optional(),
-  cambios: historialCambioInputSchema // 🔥 Usamos el Input, no el DTO
-});
+export const actualizarCotizacionBodySchema = z
+  .object({
+    idCotizacion: z.number(),
+    codigo: z.string().optional(),
+    idCliente: z.number().optional(),
+    estado: estadosEnum.optional(),
+    viaticos: z.number().min(0).optional(),
+    descuento: z.number().min(0).max(100).optional(),
+    detalles: z.array(detalleInputSchema).optional(),
+    cambios: historialCambioInputSchema // 🔥 Usamos el Input, no el DTO
+  })
+  .superRefine((data, ctx) => {
+    if (!data.detalles) return;
+    const tuplasVistas = new Set<string>();
+    data.detalles.forEach((d, idx) => {
+      const sitio = d.sitio ?? 'LABORATORIO';
+      const clave = `${d.equipoDescripcion.trim().toLowerCase()}|${d.tipoServicio.trim().toLowerCase()}|${sitio}`;
+      if (tuplasVistas.has(clave)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `El instrumento "${d.equipoDescripcion}" con servicio "${d.tipoServicio}" en sitio "${sitio}" ya está agregado. Aumente la cantidad en la fila existente en lugar de duplicarla.`,
+          path: ['detalles', idx, 'equipoDescripcion'],
+        });
+      }
+      tuplasVistas.add(clave);
+    });
+  });
 
 export type ActualizarCotizacionBody = z.infer<typeof actualizarCotizacionBodySchema>;
 export const documentoRawToDtoSchema = z

@@ -20,6 +20,7 @@ import {
   validarAsignacionPermitida,
 } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
+import { assertPermission } from '../lib/permissions.js';
 export default async function ordenesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
@@ -30,7 +31,8 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
     {
       preHandler: [
         fastify.authenticate,
-        async () => {
+        async (request) => {
+          assertPermission(request, 'ordenesOt', 'acceso');
           await verificarPlantillasOperativas(fastify.prisma);
         },
       ],
@@ -96,7 +98,8 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
         response: { 200: datosInicialesResponseSchema },
       },
     },
-    async () => {
+    async (request) => {
+      assertPermission(request, 'ordenes_de_trabajo', 'ver_listado');
       const [ordenes, clientes, usuarios, roles, tarifas, version] = await Promise.all([
         fastify.prisma.ordenes_trabajo.findMany({
           include: {
@@ -148,6 +151,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
+      assertPermission(request, 'ordenes_de_trabajo', 'crear_editar');
       const { id } = request.params;
       const data = request.body;
       const idUsuario = Number(request.user?.sub ?? 0);
@@ -216,6 +220,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
               const tecnicoCambia =
                 detalleActual != null && asignadoFinal !== detalleActual.asignado;
               if (tecnicoCambia) {
+                assertPermission(request, 'ordenes_de_trabajo', 'asignar_tecnico');
                 await validarAsignacionPermitida(tx, id);
               }
 
@@ -226,6 +231,9 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
               usados.add(inst.idDetalle);
             } else {
               // Instrumento nuevo agregado en el formulario de la OT
+              if (asignadoFinal != null) {
+                assertPermission(request, 'ordenes_de_trabajo', 'asignar_tecnico');
+              }
               const nuevo = await tx.orden_trabajo_detalles.create({
                 data: { ID_ORDEN_TRABAJO_FK: id, ...campos },
               });

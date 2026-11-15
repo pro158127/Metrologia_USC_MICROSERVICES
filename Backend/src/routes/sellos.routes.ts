@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { PDFDocument } from 'pdf-lib';
 import { AppError } from '../lib/errors.js';
+import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { composeCertificate } from '../services/pdf-stamper.service.js';
 import {
   deleteObject,
@@ -211,6 +212,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       schema: { response: { 201: respuestaPlantillaSelloSchema } },
     },
     async (request, reply) => {
+      assertPermission(request, 'firma_sello_y_certificacion', 'configurar_sello_logo_plantilla');
       const { fields, fileBuffer, fileMime, fileName } = await readMultipart(request);
 
       const nombre = fields.nombre || 'Sin nombre';
@@ -259,6 +261,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'firma_sello_y_certificacion', 'configurar_sello_logo_plantilla');
       const existing = await fastify.prisma.plantillas_sellos.findUnique({
         where: { ID_PLANTILLA_SELLO: request.params.id },
       });
@@ -324,6 +327,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'firma_sello_y_certificacion', 'configurar_sello_logo_plantilla');
       const existing = await fastify.prisma.plantillas_sellos.findUnique({
         where: { ID_PLANTILLA_SELLO: request.params.id },
       });
@@ -349,6 +353,10 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       schema: { response: { 202: respuestaStampSchema } },
     },
     async (request, reply) => {
+      assertAnyPermission(request, [
+        ['firma_sello_y_certificacion', 'firmar_sellar_acreditados'],
+        ['firma_sello_y_certificacion', 'firmar_sellar_no_acreditados'],
+      ]);
       const { fields, fileBuffer, fileMime, fileName } = await readMultipart(request);
 
       const selloId = Number(fields.selloId);
@@ -437,6 +445,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
     '/api/v1/sellos/preview-stamp',
     { preHandler: [fastify.authenticate] },
     async (request, reply) => {
+      assertPermission(request, 'firma_sello_y_certificacion', 'configurar_sello_logo_plantilla');
       const fields: Record<string, string> = {};
       let documentBuffer: Buffer | null = null;
       let templateBuffer: Buffer | null = null;

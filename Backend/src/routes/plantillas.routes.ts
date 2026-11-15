@@ -3,6 +3,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import { s3Client, BUCKET_NAME } from '../lib/s3Client.js';
 import {
   getSnapshotQueue,
@@ -57,6 +58,7 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
+      assertPermission(request, 'administracion', 'configurar_plantillas_documentos');
       const created = await fastify.prisma.plantillas.create({
         data: {
           MODULO: request.body.modulo,
@@ -253,6 +255,7 @@ export default async function plantillasRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'administracion', 'configurar_plantillas_documentos');
       const versionId = request.params.versionId;
       const { version, mappingConfig, inputSchema } = request.body ?? {};
 
@@ -317,6 +320,7 @@ app.post(
       },
     },
     async (request, reply) => {
+      assertPermission(request, 'administracion', 'configurar_plantillas_documentos');
       const idPlantilla = request.params.id;
       if (idPlantilla <= 0) {
         throw new AppError(400, 'idPlantilla inválido.');
@@ -476,6 +480,7 @@ app.post(
       },
     },
     async (request, reply) => {
+      assertPermission(request, 'cotizaciones', 'gestionar_catalogo_tarifas');
       const versionId = request.params.versionId;
       const { mapeoConfig } = request.body;
 

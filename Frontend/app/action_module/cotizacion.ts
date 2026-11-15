@@ -41,6 +41,21 @@ export async function crearCotizacion(
   const idUsuario = session?.user?.id_user;
   if (!idUsuario) return { ok: false, error: 'No se pudo identificar al usuario' };
 
+  if (data.detalles && data.detalles.length > 0) {
+    const tuplasVistas = new Set<string>();
+    for (const d of data.detalles) {
+      const sitio = d.sitio ?? 'LABORATORIO';
+      const clave = `${d.equipoDescripcion.trim().toLowerCase()}|${d.tipoServicio.trim().toLowerCase()}|${sitio}`;
+      if (tuplasVistas.has(clave)) {
+        return {
+          ok: false,
+          error: `El instrumento "${d.equipoDescripcion}" con servicio "${d.tipoServicio}" en sitio "${sitio}" ya está agregado. Aumente la cantidad en una sola fila.`,
+        };
+      }
+      tuplasVistas.add(clave);
+    }
+  }
+
   try {
     const res = await fastifyRequest<ActionResponse<CotizacionConDetalles>>(
       session,
@@ -120,6 +135,21 @@ export async function actualizarCotizacion(
   const session = await auth();
   const idUsuario = session?.user?.id_user;
   if (!idUsuario) return { ok: false, error: 'No se pudo identificar al usuario' };
+
+  if (data.detalles && data.detalles.length > 0) {
+    const tuplasVistas = new Set<string>();
+    for (const d of data.detalles) {
+      const sitio = d.sitio ?? 'LABORATORIO';
+      const clave = `${d.equipoDescripcion.trim().toLowerCase()}|${d.tipoServicio.trim().toLowerCase()}|${sitio}`;
+      if (tuplasVistas.has(clave)) {
+        return {
+          ok: false,
+          error: `El instrumento "${d.equipoDescripcion}" con servicio "${d.tipoServicio}" en sitio "${sitio}" ya está agregado. Aumente la cantidad en una sola fila.`,
+        };
+      }
+      tuplasVistas.add(clave);
+    }
+  }
 
   try {
     const res = await fastifyRequest<ActionResponse<CotizacionConDetalles>>(

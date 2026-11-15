@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { Estados, Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import {
   actualizarClienteBodySchema,
   cambiarEstadoClienteBodySchema,
@@ -34,7 +35,8 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
         response: { 200: respuestaListaClientesSchema },
       },
     },
-    async () => {
+    async (request) => {
+      assertPermission(request, 'clientes', 'consultar');
       const clientes = await fastify.prisma.clientes.findMany({});
 
       return { ok: true as const, data: clientes.map((c) => clienteRawToDtoSchema.parse(c)) };
@@ -51,6 +53,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'clientes', 'crear_editar');
       const body = request.body;
 
       const existeNit = await fastify.prisma.clientes.findUnique({
@@ -89,6 +92,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'clientes', 'consultar');
       const clienteId = request.params.id;
 
       const cotizacion = await fastify.prisma.cotizaciones.findFirst({
@@ -123,6 +127,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'clientes', 'crear_editar');
       const idCliente = request.params.id;
       const body = request.body;
 
@@ -172,6 +177,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'clientes', 'desactivar');
       const idCliente = request.params.id;
 
       const clienteActualizado = await fastify.prisma.clientes.update({
@@ -196,10 +202,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
-      const permisos = request.user?.user?.permissions?.permisos?.clientes;
-      if (!permisos?.desactivar) {
-        throw new AppError(403, 'Sin permisos para desactivar clientes.');
-      }
+      assertPermission(request, 'clientes', 'desactivar');
 
       // Soft delete: no se elimina físicamente (integridad referencial).
       await fastify.prisma.clientes.update({
@@ -221,6 +224,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'clientes', 'consultar');
       const idCliente = request.params.id;
 
       const cliente = await fastify.prisma.clientes.findUnique({
@@ -380,6 +384,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'clientes', 'crear_editar');
       const body = request.body;
 
       if (!body.nombre || !body.rutaUrl || !body.mimeType) {

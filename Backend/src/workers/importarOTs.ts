@@ -841,8 +841,20 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       // ==============================================================
       // 5. COTIZACIÓN
       // ==============================================================
-      const normalizarSitio = (raw?: string | null): SitioCalibracion =>
-        raw && String(raw).toUpperCase().startsWith('CLI') ? 'CLIENTE' : 'LABORATORIO';
+      const normalizarSitio = (raw?: string | null): SitioCalibracion => {
+        if (!raw) return 'LABORATORIO';
+        const s = String(raw).trim().toUpperCase();
+        if (
+          s.startsWith('CLI') ||
+          s.startsWith('SIT') ||
+          s.includes('CAMPO') ||
+          s.includes('IN SITU') ||
+          s.includes('CLIENTE')
+        ) {
+          return 'CLIENTE';
+        }
+        return 'LABORATORIO';
+      };
 
       if (!idCotizacionFinal) {
         isCotizacionNueva = true;
@@ -952,41 +964,82 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         }
 
         // 2. Resolver cada instrumento del Excel contra las líneas de la
-        //    cotización por coincidencia exacta de nombre (normalizado).
+        //    cotización por coincidencia de nombre y control de cupos (quota-aware matching).
         const lineasCotizacion = cotizacionExistente.cotizacion_detalles;
 
-        const lineasPorNombre = new Map<string, typeof lineasCotizacion>();
+        interface LineaControl {
+          idDetalle: number;
+          linea: (typeof lineasCotizacion)[number];
+          esperado: number;
+          asignados: number;
+        }
+
+        const lineasControl = new Map<number, LineaControl>();
+        for (const d of lineasCotizacion) {
+          lineasControl.set(d.ID_DETALLE, {
+            idDetalle: d.ID_DETALLE,
+            linea: d,
+            esperado: d.CANTIDAD || 0,
+            asignados: 0,
+          });
+        }
+
+        const lineasPorNombre = new Map<string, LineaControl[]>();
         for (const d of lineasCotizacion) {
           const nombre = normalizar(d.EQUIPO_DESCRIPCION);
           const lista = lineasPorNombre.get(nombre) ?? [];
-          lista.push(d);
+          const control = lineasControl.get(d.ID_DETALLE);
+          if (control) lista.push(control);
           lineasPorNombre.set(nombre, lista);
         }
 
-        const conteoImportado = new Map<string, number>();
         for (const item of datosExtraidos.tablas) {
           const nombre = normalizar(item.instrumento);
 
-          const lineas = lineasPorNombre.get(nombre);
-          if (!lineas || lineas.length === 0) {
+          const candidatos = lineasPorNombre.get(nombre);
+          if (!candidatos || candidatos.length === 0) {
             throw new Error(
               `Validación fallida: el instrumento '${item.instrumento}' no existe en la cotización '${cotizacionExistente.CODIGO_COTIZACION}'.`,
             );
           }
 
-          // Desambiguar por sitio cuando el mismo nombre aparece en varias
-          // líneas (LABORATORIO vs CLIENTE).
-          let linea: (typeof lineas)[number] | undefined;
-          if (lineas.length === 1) {
-            linea = lineas[0];
-          } else {
-            const sitioExcel = normalizarSitio(item.sitio);
-            linea =
-              lineas.find((d) => normalizarSitio(d.sitio) === sitioExcel) ??
-              lineas[0];
+          const sitioExcel = item.sitio ? normalizarSitio(item.sitio) : null;
+          const tipoExcel = normalizar(item.tipo_servicio_real || item.tipo_servicio || '');
+
+          // Algoritmo de emparejamiento con control de cupos y afinidad:
+          // 1. Candidato con cupo disponible (asignados < esperado), coincidencia de sitio y tipo de servicio
+          let seleccionado = candidatos.find(
+            (c) =>
+              c.asignados < c.esperado &&
+              (sitioExcel ? normalizarSitio(c.linea.sitio) === sitioExcel : true) &&
+              (tipoExcel ? normalizar(c.linea.TIPO_SERVICIO) === tipoExcel : true)
+          );
+
+          // 2. Candidato con cupo disponible y coincidencia de sitio
+          if (!seleccionado && sitioExcel) {
+            seleccionado = candidatos.find(
+              (c) => c.asignados < c.esperado && normalizarSitio(c.linea.sitio) === sitioExcel
+            );
           }
 
-          // Nombre, tipo, magnitud y precio desde la cotización.
+          // 3. Cualquier candidato del mismo instrumento con cupo disponible
+          if (!seleccionado) {
+            seleccionado = candidatos.find((c) => c.asignados < c.esperado);
+          }
+
+          // 4. Fallback si ya todos los cupos fueron cubiertos (exceso de items en archivo):
+          //    asignar al mejor candidato por sitio o al primero
+          if (!seleccionado) {
+            seleccionado =
+              candidatos.find(
+                (c) => sitioExcel && normalizarSitio(c.linea.sitio) === sitioExcel
+              ) ?? candidatos[0];
+          }
+
+          seleccionado.asignados += 1;
+          const linea = seleccionado.linea;
+
+          // Nombre, tipo, magnitud y precio desde la línea de cotización resuelta
           item.instrumento = linea.EQUIPO_DESCRIPCION;
           item.instrumento_tarifa = linea.EQUIPO_DESCRIPCION;
           item.tipo_servicio = linea.TIPO_SERVICIO;
@@ -994,26 +1047,25 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           item.magnitud_real = linea.MAGNITUD;
           item.valor_estimado = Number(linea.VALOR_UNITARIO);
           item.sitio = normalizarSitio(linea.sitio);
-
-          const clave = `${normalizar(linea.EQUIPO_DESCRIPCION)}|${normalizarSitio(linea.sitio)}`;
-          conteoImportado.set(clave, (conteoImportado.get(clave) ?? 0) + 1);
         }
 
         // 3. Cantidad exacta: lo importado debe igualar la CANTIDAD de cada línea.
         const discrepancias: {
           instrumento: string;
+          sitio: string;
+          tipoServicio: string;
           esperado: number;
           encontrado: number;
         }[] = [];
-        for (const d of lineasCotizacion) {
-          const clave = `${normalizar(d.EQUIPO_DESCRIPCION)}|${normalizarSitio(d.sitio)}`;
-          const esperado = d.CANTIDAD || 0;
-          const encontrado = conteoImportado.get(clave) ?? 0;
-          if (esperado !== encontrado) {
+
+        for (const control of lineasControl.values()) {
+          if (control.esperado !== control.asignados) {
             discrepancias.push({
-              instrumento: d.EQUIPO_DESCRIPCION,
-              esperado,
-              encontrado,
+              instrumento: control.linea.EQUIPO_DESCRIPCION,
+              sitio: normalizarSitio(control.linea.sitio),
+              tipoServicio: control.linea.TIPO_SERVICIO,
+              esperado: control.esperado,
+              encontrado: control.asignados,
             });
           }
         }

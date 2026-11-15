@@ -3,6 +3,7 @@ import { Estados, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import {
   actualizarCotizacionBodySchema,
   cambiarEstadoBodySchema,
@@ -109,8 +110,26 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         response: { 200: respuestaCotizacionSchema },
       },
     },
-   async (request) => {
+    async (request) => {
+      assertPermission(request, 'cotizaciones', 'crear_editar');
+      if ((request.body.estado ?? Estados.BORRADOR) === Estados.ENVIADA) {
+        assertPermission(request, 'cotizaciones', 'enviar_al_cliente');
+      }
       const idUsuario = Number(request.user?.sub ?? 0);
+
+      // Validación de tupla única (instrumento + tipoServicio + sitio)
+      const tuplasVistas = new Set<string>();
+      for (const d of request.body.detalles) {
+        const sitio = d.sitio ?? 'LABORATORIO';
+        const clave = `${d.equipoDescripcion.trim().toLowerCase()}|${d.tipoServicio.trim().toLowerCase()}|${sitio}`;
+        if (tuplasVistas.has(clave)) {
+          throw new AppError(
+            400,
+            `El instrumento "${d.equipoDescripcion}" con servicio "${d.tipoServicio}" en "${sitio}" ya está agregado. Aumente la cantidad en la fila existente en lugar de duplicarla.`
+          );
+        }
+        tuplasVistas.add(clave);
+      }
       
       // 1. CORRECCIÓN: Declarar como string en lugar de number
       let id_jobs: string | undefined; 
@@ -257,9 +276,13 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
     },
   },
   async (request, reply) => {
+    assertPermission(request, 'cotizaciones', 'crear_editar');
     const idCotizacion = Number(request.params.id) || request.body.idCotizacion;
     const idUsuario = Number(request.user?.sub ?? 0);
     const { viaticos: reqViaticos, descuento: reqDescuento, estado: reqEstado, codigo, detalles, cambios } = request.body;
+    if (reqEstado === Estados.ENVIADA) {
+      assertPermission(request, 'cotizaciones', 'enviar_al_cliente');
+    }
     let codigo_actual_ot=null
     let codigo_actual_recep=null
     let id_registro_recp=null
@@ -282,7 +305,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
       // 2. BLOQUEO DE SEGURIDAD (Validar estado de todas las OTs)
       if (existente.ordenes_trabajo && existente.ordenes_trabajo.length > 0) {
-        const estadosBloqueados = ['Asignada', 'En_calibración', 'Certificado_en_revisión', 'Certificado_aprobado', 'Certificado_enviado'];
+        const estadosBloqueados = ['En_recepción', 'Asignada', 'En_calibración', 'Certificado_en_revisión', 'Certificado_aprobado', 'Certificado_enviado'];
         const otBloqueada = existente.ordenes_trabajo.find(
           (ot) => ot.estado && estadosBloqueados.includes(ot.estado)
         );
@@ -296,6 +319,20 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       
       // 3. LÓGICA DIFERENCIAL (CRUD DE DETALLES COTIZACIÓN)
       if (detalles) {
+        // Validación de tupla única (instrumento + tipoServicio + sitio)
+        const tuplasVistas = new Set<string>();
+        for (const d of detalles) {
+          const sitio = d.sitio ?? 'LABORATORIO';
+          const clave = `${d.equipoDescripcion.trim().toLowerCase()}|${d.tipoServicio.trim().toLowerCase()}|${sitio}`;
+          if (tuplasVistas.has(clave)) {
+            throw new AppError(
+              400,
+              `El instrumento "${d.equipoDescripcion}" con servicio "${d.tipoServicio}" en "${sitio}" ya está agregado. Aumente la cantidad en la fila existente en lugar de duplicarla.`
+            );
+          }
+          tuplasVistas.add(clave);
+        }
+
         const detallesCrear = [];
         const detallesActualizar = [];
         const idsEntrantes = [];
@@ -416,7 +453,10 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             const idsEliminar = detallesOTActuales
               .slice(instrumentosDesdoblados.length)
               .map((d) => d.ID_DETALLE);
-            await tx.orden_trabajo_detalles.deleteMany({ where: { ID_DETALLE: { in: idsEliminar } } });
+            await tx.orden_trabajo_detalles.updateMany({
+              where: { ID_DETALLE: { in: idsEliminar } },
+              data: { activacion: false },
+            });
           }
 
           const consecutivo_ot = await generarConsecutivo(tx, 'OT', ot.CODIGO_OT);
@@ -467,7 +507,10 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             const idsEliminar = detallesRecepActuales
               .slice(instrumentosDesdoblados.length)
               .map((d) => d.ID_INSTRUMENTO);
-            await tx.recepcion_equipo_detalles.deleteMany({ where: { ID_INSTRUMENTO: { in: idsEliminar } } });
+            await tx.recepcion_equipo_detalles.updateMany({
+              where: { ID_INSTRUMENTO: { in: idsEliminar } },
+              data: { activacion: false },
+            });
           }
 
           const consec = await generarConsecutivo(tx, 'REC', recep.CODIGO_RECEPCION);
@@ -630,6 +673,14 @@ const trackingJobs: Record<string, string> = {};
       motivoRechazo?: string | null;
     };
     const idUsuario = Number(request.user?.sub ?? 0);
+
+    if (nuevoEstado === Estados.RECHAZADA || nuevoEstado === Estados.APROBADA) {
+      assertPermission(request, 'cotizaciones', 'aprobar_rechazar');
+    } else if (nuevoEstado === Estados.EN_SEGUIMIENTO) {
+      assertPermission(request, 'cotizaciones', 'crear_editar');
+    } else {
+      throw new AppError(403, 'Este cambio de estado solo puede hacerse desde el flujo de aprobación del cliente.');
+    }
 
     if (nuevoEstado === Estados.RECHAZADA && !motivoRechazo?.trim()) {
       throw new AppError(400, 'Debe indicar el motivo del rechazo.');

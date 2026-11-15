@@ -107,11 +107,25 @@ export const ItemsTable = ({
                     className={SELECT_CLASS}
                   >
                     <option value="">Seleccionar...</option>
-                    {instrumentosFiltrados.map((item) => (
-                      <option key={item.instrumento} value={item.instrumento}>
-                        {item.instrumento}
-                      </option>
-                    ))}
+                    {instrumentosFiltrados.map((item) => {
+                      const yaSeleccionadoIdentico = itemsList.some(
+                        (otra, idx) =>
+                          idx !== index &&
+                          otra.instrumento?.trim().toLowerCase() === item.instrumento.trim().toLowerCase() &&
+                          otra.tipoServicio?.trim().toLowerCase() === fila.tipoServicio?.trim().toLowerCase() &&
+                          otra.lugarCalibracion === fila.lugarCalibracion
+                      );
+                      return (
+                        <option
+                          key={item.instrumento}
+                          value={item.instrumento}
+                          disabled={yaSeleccionadoIdentico}
+                          className={yaSeleccionadoIdentico ? "text-slate-300 bg-slate-50 italic" : ""}
+                        >
+                          {item.instrumento} {yaSeleccionadoIdentico ? `(Ya cotizado en ${fila.lugarCalibracion})` : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                 </td>
                 <td className="py-2.5 px-3">
@@ -208,6 +222,29 @@ export const VersionModal: React.FC<VersionModalProps> = ({
     setAuditForm({ descripcion: '', aprobo: usu_rol, observaciones: '' });
     setFormErrors({});
     onClose();
+  };
+
+  const validarItemsVersion = (): boolean => {
+    if (modalItems.length === 0) {
+      alert("Debe agregar al menos un ítem a la cotización.");
+      return false;
+    }
+    for (const item of modalItems) {
+      if (!item.instrumento?.trim() || !item.tipoServicio?.trim() || !item.magnitud?.trim()) {
+        alert("Todos los ítems deben tener tipo de servicio, magnitud e instrumento seleccionados.");
+        return false;
+      }
+    }
+    const tuplasVistas = new Set<string>();
+    for (const item of modalItems) {
+      const clave = `${item.instrumento.trim().toLowerCase()}|${item.tipoServicio.trim().toLowerCase()}|${item.lugarCalibracion}`;
+      if (tuplasVistas.has(clave)) {
+        alert(`El instrumento "${item.instrumento}" con servicio "${item.tipoServicio}" en "${item.lugarCalibracion}" está duplicado. Aumente la cantidad en una sola fila en lugar de duplicarla.`);
+        return false;
+      }
+      tuplasVistas.add(clave);
+    }
+    return true;
   };
 
   const validateAuditForm = (): boolean => {
@@ -376,7 +413,9 @@ export const VersionModal: React.FC<VersionModalProps> = ({
 
             {step === 'EDIT' ? (
               <button
-                onClick={() => setStep('CONFIRM_VERSION')}
+                onClick={() => {
+                  if (validarItemsVersion()) setStep('CONFIRM_VERSION');
+                }}
                 disabled={modalItems.length === 0}
                 className="px-4 py-2 rounded-xl bg-[#5680F9] text-white font-bold text-xs hover:bg-[#4069E2] shadow-md shadow-[#5680F9]/10 transition-colors flex items-center gap-1.5 disabled:opacity-50"
               >

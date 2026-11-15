@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import {
   actualizarPrecioTarifaBodySchema,
   actualizarTarifaBodySchema,
@@ -53,6 +54,7 @@ export default async function tarifasRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'gestionar_catalogo_tarifas');
       const { idTarifa, precioVigente, fechaInicio, fechaFin, ...camposTarifa } = request.body;
 
       if (!idTarifa) throw new AppError(400, 'ID de tarifa requerido.');
@@ -116,6 +118,7 @@ export default async function tarifasRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'gestionar_catalogo_tarifas');
       const precio = Number(request.body.precioInicial);
       if (isNaN(precio) || precio < 0) {
         throw new AppError(400, 'El precio inicial debe ser un número válido.');
@@ -160,6 +163,7 @@ export default async function tarifasRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'gestionar_catalogo_tarifas');
       const ahora = new Date();
       const nuevaFechaInicio = request.body.fechaInicio
         ? new Date(request.body.fechaInicio)
@@ -209,6 +213,7 @@ export default async function tarifasRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'gestionar_catalogo_tarifas');
       const tarifa = await fastify.prisma.tarifas.update({
         where: { ID_TARIFA: request.params.id },
         data: { ESTADO: request.body.nuevoEstado },

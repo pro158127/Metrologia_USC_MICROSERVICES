@@ -143,7 +143,7 @@ export async function obtenerDatosReporte(
 
   const gruposTecnico = new Map<
     number,
-    { nombre: string; otIds: Set<number>; equipos: number; dias: number; ots: number }
+    { nombre: string; diasPorOT: Map<number, number>; equipos: number }
   >();
   for (const cal of calibraciones) {
     const id = cal.ID_TECNICO_FK;
@@ -151,15 +151,14 @@ export async function obtenerDatosReporte(
     const ot = cal.recepcion_equipo_detalles?.recepciones_equipo?.ordenes_trabajo ?? null;
     const g = gruposTecnico.get(id) ?? {
       nombre: cal.usuarios?.NOMBRE_COMPLETO ?? `Técnico ${id}`,
-      otIds: new Set<number>(),
+      diasPorOT: new Map<number, number>(),
       equipos: 0,
-      dias: 0,
-      ots: 0,
     };
     g.equipos += 1;
-    if (ot?.ID_ORDEN_TRABAJO) g.otIds.add(ot.ID_ORDEN_TRABAJO);
-    if (ot?.CREATED_AT && cal.CREATED_AT) {
-      g.dias += Math.max(0, (cal.CREATED_AT.getTime() - ot.CREATED_AT.getTime()) / 86400000);
+    if (ot?.ID_ORDEN_TRABAJO && ot.CREATED_AT && cal.CREATED_AT) {
+      const dias = Math.max(0, (cal.CREATED_AT.getTime() - ot.CREATED_AT.getTime()) / 86400000);
+      const previo = g.diasPorOT.get(ot.ID_ORDEN_TRABAJO) ?? 0;
+      g.diasPorOT.set(ot.ID_ORDEN_TRABAJO, Math.max(previo, dias));
     }
     gruposTecnico.set(id, g);
   }
@@ -167,9 +166,12 @@ export async function obtenerDatosReporte(
   const tecnicos: TecnicoReporte[] = Array.from(gruposTecnico.entries())
     .map(([, g]) => ({
       tecnico: g.nombre,
-      ots: g.otIds.size,
+      ots: g.diasPorOT.size,
       equipos: g.equipos,
-      promedioDias: g.ots > 0 ? g.dias / g.ots : 0,
+      promedioDias:
+        g.diasPorOT.size > 0
+          ? Array.from(g.diasPorOT.values()).reduce((total, dias) => total + dias, 0) / g.diasPorOT.size
+          : 0,
     }))
     .filter((t) => !filtros.tecnico || norm(t.tecnico) === norm(filtros.tecnico))
     .sort((a, b) => b.equipos - a.equipos);
@@ -183,9 +185,25 @@ export async function obtenerDatosReporte(
       ordenes_trabajo: {
         include: {
           clientes: true,
+          orden_trabajo_hijas: {
+            where: { VIGENTE: true },
+            include: {
+              recepciones_equipo: {
+                where: { VIGENTE: true, activacion: { not: false } },
+                include: {
+                  recepcion_equipo_detalles: {
+                    where: { OR: [{ activacion: true }, { activacion: null }] },
+                    include: { calibraciones: { include: { certificados: true } } },
+                  },
+                },
+              },
+            },
+          },
           recepciones_equipo: {
+            where: { VIGENTE: true, activacion: { not: false } },
             include: {
               recepcion_equipo_detalles: {
+                where: { OR: [{ activacion: true }, { activacion: null }] },
                 include: { calibraciones: { include: { certificados: true } } },
               },
             },
@@ -199,19 +217,27 @@ export async function obtenerDatosReporte(
   const trazabilidad: TrazabilidadReporte[] = facturas
     .map((f) => {
       const ot = f.ordenes_trabajo;
-      const certs = (ot?.recepciones_equipo ?? []).flatMap((rec) =>
-        (rec.recepcion_equipo_detalles ?? []).flatMap((det) =>
-          det.calibraciones?.certificados ? [det.calibraciones.certificados.CODIGO_CERTIFICADO] : [],
-        ),
+      const otsOperativas = ot?.orden_trabajo_hijas?.length
+        ? ot.orden_trabajo_hijas
+        : ot
+          ? [ot]
+          : [];
+      const recepcionesOperativas = otsOperativas.flatMap((orden) => orden.recepciones_equipo ?? []);
+      const certs = recepcionesOperativas.flatMap((rec) =>
+        (rec.recepcion_equipo_detalles ?? [])
+          .filter((det) => det.activacion !== false)
+          .flatMap((det) =>
+            det.calibraciones?.certificados ? [det.calibraciones.certificados.CODIGO_CERTIFICADO] : [],
+          ),
       );
       return {
         factura: f.NUMERO_FACTURA,
         cliente: f.clientes?.RAZON_SOCIAL ?? ot?.clientes?.RAZON_SOCIAL ?? '—',
         fecha: f.FECHA ? f.FECHA.toISOString() : null,
         valor: Number(f.VALOR ?? 0),
-        ots: ot?.CODIGO_OT ?? '—',
-        equipos: (ot?.recepciones_equipo ?? []).reduce(
-          (acc, r) => acc + (r.recepcion_equipo_detalles?.length ?? 0),
+        ots: otsOperativas.map((orden) => orden.CODIGO_OT).join(', ') || '—',
+        equipos: recepcionesOperativas.reduce(
+          (acc, r) => acc + (r.recepcion_equipo_detalles?.filter((d) => d.activacion !== false).length ?? 0),
           0,
         ),
         cert: certs.length > 0 ? certs.join(', ') : null,

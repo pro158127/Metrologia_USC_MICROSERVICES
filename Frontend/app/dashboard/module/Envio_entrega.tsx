@@ -178,8 +178,9 @@ const GestionPanel: React.FC<{
   }, [idCotizacion, onToast, recargar, onRefresh]);
 
   const todosAprobados = docs?.todosAprobados ?? false;
+  const entregaCompleta = docs?.entregaCompleta ?? false;
   const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
-  const puedeEnviar = todosAprobados && tieneComprobante && !!docs?.correo;
+  const puedeEnviar = todosAprobados && entregaCompleta && tieneComprobante && !!docs?.correo;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
@@ -238,6 +239,18 @@ const GestionPanel: React.FC<{
                 {todosAprobados
                   ? "Todos los certificados están aprobados."
                   : "Aún hay certificados pendientes de aprobación."}
+              </div>
+
+              <div
+                className={`rounded-xl border px-4 py-3 text-xs font-bold ${
+                  entregaCompleta
+                    ? "bg-emerald-50 border-emerald-100 text-emerald-700"
+                    : "bg-amber-50 border-amber-100 text-amber-800"
+                }`}
+              >
+                {entregaCompleta
+                  ? "La información de entrega de todos los instrumentos está completa."
+                  : `Falta hacer la entrega en Recepciones: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}.`}
               </div>
 
               {/* Certificados */}
@@ -312,25 +325,27 @@ const GestionPanel: React.FC<{
                 {puedeMarcarPagada ? (
                   <label
                     className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed text-[11px] font-semibold transition-colors ${
-                      todosAprobados
+                      todosAprobados && entregaCompleta
                         ? "border-slate-300 bg-slate-50 text-slate-600 cursor-pointer hover:bg-slate-100"
                         : "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed"
                     }`}
                   >
                     <Upload size={14} />
                     <span>
-                      {todosAprobados
+                      {todosAprobados && entregaCompleta
                         ? subiendo
                           ? "Subiendo..."
                           : "Subir comprobante(s) (PDF, PNG o JPG)"
-                        : "Bloqueado: espera la aprobación de todos los certificados"}
+                        : !entregaCompleta
+                          ? "Bloqueado: falta completar la entrega en Recepciones"
+                          : "Bloqueado: espera la aprobación de todos los certificados"}
                     </span>
                     <input
                       type="file"
                       accept="image/png,image/jpeg,application/pdf"
                       multiple
                       className="hidden"
-                      disabled={!todosAprobados || subiendo}
+                      disabled={!todosAprobados || !entregaCompleta || subiendo}
                       onChange={(e) => {
                         const files = Array.from(e.target.files ?? []);
                         if (files.length) handleUpload(files);

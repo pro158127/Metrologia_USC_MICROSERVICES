@@ -55,7 +55,7 @@ export async function inferirPlantillaSello(
     return acreditado ? n.includes('ACREDITAD') && !esNoAcreditado : esNoAcreditado;
   });
 
-  return match ?? candidatos[0] ?? null;
+  return match ?? null;
 }
 
 /**
@@ -74,7 +74,7 @@ export async function seleccionarPlantillaSello(
   const porId = await prisma.plantillas_sellos.findUnique({
     where: { ID_PLANTILLA_SELLO: idDeseado },
   });
-  if (porId) return porId;
+  if (porId && esAcreditado(porId.NOMBRE) === acreditado) return porId;
 
   return inferirPlantillaSello(prisma, tipoServicio);
 }

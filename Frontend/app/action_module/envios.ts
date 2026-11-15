@@ -25,6 +25,8 @@ export interface DocumentosEnvio {
   cliente: string;
   correo: string | null;
   todosAprobados: boolean;
+  entregaCompleta: boolean;
+  entregasPendientes: string[];
   certificados: CertificadoEnvio[];
   comprobantes: ComprobanteEnvio[];
 }
@@ -106,6 +108,8 @@ export interface DocumentosEnvioCotizacion {
   cliente: string;
   correo: string | null;
   todosAprobados: boolean;
+  entregaCompleta: boolean;
+  entregasPendientes: string[];
   ots: OTEnvioCotizacion[];
   certificados: CertificadoEnvioCotizacion[];
   comprobantes: ComprobanteEnvio[];

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import {
   actualizarSeguimientoBodySchema,
@@ -75,6 +76,7 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'crear_editar');
       const idUsuario = Number(request.user?.sub ?? 0);
       const { idCotizacion, tipo, descripcion, fechaGestion, proximaGestion, resultado, idUsuario: responsable } = request.body;
 
@@ -132,6 +134,7 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'crear_editar');
       const idUsuario = Number(request.user?.sub ?? 0);
       const idSeguimiento = request.params.id;
 
@@ -190,6 +193,7 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'crear_editar');
       const idUsuario = Number(request.user?.sub ?? 0);
       const idSeguimiento = request.params.id;
 

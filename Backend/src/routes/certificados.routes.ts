@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
+import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { getCertificatePdfQueue } from '../lib/queue/queue.js';
 import { esAcreditado, seleccionarPlantillaSello } from '../services/certificatePdf.service.js';
 import { evaluarTransicionesOT, transicionarOT } from '../services/ot-fsm.service.js';
@@ -44,7 +45,11 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
         response: { 200: respuestaCertificadosSchema },
       },
     },
-    async () => {
+    async (request) => {
+      assertAnyPermission(request, [
+        ['revision', 'revisar_aprobar_acreditados'],
+        ['revision', 'revisar_aprobar_no_acreditados'],
+      ]);
       const [certificados, calibraciones, instrumentos, ordenes, clientes] = await Promise.all([
         fastify.prisma.certificados.findMany({
           include: { certificado_sellos: true },
@@ -83,6 +88,10 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
     '/api/v1/certificados/revision',
     { preHandler: [fastify.authenticate] },
     async (request) => {
+      assertAnyPermission(request, [
+        ['revision', 'revisar_aprobar_acreditados'],
+        ['revision', 'revisar_aprobar_no_acreditados'],
+      ]);
       // Separación de funciones: el revisor no ve certificados cuya calibración
       // hizo él mismo (quien calibra no certifica).
       const idUsuario = Number(request.user?.sub ?? 0);
@@ -191,9 +200,16 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       const detalle = cert.calibraciones?.recepcion_equipo_detalles;
       const ot = detalle?.recepciones_equipo?.ordenes_trabajo ?? null;
       const otDetalle =
-        ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle?.INSTRUMENTO) ??
         ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle?.ITEM) ??
+        ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle?.INSTRUMENTO) ??
         null;
+
+      const servicioAcreditado = esAcreditado(otDetalle?.TIPO_SERVICIO);
+      assertPermission(
+        request,
+        'revision',
+        servicioAcreditado ? 'revisar_aprobar_acreditados' : 'revisar_aprobar_no_acreditados',
+      );
 
       // Selección de plantilla de sello por acreditación del instrumento (ID 1/2).
       const plantilla = request.body.selloId
@@ -201,6 +217,13 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
             where: { ID_PLANTILLA_SELLO: request.body.selloId },
           })
         : await seleccionarPlantillaSello(fastify.prisma, otDetalle?.TIPO_SERVICIO ?? null);
+
+      if (!plantilla?.TEMPLATE_PDF_KEY) {
+        throw new AppError(409, 'No se puede aprobar el certificado: falta la plantilla PDF de sello configurada.');
+      }
+      if (esAcreditado(plantilla.NOMBRE) !== servicioAcreditado) {
+        throw new AppError(409, 'La plantilla de sello no corresponde al tipo de servicio del instrumento.');
+      }
 
       const actualizado = await fastify.prisma.$transaction(async (tx) => {
         const upd = await tx.certificados.update({
@@ -276,7 +299,11 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
           calibraciones: {
             include: {
               recepcion_equipo_detalles: {
-                include: { recepciones_equipo: { include: { ordenes_trabajo: true } } },
+                include: {
+                  recepciones_equipo: {
+                    include: { ordenes_trabajo: { include: { orden_trabajo_detalles: true } } },
+                  },
+                },
               },
             },
           },
@@ -285,6 +312,18 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       if (!cert) throw new AppError(404, 'Certificado no encontrado');
 
       const ot = cert.calibraciones?.recepcion_equipo_detalles?.recepciones_equipo?.ordenes_trabajo;
+      const detalleRecepcion = cert.calibraciones?.recepcion_equipo_detalles;
+      const detalleOT =
+        ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalleRecepcion?.ITEM) ??
+        ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalleRecepcion?.INSTRUMENTO) ??
+        null;
+      assertPermission(
+        request,
+        'revision',
+        esAcreditado(detalleOT?.TIPO_SERVICIO)
+          ? 'revisar_aprobar_acreditados'
+          : 'revisar_aprobar_no_acreditados',
+      );
       const idTecnico = cert.calibraciones?.ID_TECNICO_FK ?? null;
 
       const actualizado = await fastify.prisma.$transaction(async (tx) => {

@@ -3,6 +3,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { obtenerDatosReporte } from '../services/reportes.service.js';
 import { getReportesQueue } from '../lib/queue/queue.js';
 import { AppError } from '../lib/errors.js';
+import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import {
   exportarReporteBodySchema,
   reporteJobParamsSchema,
@@ -27,6 +28,11 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertAnyPermission(request, [
+        ['reportes_y_consolidados', 'ver_tablero_indicadores'],
+        ['reportes_y_consolidados', 'exportar_base_de_datos'],
+        ['reportes_y_consolidados', 'generar_consolidado_ventas'],
+      ]);
       const data = await obtenerDatosReporte(fastify.prisma, request.query ?? {});
       return { ok: true as const, data };
     }
@@ -42,10 +48,12 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
+      assertPermission(request, 'reportes_y_consolidados', 'exportar_base_de_datos');
       const queue = getReportesQueue();
       const job = await queue.add('exportar-reporte-pdf', {
         formato: 'pdf',
         filtros: request.body ?? {},
+        usuarioId: Number(request.user?.sub ?? 0),
       });
       return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
     }
@@ -61,10 +69,12 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
+      assertPermission(request, 'reportes_y_consolidados', 'exportar_base_de_datos');
       const queue = getReportesQueue();
       const job = await queue.add('exportar-reporte-excel', {
         formato: 'excel',
         filtros: request.body ?? {},
+        usuarioId: Number(request.user?.sub ?? 0),
       });
       return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
     }
@@ -80,9 +90,16 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertAnyPermission(request, [
+        ['reportes_y_consolidados', 'exportar_base_de_datos'],
+        ['reportes_y_consolidados', 'generar_consolidado_ventas'],
+      ]);
       const queue = getReportesQueue();
       const job = await queue.getJob(request.params.jobId);
       if (!job) throw new AppError(404, 'Job no encontrado');
+      if (job.data?.usuarioId != null && Number(job.data.usuarioId) !== Number(request.user?.sub ?? 0)) {
+        throw new AppError(403, 'No tienes acceso a este reporte.');
+      }
 
       const state = await job.getState();
 

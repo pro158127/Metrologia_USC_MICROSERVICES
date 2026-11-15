@@ -165,6 +165,11 @@ export const ordenTrabajoDtoSchema = z.object({
   alertamessag: z.string(),
   cliente: clienteDtoSchema.nullable(),
   cotizacion: cotizacionDtoSchema.nullable(),
+  tecnicosInstrumentos: z.array(z.object({
+    item: z.number(),
+    instrumento: z.string(),
+    nombreTecnico: z.string(),
+  })).optional(),
 });
 export type OrdenTrabajoDto = z.infer<typeof ordenTrabajoDtoSchema>;
 
@@ -533,6 +538,12 @@ export const ordenTrabajoRawToDtoSchema = z
     alertamessag: z.string().nullish(),
     clientes: clienteRawToDtoSchema.nullish(),
     cotizaciones: cotizacionRawToDtoSchema.nullish(),
+    orden_trabajo_detalles: z.array(z.object({
+      ITEM: z.number(),
+      INSTRUMENTO: z.string(),
+      asignado: z.number().nullable(),
+      usuarios: z.object({ NOMBRE_COMPLETO: z.string() }).nullable(),
+    })).nullish(),
   })
   .transform((raw): OrdenTrabajoDto => ({
     idOrdenTrabajo: raw.ID_ORDEN_TRABAJO,
@@ -572,6 +583,14 @@ export const ordenTrabajoRawToDtoSchema = z
     alertamessag: raw.alertamessag ?? 'sin novedades',
     cliente: raw.clientes ?? null,
     cotizacion: raw.cotizaciones ?? null,
+    tecnicosInstrumentos: (raw.orden_trabajo_detalles ?? [])
+      .filter((detalle) => detalle.usuarios?.NOMBRE_COMPLETO)
+      .sort((a, b) => a.ITEM - b.ITEM)
+      .map((detalle) => ({
+        item: detalle.ITEM,
+        instrumento: detalle.INSTRUMENTO,
+        nombreTecnico: detalle.usuarios!.NOMBRE_COMPLETO,
+      })),
   }));
 export type OrdenTrabajoRaw = z.input<typeof ordenTrabajoRawToDtoSchema>;
 
@@ -706,7 +725,11 @@ export const recepcionEquipoRawToDtoSchema = z
     fechaSalida: raw.FECHA_SALIDA ?? null,
     nombreRecibe: raw.NOMBRE_RECIBE ?? null,
     nombreEmpaca: raw.NOMBRE_EMPACA ?? null,
-    nombreCalibra: raw.NOMBRE_CALIBRA ?? null,
+    nombreCalibra: (() => {
+      const asignados = raw.ordenes_trabajo?.tecnicosInstrumentos
+        ?.map((detalle) => `${detalle.instrumento}: ${detalle.nombreTecnico}`);
+      return asignados?.length ? asignados.join(' | ') : raw.NOMBRE_CALIBRA ?? null;
+    })(),
     nombreRecibeServicio: raw.NOMBRE_RECIBE_SERVICIO ?? null,
     accesorios: raw.ACCESORIOS ?? null,
     pruebasCompletas: raw.PRUEBAS_COMPLETAS ?? true,

@@ -420,6 +420,12 @@ export function resolverDatosRecepcionConCeldas(recepcion: any, mappingConfig: M
 
   const detalles = recepcion.recepcion_equipo_detalles || [];
 
+  const marcaIbc = (valor: unknown): string => {
+    if (valor === true || valor === 'true' || valor === 'TRUE' || valor === 'SI' || valor === 'Sí') return '✓';
+    if (valor === false || valor === 'false' || valor === 'FALSE' || valor === 'NO') return '✗';
+    return '';
+  };
+
   for (const tableConfig of mappingConfig.mappings.tables) {
     if (tableConfig.key !== 'tabla_recepcion_instrumentos') continue;
 
@@ -465,20 +471,20 @@ export function resolverDatosRecepcionConCeldas(recepcion: any, mappingConfig: M
 
           // 🔴 EXCLUSIVO: Manejo de matriz doble para las columnas IBC
           case 'estado_ibc_e': 
-            rawValue = estadoIbc.entrada.E ? 'X' : ''; 
-            rawValueSalida = estadoIbc.salida.E ? 'X' : ''; 
+            rawValue = marcaIbc(estadoIbc.entrada.E);
+            rawValueSalida = marcaIbc(estadoIbc.salida.E);
             break; 
           case 'estado_ibc_t': 
-            rawValue = estadoIbc.entrada.T ? 'X' : ''; 
-            rawValueSalida = estadoIbc.salida.T ? 'X' : ''; 
+            rawValue = marcaIbc(estadoIbc.entrada.T);
+            rawValueSalida = marcaIbc(estadoIbc.salida.T);
             break;
           case 'estado_ibc_d': 
-            rawValue = estadoIbc.entrada.D ? 'X' : ''; 
-            rawValueSalida = estadoIbc.salida.D ? 'X' : ''; 
+            rawValue = marcaIbc(estadoIbc.entrada.D);
+            rawValueSalida = marcaIbc(estadoIbc.salida.D);
             break;
           case 'estado_ibc_a': 
-            rawValue = estadoIbc.entrada.A ? 'X' : ''; 
-            rawValueSalida = estadoIbc.salida.A ? 'X' : ''; 
+            rawValue = marcaIbc(estadoIbc.entrada.A);
+            rawValueSalida = marcaIbc(estadoIbc.salida.A);
             break;
         }
 

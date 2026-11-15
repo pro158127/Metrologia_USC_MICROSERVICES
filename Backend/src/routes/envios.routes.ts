@@ -8,13 +8,14 @@ import { uploadBuffer } from '../lib/minioClient.js';
 import { getEmailQueue } from '../lib/queue/queue.js';
 import { transicionarOT, evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
+import { assertAnyPermission } from '../lib/permissions.js';
 
 const otParamsSchema = z.object({ id: z.coerce.number() });
 
 /** Valida permisos del módulo entrega_y_envio. */
 function assertPermisoEntrega(
   request: FastifyRequest,
-  accion: 'marcar_ot_pagada' | 'enviar_certificados_lotes'
+  accion: 'marcar_ot_pagada' | 'enviar_certificados_lotes' | 'previsualizar_antes_de_envio'
 ): void {
   const permisos = request.user?.user?.permissions?.permisos?.entrega_y_envio;
   if (!permisos?.[accion]) {
@@ -30,6 +31,8 @@ const respuestaDocumentosEnvioSchema = z.object({
     cliente: z.string(),
     correo: z.string().nullable(),
     todosAprobados: z.boolean(),
+    entregaCompleta: z.boolean(),
+    entregasPendientes: z.array(z.string()),
     certificados: z.array(
       z.object({
         idCertificado: z.number(),
@@ -56,6 +59,8 @@ const respuestaDocumentosEnvioCotizacionSchema = z.object({
     cliente: z.string(),
     correo: z.string().nullable(),
     todosAprobados: z.boolean(),
+    entregaCompleta: z.boolean(),
+    entregasPendientes: z.array(z.string()),
     ots: z.array(
       z.object({
         idOrdenTrabajo: z.number(),
@@ -86,7 +91,11 @@ async function cargarContextoOT(fastify: FastifyInstance, idOT: number) {
     where: { ID_ORDEN_TRABAJO: idOT },
     include: {
       clientes: true,
+      orden_trabajo_detalles: {
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+      },
       recepciones_equipo: {
+        where: { VIGENTE: true, activacion: { not: false } },
         include: {
           recepcion_equipo_detalles: {
             where: { OR: [{ activacion: true }, { activacion: null }] },
@@ -125,10 +134,38 @@ async function cargarContextoOT(fastify: FastifyInstance, idOT: number) {
     orderBy: { ID_DOCUMENTO: 'desc' },
   });
 
+  const totalInstrumentos = ot.orden_trabajo_detalles.length;
   const todosAprobados =
-    certificados.length > 0 && certificados.every((c) => c.estadoRevision === 'APROBADO');
+    totalInstrumentos > 0 &&
+    certificados.length === totalInstrumentos &&
+    certificados.every((c) => c.estadoRevision === 'APROBADO');
 
-  return { ot, certificados, comprobantes, todosAprobados };
+  const entregasPendientes = pendientesEntrega(ot.recepciones_equipo);
+
+  return { ot, certificados, comprobantes, todosAprobados, entregaCompleta: entregasPendientes.length === 0, entregasPendientes };
+}
+
+function pendientesEntrega(recepciones: Array<any>): string[] {
+  const faltantes = new Set<string>();
+  for (const recepcion of recepciones) {
+    const equipos = recepcion.recepcion_equipo_detalles.filter((d: any) => d.activacion !== false);
+    if (!recepcion.FECHA_SALIDA) faltantes.add('fecha de salida');
+    if (!recepcion.NOMBRE_RECIBE?.trim()) faltantes.add('nombre de quien recibe');
+    if (!recepcion.NOMBRE_EMPACA?.trim()) faltantes.add('nombre de quien empaca');
+    if (!/^Accesorios: (Bueno|Malo) -\s*\S/i.test(recepcion.ACCESORIOS ?? '')) {
+      faltantes.add('accesorios y estado general');
+    }
+    if (!recepcion.NOMBRE_RECIBE_SERVICIO?.trim()) faltantes.add('nombre de quien recibe el servicio');
+    if (equipos.length === 0) faltantes.add('instrumentos activos en la recepción');
+    for (const equipo of equipos) {
+      const salida = equipo.ESTADO_IBC?.salida;
+      if (!['E', 'T', 'D', 'A'].every((k) => typeof salida?.[k] === 'boolean')) {
+        faltantes.add(`estado IBC de salida de ${equipo.INSTRUMENTO}`);
+      }
+    }
+  }
+  if (recepciones.length === 0) faltantes.add('recepción de equipos');
+  return [...faltantes];
 }
 
 async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: number) {
@@ -140,7 +177,11 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
     },
     include: {
       clientes: true,
+      orden_trabajo_detalles: {
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+      },
       recepciones_equipo: {
+        where: { VIGENTE: true, activacion: { not: false } },
         include: {
           recepcion_equipo_detalles: {
             where: { OR: [{ activacion: true }, { activacion: null }] },
@@ -184,8 +225,12 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
     orderBy: { ID_DOCUMENTO: 'desc' },
   });
 
+  const totalInstrumentos = hijas.reduce((total, hija) => total + hija.orden_trabajo_detalles.length, 0);
   const todosAprobados =
-    certificados.length > 0 && certificados.every((c) => c.estadoRevision === 'APROBADO');
+    totalInstrumentos > 0 &&
+    certificados.length === totalInstrumentos &&
+    certificados.every((c) => c.estadoRevision === 'APROBADO');
+  const entregasPendientes = pendientesEntrega(hijas.flatMap((h) => h.recepciones_equipo));
 
   const master = await fastify.prisma.ordenes_trabajo.findFirst({
     where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: null, VIGENTE: true },
@@ -204,6 +249,8 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
     certificados,
     comprobantes,
     todosAprobados,
+    entregaCompleta: entregasPendientes.length === 0,
+    entregasPendientes,
   };
 }
 
@@ -235,7 +282,12 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
-      const { ot, certificados, comprobantes, todosAprobados } = await cargarContextoOT(
+      assertAnyPermission(request, [
+        ['entrega_y_envio', 'marcar_ot_pagada'],
+        ['entrega_y_envio', 'enviar_certificados_lotes'],
+        ['entrega_y_envio', 'previsualizar_antes_de_envio'],
+      ]);
+      const { ot, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } = await cargarContextoOT(
         fastify,
         request.params.id
       );
@@ -248,6 +300,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           cliente: ot.clientes?.RAZON_SOCIAL ?? ot.Razon_social ?? '—',
           correo: ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null,
           todosAprobados,
+          entregaCompleta,
+          entregasPendientes,
           certificados,
           comprobantes: comprobantes.map((c) => ({
             idDocumento: c.ID_DOCUMENTO,
@@ -272,7 +326,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idOT = request.params.id;
-      const { ot, certificados, todosAprobados } = await cargarContextoOT(fastify, idOT);
+      const { ot, certificados, todosAprobados, entregaCompleta, entregasPendientes } = await cargarContextoOT(fastify, idOT);
+
+      if (!entregaCompleta) {
+        throw new AppError(409, `No se puede subir el comprobante. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
+      }
 
       const cotizacion = ot.ID_COTIZACION_FK
         ? await fastify.prisma.cotizaciones.findUnique({
@@ -439,13 +497,16 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idOT = request.params.id;
-      const { ot, certificados, comprobantes, todosAprobados } = await cargarContextoOT(
+      const { ot, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } = await cargarContextoOT(
         fastify,
         idOT
       );
 
       if (comprobantes.length === 0) {
         throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
+      }
+      if (!entregaCompleta) {
+        throw new AppError(409, `No se pueden enviar los certificados. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
       }
       if (!todosAprobados) {
         throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
@@ -455,20 +516,6 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       if (!destino) {
         throw new AppError(409, 'La OT no tiene correo de certificados configurado.');
       }
-
-      // Transición explícita al estado de envío.
-      await transicionarOT(fastify.prisma, idOT, EstadoOT.Certificado_enviado, {
-        permitirRetroceso: true,
-      });
-
-      await registrarBitacora(fastify.prisma, {
-        action: 'ENVIAR_CERTIFICADOS',
-        tableName: 'ordenes_trabajo',
-        recordId: idOT,
-        userId: Number(request.user?.sub ?? 0),
-        ip: request.ip,
-        details: { codigoOT: ot.CODIGO_OT, totalCertificados: certificados.length },
-      });
 
       const links = [
         ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
@@ -494,7 +541,21 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         minio_links: links,
         id_registro: idOT,
         tipo_entry: 'prod',
-      });
+      }, { delay: 5000 });
+
+      try {
+        await fastify.prisma.$transaction(async (tx) => {
+          await transicionarOT(tx, idOT, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
+          await registrarBitacora(tx, {
+            action: 'ENVIAR_CERTIFICADOS', tableName: 'ordenes_trabajo', recordId: idOT,
+            userId: Number(request.user?.sub ?? 0), ip: request.ip,
+            details: { codigoOT: ot.CODIGO_OT, totalCertificados: certificados.length },
+          });
+        });
+      } catch (error) {
+        await job.remove().catch((removeError) => fastify.log.error(removeError));
+        throw error;
+      }
 
       return {
         ok: true as const,
@@ -517,8 +578,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertAnyPermission(request, [
+        ['entrega_y_envio', 'marcar_ot_pagada'],
+        ['entrega_y_envio', 'enviar_certificados_lotes'],
+        ['entrega_y_envio', 'previsualizar_antes_de_envio'],
+      ]);
       const idCotizacion = request.params.id;
-      const { hijas, master, cotizacion, certificados, comprobantes, todosAprobados } =
+      const { hijas, master, cotizacion, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } =
         await cargarContextoCotizacion(fastify, idCotizacion);
 
       const cliente = hijas[0]?.clientes?.RAZON_SOCIAL ?? '—';
@@ -533,6 +599,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           cliente,
           correo,
           todosAprobados,
+          entregaCompleta,
+          entregasPendientes,
           ots: hijas.map((h) => ({
             idOrdenTrabajo: h.ID_ORDEN_TRABAJO,
             codigo: h.CODIGO_OT,
@@ -561,8 +629,12 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idCotizacion = request.params.id;
-      const { hijas, master, cotizacion, certificados, todosAprobados } =
+      const { hijas, master, cotizacion, certificados, todosAprobados, entregaCompleta, entregasPendientes } =
         await cargarContextoCotizacion(fastify, idCotizacion);
+
+      if (!entregaCompleta) {
+        throw new AppError(409, `No se puede subir el comprobante. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
+      }
 
       if (!todosAprobados) {
         throw new AppError(
@@ -661,11 +733,14 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idCotizacion = request.params.id;
-      const { hijas, master, certificados, comprobantes, todosAprobados } =
+      const { hijas, master, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } =
         await cargarContextoCotizacion(fastify, idCotizacion);
 
       if (comprobantes.length === 0) {
         throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
+      }
+      if (!entregaCompleta) {
+        throw new AppError(409, `No se pueden enviar los certificados. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
       }
       if (!todosAprobados) {
         throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
@@ -676,21 +751,6 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       if (!destino) {
         throw new AppError(409, 'La cotización no tiene correo de certificados configurado.');
       }
-
-      for (const hija of hijas) {
-        await transicionarOT(fastify.prisma, hija.ID_ORDEN_TRABAJO, EstadoOT.Certificado_enviado, {
-          permitirRetroceso: true,
-        });
-      }
-
-      await registrarBitacora(fastify.prisma, {
-        action: 'ENVIAR_CERTIFICADOS',
-        tableName: 'cotizaciones',
-        recordId: idCotizacion,
-        userId: Number(request.user?.sub ?? 0),
-        ip: request.ip,
-        details: { idCotizacion, totalOTs: hijas.length, totalCertificados: certificados.length },
-      });
 
       const links = [
         ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
@@ -717,7 +777,23 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         minio_links: links,
         id_registro: idCotizacion,
         tipo_entry: 'prod',
-      });
+      }, { delay: 5000 });
+
+      try {
+        await fastify.prisma.$transaction(async (tx) => {
+          for (const hija of hijas) {
+            await transicionarOT(tx, hija.ID_ORDEN_TRABAJO, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
+          }
+          await registrarBitacora(tx, {
+            action: 'ENVIAR_CERTIFICADOS', tableName: 'cotizaciones', recordId: idCotizacion,
+            userId: Number(request.user?.sub ?? 0), ip: request.ip,
+            details: { idCotizacion, totalOTs: hijas.length, totalCertificados: certificados.length },
+          });
+        });
+      } catch (error) {
+        await job.remove().catch((removeError) => fastify.log.error(removeError));
+        throw error;
+      }
 
       return {
         ok: true as const,
