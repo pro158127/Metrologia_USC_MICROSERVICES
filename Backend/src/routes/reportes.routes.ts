@@ -4,6 +4,7 @@ import { obtenerDatosReporte } from '../services/reportes.service.js';
 import { getReportesQueue } from '../lib/queue/queue.js';
 import { AppError } from '../lib/errors.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
+import { getObjectBuffer } from '../lib/minioClient.js';
 import {
   exportarReporteBodySchema,
   reporteJobParamsSchema,
@@ -104,10 +105,14 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       const state = await job.getState();
 
       if (state === 'completed') {
-        const rv = job.returnvalue as { url?: string } | undefined;
+        const rv = job.returnvalue as { key?: string } | undefined;
         return {
           ok: true as const,
-          data: { status: 'completed', url: rv?.url ?? null, error: null },
+          data: {
+            status: 'completed',
+            url: rv?.key ? `/api/reportes/${encodeURIComponent(request.params.jobId)}/download` : null,
+            error: rv?.key ? null : 'El reporte terminó sin registrar su archivo. Genérelo nuevamente.',
+          },
         };
       }
       if (state === 'failed') {
@@ -124,6 +129,42 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
           error: null,
         },
       };
+    }
+  );
+
+  // La descarga se sirve desde el backend: MinIO se consulta internamente y
+  // nunca se expone al navegador una URL firmada cuyo host cruce el túnel.
+  app.get(
+    '/api/v1/reportes/job/:jobId/download',
+    {
+      preHandler: [fastify.authenticate],
+      schema: { params: reporteJobParamsSchema },
+    },
+    async (request, reply) => {
+      assertAnyPermission(request, [
+        ['reportes_y_consolidados', 'exportar_base_de_datos'],
+        ['reportes_y_consolidados', 'generar_consolidado_ventas'],
+      ]);
+      const job = await getReportesQueue().getJob(request.params.jobId);
+      if (!job) throw new AppError(404, 'Reporte no encontrado o expirado. Genérelo nuevamente.');
+      if (job.data?.usuarioId != null && Number(job.data.usuarioId) !== Number(request.user?.sub ?? 0)) {
+        throw new AppError(403, 'No tienes acceso a este reporte.');
+      }
+      if (await job.getState() !== 'completed') {
+        throw new AppError(409, 'El reporte todavía no está listo para descargar.');
+      }
+
+      const archivo = job.returnvalue as { key?: string; filename?: string; mime?: string } | undefined;
+      if (!archivo?.key || !archivo.filename || !archivo.mime) {
+        throw new AppError(404, 'El archivo del reporte no está disponible. Genérelo nuevamente.');
+      }
+
+      const buffer = await getObjectBuffer(archivo.key);
+      return reply
+        .header('Content-Type', archivo.mime)
+        .header('Content-Disposition', `attachment; filename="${archivo.filename}"`)
+        .header('Cache-Control', 'private, no-store')
+        .send(buffer);
     }
   );
 }

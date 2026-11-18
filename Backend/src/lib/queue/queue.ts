@@ -133,6 +133,7 @@ export function getCertificatePdfQueue(): Queue {
 
 export interface ReportesJobData {
   formato: 'pdf' | 'excel';
+  usuarioId: number;
   filtros: {
     fechaInicio?: string;
     fechaFin?: string;
