@@ -22,7 +22,7 @@ import {
   notificarUsuario,
 } from '../services/notificacion.service.js';
 import { generarOrdenesTrabajoAprobacion } from '../services/cotizacion-aprobacion.service.js';
-import { validarOTEditableAntesDeCalibrar } from '../services/ot-edit-lock.service.js';
+import { ajustarIdsUnidades, crearIdsUnidades, obtenerIdsUnidadesCertificadas } from '../services/instrument-identity.service.js';
 import { calcularMontoTotalCotizacion, calcularValorDetalle, normalizarDinero } from '../services/cotizacion-money.service.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import { firmarTokenAprobacion, verificarTokenAprobacion } from '../lib/approval-token.js';
@@ -287,6 +287,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             MAGNITUD: d.magnitud,
             NORMA_TECNICA: d.normaTecnica ?? null,
             CANTIDAD: d.cantidad,
+            ID_UNIDADES: crearIdsUnidades(d.cantidad),
             VALOR_UNITARIO: d.valorUnitario,
             VALOR_TOTAL: valorTotal,
             sitio: d.sitio ?? 'LABORATORIO',
@@ -450,18 +451,44 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         );
       }
 
-      // 2. Bloquear cambios comerciales desde el inicio de la calibración.
-      // Borrador, enviada, aprobada y OT asignada siguen siendo editables.
-      if (existente.ordenes_trabajo && existente.ordenes_trabajo.length > 0) {
-        for (const ot of existente.ordenes_trabajo) {
-          await validarOTEditableAntesDeCalibrar(tx, ot.ID_ORDEN_TRABAJO, 'cotización');
-        }
-      }
-
       let subtotal = new Prisma.Decimal(0);
       
       // 3. LÓGICA DIFERENCIAL (CRUD DE DETALLES COTIZACIÓN)
       if (detalles) {
+        const idsCertificados = await obtenerIdsUnidadesCertificadas(tx, idCotizacion);
+        const detalleActualPorId = new Map(existente.cotizacion_detalles.map((detalle) => [detalle.ID_DETALLE, detalle]));
+        const idsCotizados = new Set(existente.cotizacion_detalles.flatMap((detalle) => detalle.ID_UNIDADES ?? []));
+        const certificadoSinVinculo = [...idsCertificados].find((id) => !idsCotizados.has(id));
+        if (certificadoSinVinculo) {
+          throw new AppError(409, 'Hay un certificado histórico cuyo instrumento no tiene identidad vinculada con la cotización. No se aplicaron cambios para proteger la trazabilidad.');
+        }
+        const idsEntrantesSet = new Set(detalles.map((detalle) => detalle.idDetalle).filter((id): id is number => Boolean(id && id <= 1_000_000_000_000)));
+
+        for (const actual of existente.cotizacion_detalles) {
+          const idsProtegidos = (actual.ID_UNIDADES ?? []).filter((id) => idsCertificados.has(id));
+          if (idsProtegidos.length && !idsEntrantesSet.has(actual.ID_DETALLE)) {
+            throw new AppError(409, `No se puede eliminar "${actual.EQUIPO_DESCRIPCION}": tiene unidades con certificado creado.`);
+          }
+        }
+
+        for (const entrada of detalles) {
+          const actual = entrada.idDetalle ? detalleActualPorId.get(entrada.idDetalle) : undefined;
+          if (!actual) continue;
+          const idsProtegidos = (actual.ID_UNIDADES ?? []).filter((id) => idsCertificados.has(id));
+          if (!idsProtegidos.length) continue;
+          const cambioIdentidad = actual.EQUIPO_DESCRIPCION !== entrada.equipoDescripcion ||
+            actual.TIPO_SERVICIO !== entrada.tipoServicio ||
+            actual.MAGNITUD !== entrada.magnitud ||
+            (actual.NORMA_TECNICA ?? '') !== (entrada.normaTecnica ?? '') ||
+            (actual.sitio ?? 'LABORATORIO') !== (entrada.sitio ?? 'LABORATORIO');
+          if (cambioIdentidad) {
+            throw new AppError(409, `No se pueden cambiar las características de "${actual.EQUIPO_DESCRIPCION}": tiene unidades con certificado creado.`);
+          }
+          if (entrada.cantidad < idsProtegidos.length) {
+            throw new AppError(409, `La cantidad no puede ser menor a ${idsProtegidos.length}; esas unidades tienen certificado creado.`);
+          }
+        }
+
         // Validación de tupla única (instrumento + tipoServicio + sitio)
         const tuplasVistas = new Set<string>();
         for (const d of detalles) {
@@ -494,6 +521,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
               MAGNITUD: d.magnitud,
               NORMA_TECNICA: d.normaTecnica ?? null,
               CANTIDAD: d.cantidad,
+              ID_UNIDADES: crearIdsUnidades(d.cantidad),
               VALOR_UNITARIO: d.valorUnitario,
               VALOR_TOTAL: valorTotal,
               sitio: d.sitio ?? 'LABORATORIO',
@@ -501,6 +529,9 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           } else {
             if(d.idDetalle !== undefined) {
               idsEntrantes.push(d.idDetalle);
+              const actual = detalleActualPorId.get(d.idDetalle);
+              if (!actual) throw new AppError(404, 'Una de las líneas de cotización ya no existe. Actualice la pantalla e intente de nuevo.');
+              const idsUnidades = ajustarIdsUnidades(actual.ID_UNIDADES ?? [], d.cantidad, idsCertificados);
 
               detallesActualizar.push(
                 
@@ -512,6 +543,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                     MAGNITUD: d.magnitud,
                     NORMA_TECNICA: d.normaTecnica ?? null,
                     CANTIDAD: d.cantidad,
+                    ID_UNIDADES: idsUnidades,
                     VALOR_UNITARIO: d.valorUnitario,
                     VALOR_TOTAL: valorTotal,
                     ...(d.sitio ? { sitio: d.sitio } : {}),
@@ -530,6 +562,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         if (detallesActualizar.length > 0) await Promise.all(detallesActualizar);
         // C. Crear
         if (detallesCrear.length > 0) await tx.cotizacion_detalles.createMany({ data: detallesCrear });
+        const detallesConIdentidad = (await tx.cotizacion_detalles.findMany({
+          where: { ID_COTIZACION_FK: idCotizacion, activacion: true },
+        })).map((detalle) => ({
+          equipoDescripcion: detalle.EQUIPO_DESCRIPCION,
+          tipoServicio: detalle.TIPO_SERVICIO,
+          cantidad: detalle.CANTIDAD,
+          sitio: detalle.sitio,
+          ID_UNIDADES: detalle.ID_UNIDADES,
+        }));
         const consecutivo = await generarConsecutivo(fastify.prisma, "COT",existente.CODIGO_COTIZACION);
       const update_cot=  await tx.cotizaciones.update({
           where:{CODIGO_COTIZACION:existente.CODIGO_COTIZACION},
@@ -539,7 +580,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         // ==========================================
         // 4. CASCADA: sincronizar TODAS las OTs y recepciones según su sitio.
         // ==========================================
-        const desdoblarDetalles = (dets: typeof detalles) => {
+        const desdoblarDetalles = (dets: typeof detallesConIdentidad) => {
           const out: any[] = [];
           let item = 1;
           for (const d of dets) {
@@ -548,14 +589,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                 ITEM: item++,
                 INSTRUMENTO: d.equipoDescripcion,
                 TIPO_SERVICIO: d.tipoServicio,
+                ID_UNIDAD_FK: d.ID_UNIDADES[i],
               });
             }
           }
           return out;
         };
 
-        const detallesPorSitio = new Map<'LABORATORIO' | 'CLIENTE', typeof detalles>();
-        for (const d of detalles) {
+        const detallesPorSitio = new Map<'LABORATORIO' | 'CLIENTE', typeof detallesConIdentidad>();
+        for (const d of detallesConIdentidad) {
           const sitio = d.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
           const lista = detallesPorSitio.get(sitio) ?? [];
           lista.push(d);
@@ -566,17 +608,20 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         for (const ot of existente.ordenes_trabajo) {
           const esMaster = ot.SITIO_CALIBRACION == null;
           const dets = esMaster
-            ? detalles
+            ? detallesConIdentidad
             : (detallesPorSitio.get((ot.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE') ?? []);
           const instrumentosDesdoblados = desdoblarDetalles(dets);
-          const detallesOTActuales = ot.orden_trabajo_detalles;
+          const detallesOTActuales = ot.orden_trabajo_detalles.filter((detalle) => detalle.activacion !== false);
+          const idsUnidadesPresentes = new Set<string>();
 
           for (let i = 0; i < instrumentosDesdoblados.length; i++) {
             const nuevo = instrumentosDesdoblados[i];
-            if (i < detallesOTActuales.length) {
+            const existentePorUnidad = detallesOTActuales.find((detalle) => detalle.ID_UNIDAD_FK === nuevo.ID_UNIDAD_FK);
+            if (existentePorUnidad) {
+              idsUnidadesPresentes.add(nuevo.ID_UNIDAD_FK);
               await tx.orden_trabajo_detalles.update({
-                where: { ID_DETALLE: detallesOTActuales[i].ID_DETALLE },
-                data: { INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO },
+                where: { ID_DETALLE: existentePorUnidad.ID_DETALLE },
+                data: { ITEM: nuevo.ITEM, INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO },
               });
             } else {
               await tx.orden_trabajo_detalles.create({
@@ -585,15 +630,17 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                   ITEM: nuevo.ITEM,
                   INSTRUMENTO: nuevo.INSTRUMENTO,
                   TIPO_SERVICIO: nuevo.TIPO_SERVICIO,
+                  ID_UNIDAD_FK: nuevo.ID_UNIDAD_FK,
                   asignado: null,
                 },
               });
+              idsUnidadesPresentes.add(nuevo.ID_UNIDAD_FK);
             }
           }
-          if (instrumentosDesdoblados.length < detallesOTActuales.length) {
-            const idsEliminar = detallesOTActuales
-              .slice(instrumentosDesdoblados.length)
-              .map((d) => d.ID_DETALLE);
+          const idsEliminar = detallesOTActuales
+            .filter((detalle) => !detalle.ID_UNIDAD_FK || !idsUnidadesPresentes.has(detalle.ID_UNIDAD_FK))
+            .map((detalle) => detalle.ID_DETALLE);
+          if (idsEliminar.length) {
             await tx.orden_trabajo_detalles.updateMany({
               where: { ID_DETALLE: { in: idsEliminar } },
               data: { activacion: false },
@@ -616,13 +663,16 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           const sitioRec = (recep.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE';
           const dets = detallesPorSitio.get(sitioRec) ?? [];
           const instrumentosDesdoblados = desdoblarDetalles(dets);
-          const detallesRecepActuales = recep.recepcion_equipo_detalles;
+          const detallesRecepActuales = recep.recepcion_equipo_detalles.filter((detalle) => detalle.activacion !== false);
+          const idsUnidadesPresentes = new Set<string>();
 
           for (let i = 0; i < instrumentosDesdoblados.length; i++) {
             const nuevo = instrumentosDesdoblados[i];
-            if (i < detallesRecepActuales.length) {
+            const existentePorUnidad = detallesRecepActuales.find((detalle) => detalle.ID_UNIDAD_FK === nuevo.ID_UNIDAD_FK);
+            if (existentePorUnidad) {
+              idsUnidadesPresentes.add(nuevo.ID_UNIDAD_FK);
               await tx.recepcion_equipo_detalles.update({
-                where: { ID_INSTRUMENTO: detallesRecepActuales[i].ID_INSTRUMENTO },
+                where: { ID_INSTRUMENTO: existentePorUnidad.ID_INSTRUMENTO },
                 data: { INSTRUMENTO: nuevo.INSTRUMENTO, ITEM: nuevo.ITEM },
               });
             } else {
@@ -631,14 +681,16 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                   ID_RECEPCION_FK: recep.ID_RECEPCION,
                   ITEM: nuevo.ITEM,
                   INSTRUMENTO: nuevo.INSTRUMENTO,
+                  ID_UNIDAD_FK: nuevo.ID_UNIDAD_FK,
                 },
               });
+              idsUnidadesPresentes.add(nuevo.ID_UNIDAD_FK);
             }
           }
-          if (instrumentosDesdoblados.length < detallesRecepActuales.length) {
-            const idsEliminar = detallesRecepActuales
-              .slice(instrumentosDesdoblados.length)
-              .map((d) => d.ID_INSTRUMENTO);
+          const idsEliminar = detallesRecepActuales
+            .filter((detalle) => !detalle.ID_UNIDAD_FK || !idsUnidadesPresentes.has(detalle.ID_UNIDAD_FK))
+            .map((detalle) => detalle.ID_INSTRUMENTO);
+          if (idsEliminar.length) {
             await tx.recepcion_equipo_detalles.updateMany({
               where: { ID_INSTRUMENTO: { in: idsEliminar } },
               data: { activacion: false },

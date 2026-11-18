@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
@@ -9,7 +10,7 @@ import { registrarBitacora } from '../services/bitacora.service.js';
 import { sincronizarCotizacionDesdeRecepcion } from '../services/cotizacion-sync.service.js';
 import {
   validarIdentidadInstrumentosRecepcion,
-  validarOTEditableAntesDeCalibrar,
+  validarInstrumentoSinCertificado,
 } from '../services/ot-edit-lock.service.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
@@ -32,7 +33,7 @@ import {
   tarifaRawToDtoSchema,
 } from './recepciones.schemas.js';
 
-type InstrumentoInput = InstrumentoRecepcionInput;
+type InstrumentoInput = InstrumentoRecepcionInput & { idUnidad?: string };
 
 const REC_INCLUDE = {
   recepcion_equipo_detalles: {
@@ -100,6 +101,7 @@ function mapDetalleCreate(inst: InstrumentoInput, item: number) {
     ESTADO_IBC: (inst.estadoIBC ?? {}) as Prisma.InputJsonValue,
     ESTAMPILLA: inst.estampilla && inst.estampilla.trim() ? inst.estampilla.trim() : null,
     OBSERVACIONES: inst.observaciones ?? null,
+    ID_UNIDAD_FK: inst.idUnidad ?? randomUUID(),
     activacion: true,
   };
 }
@@ -118,6 +120,7 @@ function mapDetalleUpdate(inst: InstrumentoInput, item: number) {
     ESTADO_IBC: (inst.estadoIBC ?? {}) as Prisma.InputJsonValue,
     ESTAMPILLA: inst.estampilla && inst.estampilla.trim() ? inst.estampilla.trim() : null,
     OBSERVACIONES: inst.observaciones ?? null,
+    ID_UNIDAD_FK: inst.idUnidad,
     activacion: true,
   };
 }
@@ -266,6 +269,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const body = request.body;
+      const instrumentosConId = body.instrumentos.map((instrumento) => ({ ...instrumento, idUnidad: randomUUID() }));
       if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
         throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
       }
@@ -308,7 +312,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               no_cotizacion: cotizacion.CODIGO_COTIZACION,
               estado: 'Creada',
               orden_trabajo_detalles: {
-                create: body.instrumentos.map((inst, idx) => ({
+                create: instrumentosConId.map((inst, idx) => ({
                   ITEM: idx + 1,
                   INSTRUMENTO: inst.instrumento,
                   TIPO_SERVICIO: 'Calibración',
@@ -316,6 +320,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                   MODELO: inst.modelo ?? null,
                   SERIE: inst.serie ?? null,
                   CODIGO_INVENTARIO: inst.codigoInventario ?? null,
+                  ID_UNIDAD_FK: inst.idUnidad,
                   asignado: null,
                   activacion: true,
                 })),
@@ -323,8 +328,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             },
           });
         }
-
-        await validarOTEditableAntesDeCalibrar(tx, ot.ID_ORDEN_TRABAJO, 'instrumentos de recepción');
 
         // 3. Crear la Recepción enlazada
         const codigoRec = await generarConsecutivo(tx, 'REC');
@@ -347,7 +350,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             OBSERVACIONES_PRUEBAS: body.observacionesPruebas ?? null,
             ESTADO: body.estado ?? 'BORRADOR',
             recepcion_equipo_detalles: {
-              create: body.instrumentos.map((inst, idx) => mapDetalleCreate(inst, idx + 1)),
+              create: instrumentosConId.map((inst, idx) => mapDetalleCreate(inst, idx + 1)),
             },
           },
           include: REC_INCLUDE,
@@ -356,7 +359,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         await sincronizarCotizacionDesdeRecepcion(
           tx,
           cotizacion.ID_COTIZACION,
-          body.instrumentos.map((instrumento) => ({ instrumento: instrumento.instrumento })),
+          instrumentosConId.map((instrumento) => ({ instrumento: instrumento.instrumento, idUnidad: instrumento.idUnidad })),
           normalizarSitio(body.sitioCalibracion),
         );
 
@@ -465,6 +468,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           (a, b) => (a.ITEM ?? 0) - (b.ITEM ?? 0) || a.ID_INSTRUMENTO - b.ID_INSTRUMENTO
         );
         const usados = new Set<number>();
+        const instrumentosActualizados: InstrumentoInput[] = [];
 
         for (let i = 0; i < body.instrumentos.length; i++) {
           const inst = body.instrumentos[i];
@@ -477,13 +481,17 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
           if (match) {
             usados.add(match.ID_INSTRUMENTO);
+            const instrumentoActualizado = { ...inst, idUnidad: match.ID_UNIDAD_FK ?? randomUUID() };
+            instrumentosActualizados.push(instrumentoActualizado);
             await tx.recepcion_equipo_detalles.update({
               where: { ID_INSTRUMENTO: match.ID_INSTRUMENTO },
-              data: mapDetalleUpdate(inst, item),
+              data: mapDetalleUpdate(instrumentoActualizado, item),
             });
           } else {
+            const instrumentoActualizado = { ...inst, idUnidad: randomUUID() };
+            instrumentosActualizados.push(instrumentoActualizado);
             await tx.recepcion_equipo_detalles.create({
-              data: { ID_RECEPCION_FK: id, ...mapDetalleCreate(inst, item) },
+              data: { ID_RECEPCION_FK: id, ...mapDetalleCreate(instrumentoActualizado, item) },
             });
           }
         }
@@ -506,13 +514,14 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
           let otCambio = false;
 
-          for (let i = 0; i < body.instrumentos.length; i++) {
-            const inst = body.instrumentos[i];
+          for (let i = 0; i < instrumentosActualizados.length; i++) {
+            const inst = instrumentosActualizados[i];
             const item = i + 1;
             const detalleAnterior = inst.idInstrumento != null
               ? existentes.find((d) => d.ID_INSTRUMENTO === inst.idInstrumento)
               : null;
             const otDet =
+              otDetalles.find((d) => d.ID_UNIDAD_FK === inst.idUnidad) ??
               (detalleAnterior ? otDetalles.find((d) => d.ITEM === detalleAnterior.ITEM) : undefined) ??
               (!inst.idInstrumento ? otDetalles.find((d) => d.ITEM === item) : undefined) ??
               otDetalles.find((d) => d.INSTRUMENTO === inst.instrumento);
@@ -530,6 +539,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                 otDet.MODELO !== modelo ||
                 otDet.SERIE !== serie ||
                 otDet.CODIGO_INVENTARIO !== codigoInventario ||
+                otDet.ID_UNIDAD_FK !== inst.idUnidad ||
                 otDet.activacion === false;
 
               if (cambio) {
@@ -543,6 +553,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                     MODELO: modelo,
                     SERIE: serie,
                     CODIGO_INVENTARIO: codigoInventario,
+                    ID_UNIDAD_FK: inst.idUnidad,
                     activacion: true,
                   },
                 });
@@ -560,10 +571,73 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                   MODELO: inst.modelo ?? null,
                   SERIE: inst.serie ?? null,
                   CODIGO_INVENTARIO: inst.codigoInventario ?? null,
+                  ID_UNIDAD_FK: inst.idUnidad,
                   asignado: null,
                   activacion: true,
                 },
               });
+            }
+          }
+
+          const unidadesOTVigentes = new Set(instrumentosActualizados.map((instrumento) => instrumento.idUnidad).filter(Boolean));
+          const idsOTRetirados = otDetalles
+            .filter((detalle) => detalle.activacion !== false && (!detalle.ID_UNIDAD_FK || !unidadesOTVigentes.has(detalle.ID_UNIDAD_FK)))
+            .map((detalle) => detalle.ID_DETALLE);
+          if (idsOTRetirados.length) {
+            otCambio = true;
+            await tx.orden_trabajo_detalles.updateMany({ where: { ID_DETALLE: { in: idsOTRetirados } }, data: { activacion: false } });
+          }
+
+          const otHija = await tx.ordenes_trabajo.findUnique({
+            where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
+            select: { ID_OT_PADRE_FK: true },
+          });
+          if (otHija?.ID_OT_PADRE_FK) {
+            const idOtMaestra = otHija.ID_OT_PADRE_FK;
+            const detallesMaestros = await tx.orden_trabajo_detalles.findMany({ where: { ID_ORDEN_TRABAJO_FK: idOtMaestra } });
+            const idsMaestrosVigentes = new Set<string>();
+            let maestroCambio = false;
+            for (let i = 0; i < instrumentosActualizados.length; i++) {
+              const inst = instrumentosActualizados[i];
+              const detalle = detallesMaestros.find((d) => d.ID_UNIDAD_FK === inst.idUnidad);
+              if (detalle) {
+                idsMaestrosVigentes.add(inst.idUnidad!);
+                if (detalle.ITEM !== i + 1 || detalle.INSTRUMENTO !== inst.instrumento || detalle.activacion === false) {
+                  maestroCambio = true;
+                  await tx.orden_trabajo_detalles.update({
+                    where: { ID_DETALLE: detalle.ID_DETALLE },
+                    data: { ITEM: i + 1, INSTRUMENTO: inst.instrumento, activacion: true },
+                  });
+                }
+              } else {
+                maestroCambio = true;
+                idsMaestrosVigentes.add(inst.idUnidad!);
+                await tx.orden_trabajo_detalles.create({
+                  data: {
+                    ID_ORDEN_TRABAJO_FK: idOtMaestra,
+                    ITEM: i + 1,
+                    INSTRUMENTO: inst.instrumento,
+                    TIPO_SERVICIO: 'Calibración',
+                    ID_UNIDAD_FK: inst.idUnidad,
+                    asignado: null,
+                    activacion: true,
+                  },
+                });
+              }
+            }
+            const retirarMaestros = detallesMaestros
+              .filter((d) => d.activacion !== false && (!d.ID_UNIDAD_FK || !idsMaestrosVigentes.has(d.ID_UNIDAD_FK)))
+              .map((d) => d.ID_DETALLE);
+            if (retirarMaestros.length) {
+              maestroCambio = true;
+              await tx.orden_trabajo_detalles.updateMany({ where: { ID_DETALLE: { in: retirarMaestros } }, data: { activacion: false } });
+            }
+            if (maestroCambio) {
+              const maestra = await tx.ordenes_trabajo.findUnique({ where: { ID_ORDEN_TRABAJO: idOtMaestra }, select: { CODIGO_OT: true } });
+              if (maestra) {
+                const codigo = await generarConsecutivo(tx, 'OT', maestra.CODIGO_OT);
+                await tx.ordenes_trabajo.update({ where: { ID_ORDEN_TRABAJO: idOtMaestra }, data: { CODIGO_OT: codigo } });
+              }
             }
           }
 
@@ -590,7 +664,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           await sincronizarCotizacionDesdeRecepcion(
             tx,
             actual.ID_COTIZACION_FK,
-            body.instrumentos,
+            instrumentosActualizados,
             normalizarSitio(body.sitioCalibracion ?? actual.SITIO_CALIBRACION),
           );
         }
@@ -637,6 +711,27 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           id_job: jobOt.id,
           id_usuario: idUsuario,
         });
+        const otActual = await fastify.prisma.ordenes_trabajo.findUnique({
+          where: { ID_ORDEN_TRABAJO: recepcion.ID_ORDEN_TRABAJO_FK },
+          select: { ID_OT_PADRE_FK: true },
+        });
+        if (otActual?.ID_OT_PADRE_FK) {
+          const otMaestra = await fastify.prisma.ordenes_trabajo.findUnique({
+            where: { ID_ORDEN_TRABAJO: otActual.ID_OT_PADRE_FK },
+            select: { CODIGO_OT: true },
+          });
+          if (otMaestra) {
+            const jobMaestro = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+            await excelQueue.add('actualizacion_orden', {
+              tipo: 2,
+              id_registro: otActual.ID_OT_PADRE_FK,
+              codigo_actual: otMaestra.CODIGO_OT,
+              tipo_entry: 'prod',
+              id_job: jobMaestro.id,
+              id_usuario: idUsuario,
+            });
+          }
+        }
       }
 
       return {
@@ -672,6 +767,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
       let idCotizacionFinal: number | null = null;
       let idOrdenTrabajoFinal: number | null = null;
+      let idOTPadreFinal: number | null = null;
       let codigoRecepcion = '';
 
       await fastify.prisma.$transaction(async (tx) => {
@@ -681,14 +777,11 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         });
         if (!rec) throw new AppError(404, 'Recepción no encontrada');
 
-        if (rec.ID_ORDEN_TRABAJO_FK) {
-          await validarOTEditableAntesDeCalibrar(tx, rec.ID_ORDEN_TRABAJO_FK, 'instrumentos de recepción');
-        }
-
         const detalle = rec.recepcion_equipo_detalles.find(
           (d) => d.ID_INSTRUMENTO === idInstrumento
         );
         if (!detalle) throw new AppError(404, 'Instrumento no encontrado en la recepción');
+        await validarInstrumentoSinCertificado(tx, detalle.ID_INSTRUMENTO);
 
         const instrumentosActivos = rec.recepcion_equipo_detalles.filter((d) => d.activacion !== false);
         if (detalle.activacion === false) {
@@ -715,7 +808,9 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                 },
               })
             : null;
-          const otDet = otDetPorItem ?? await tx.orden_trabajo_detalles.findFirst({
+          const otDet = (detalle.ID_UNIDAD_FK
+            ? await tx.orden_trabajo_detalles.findFirst({ where: { ID_ORDEN_TRABAJO_FK: rec.ID_ORDEN_TRABAJO_FK, ID_UNIDAD_FK: detalle.ID_UNIDAD_FK } })
+            : null) ?? otDetPorItem ?? await tx.orden_trabajo_detalles.findFirst({
             where: {
               ID_ORDEN_TRABAJO_FK: rec.ID_ORDEN_TRABAJO_FK,
               INSTRUMENTO: detalle.INSTRUMENTO,
@@ -728,6 +823,21 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               data: { activacion: false },
             });
           }
+          const otHija = await tx.ordenes_trabajo.findUnique({
+            where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
+            select: { ID_OT_PADRE_FK: true },
+          });
+          if (otHija?.ID_OT_PADRE_FK) {
+            idOTPadreFinal = otHija.ID_OT_PADRE_FK;
+            if (detalle.ID_UNIDAD_FK) {
+              const detalleMaestro = await tx.orden_trabajo_detalles.findFirst({
+                where: { ID_ORDEN_TRABAJO_FK: idOTPadreFinal, ID_UNIDAD_FK: detalle.ID_UNIDAD_FK, OR: [{ activacion: true }, { activacion: null }] },
+              });
+              if (detalleMaestro) await tx.orden_trabajo_detalles.update({ where: { ID_DETALLE: detalleMaestro.ID_DETALLE }, data: { activacion: false } });
+            }
+            const maestro = await tx.ordenes_trabajo.findUnique({ where: { ID_ORDEN_TRABAJO: idOTPadreFinal }, select: { CODIGO_OT: true } });
+            if (maestro) await tx.ordenes_trabajo.update({ where: { ID_ORDEN_TRABAJO: idOTPadreFinal }, data: { CODIGO_OT: await generarConsecutivo(tx, 'OT', maestro.CODIGO_OT) } });
+          }
         }
 
         // 3. Sincronizar cotización (agrupar por cantidad + recalcular monto).
@@ -739,7 +849,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           await sincronizarCotizacionDesdeRecepcion(
             tx,
             cotizacionId,
-            activosRec.map((d) => ({ instrumento: d.INSTRUMENTO })),
+            activosRec.map((d) => ({ instrumento: d.INSTRUMENTO, idUnidad: d.ID_UNIDAD_FK })),
             rec.SITIO_CALIBRACION ?? 'LABORATORIO',
           );
         }
@@ -852,6 +962,20 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           id_usuario: idUsuario,
         });
       }
+      if (idOTPadreFinal) {
+        const otMaestra = await fastify.prisma.ordenes_trabajo.findUnique({ where: { ID_ORDEN_TRABAJO: idOTPadreFinal }, select: { CODIGO_OT: true } });
+        if (otMaestra) {
+          const jobMaestro = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+          await excelQueue.add('actualizacion_orden', {
+            tipo: 2,
+            id_registro: idOTPadreFinal,
+            codigo_actual: otMaestra.CODIGO_OT,
+            tipo_entry: 'prod',
+            id_job: jobMaestro.id,
+            id_usuario: idUsuario,
+          });
+        }
+      }
       const jobRec = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
       await excelQueue.add('actualizacion_recepcion', {
         tipo: 3,
@@ -896,8 +1020,11 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         });
         if (!rec) throw new AppError(404, 'Recepción no encontrada');
 
-        if (rec.ID_ORDEN_TRABAJO_FK) {
-          await validarOTEditableAntesDeCalibrar(tx, rec.ID_ORDEN_TRABAJO_FK, 'instrumentos de recepción');
+        const certificadosActivos = await tx.certificados.count({
+          where: { calibraciones: { recepcion_equipo_detalles: { ID_RECEPCION_FK: rec.ID_RECEPCION } } },
+        });
+        if (certificadosActivos) {
+          throw new AppError(409, 'No se puede desactivar la recepción completa mientras tenga instrumentos con certificado creado.');
         }
 
         // Soft delete de la recepción (no se borra físicamente).

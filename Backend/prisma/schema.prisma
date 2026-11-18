@@ -119,6 +119,7 @@ model cotizacion_detalles {
   VALOR_TOTAL        Decimal      @db.Decimal(12, 2)
   sitio              sitio_calibracion?   @default(LABORATORIO)
   activacion            Boolean            @default(true)
+  ID_UNIDADES         String[]     @default([]) @db.Uuid
   cotizaciones       cotizaciones @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
 }
 
@@ -229,6 +230,7 @@ model orden_trabajo_detalles {
   REGLA_DECISION          String?
   sitio_calibracion       sitio_calibracion? @default(LABORATORIO)
     activacion      Boolean?
+  ID_UNIDAD_FK            String?         @db.Uuid
   ordenes_trabajo         ordenes_trabajo @relation(fields: [ID_ORDEN_TRABAJO_FK], references: [ID_ORDEN_TRABAJO], onDelete: Cascade)
   usuarios                usuarios?       @relation(fields: [asignado], references: [ID_USUARIO_AUTO_INCREMENT], onDelete: Cascade)
 }
@@ -369,6 +371,7 @@ model recepcion_equipo_detalles {
   OBSERVACIONES      String?
   calibraciones      calibraciones?
   activacion      Boolean?
+  ID_UNIDAD_FK       String?          @db.Uuid
   recepciones_equipo recepciones_equipo @relation(fields: [ID_RECEPCION_FK], references: [ID_RECEPCION], onDelete: Cascade)
 }
 

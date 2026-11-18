@@ -1,18 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EstadoOT, Prisma } from '@prisma/client';
-import { validarIdentidadInstrumentosRecepcion, validarOTEditableAntesDeCalibrar } from '../src/services/ot-edit-lock.service.js';
+import { validarIdentidadInstrumentosRecepcion } from '../src/services/ot-edit-lock.service.js';
 
-function fakeTx(estado: EstadoOT, tieneCalibracion = false): Prisma.TransactionClient {
+function fakeTx(estado: EstadoOT, tieneCertificado = false): Prisma.TransactionClient {
   return {
     ordenes_trabajo: {
       findUnique: async () => ({ CODIGO_OT: 'OT-TEST', estado }),
     },
-    recepciones_equipo: {
-      findMany: async () => [{ ID_RECEPCION: 20 }],
-    },
     calibraciones: {
-      findFirst: async () => tieneCalibracion ? { ID_CALIBRACION: 30 } : null,
+      findMany: async () => tieneCertificado ? [{ ID_INSTRUMENTO_FK: 10 }] : [],
     },
   } as unknown as Prisma.TransactionClient;
 }
@@ -29,6 +26,7 @@ const instrumentoBase = {
   TIPO_SENSOR_TEMP_ext: false,
   ESTADO_IBC: { entrada: { limpio: true }, salida: {} } as Prisma.JsonValue,
   ESTAMPILLA: 'E-1',
+  OBSERVACIONES: null,
 };
 
 const inputBase = {
@@ -41,34 +39,25 @@ const inputBase = {
   resolucion: '0.1',
   sensorInt: false,
   sensorExt: false,
-  estadoIBC: { entrada: { limpio: true }, salida: { embalado: true } },
+  estadoIBC: { entrada: { limpio: true }, salida: {} },
   estampilla: 'E-1',
+  observaciones: null,
 };
 
-test('permite editar antes de que la OT empiece calibración', async () => {
-  await assert.doesNotReject(() => validarOTEditableAntesDeCalibrar(fakeTx(EstadoOT.Asignada), 1, 'cotización'));
-});
-
-test('bloquea desde calibración y también detecta una calibración con estado atrasado', async () => {
-  await assert.rejects(
-    () => validarOTEditableAntesDeCalibrar(fakeTx(EstadoOT.En_calibración), 1, 'cotización'),
-    (error: unknown) => (error as { statusCode?: number }).statusCode === 409,
-  );
-  await assert.rejects(
-    () => validarOTEditableAntesDeCalibrar(fakeTx(EstadoOT.Asignada, true), 1, 'cotización'),
-    (error: unknown) => (error as { statusCode?: number }).statusCode === 409,
-  );
-});
-
-test('después del inicio permite cambiar salida logística sin cambiar identidad técnica', async () => {
+test('permite cambiar unidades sin certificado aunque la OT esté en calibración', async () => {
   await assert.doesNotReject(() => validarIdentidadInstrumentosRecepcion(
-    fakeTx(EstadoOT.En_calibración), 1, [instrumentoBase], [inputBase],
+    fakeTx(EstadoOT.En_calibración), 1, [instrumentoBase], [],
   ));
 });
 
-test('después del inicio rechaza alta, baja o cambio de identidad del instrumento', async () => {
-  const tx = fakeTx(EstadoOT.Certificado_aprobado);
+test('protege solo el instrumento con certificado creado, aunque siga pendiente de revisión', async () => {
+  const tx = fakeTx(EstadoOT.Certificado_en_revisión, true);
   await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], []));
-  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], [inputBase, { ...inputBase, idInstrumento: 11 }]));
   await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], [{ ...inputBase, serie: 'CAMBIADA' }]));
+  await assert.doesNotReject(() => validarIdentidadInstrumentosRecepcion(
+    tx,
+    1,
+    [instrumentoBase],
+    [inputBase, { ...inputBase, idInstrumento: undefined, instrumento: 'Unidad nueva', serie: 'S2' }],
+  ));
 });
