@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { useDbTable } from "@/app/componets/tables_recharge";
 import {
   obtenerCertificadosRevision,
   aprobarCertificado,
@@ -470,11 +471,13 @@ function mapRevision(data: CertificadoRevisionItem[]): CertificadoRevision[] {
 
 export function RevisionCertificados() {
   const { data: session } = useSession();
+  const certificadosRealtime = useDbTable("certificados");
+  const calibracionesRealtime = useDbTable("calibraciones");
   const { can } = usePermissions();
   const rol = (session?.user?.role as string) || "Sin rol";
   const puedeRevisarCertificado = useCallback(
     (certificado: CertificadoRevision) =>
-      certificado.acreditado
+      certificado.acreditado === true
         ? can("revision", "revisar_aprobar_acreditados")
         : can("revision", "revisar_aprobar_no_acreditados"),
     [can]
@@ -496,9 +499,12 @@ export function RevisionCertificados() {
   }, []);
 
   const cargar = useCallback(async () => {
-    const data = await obtenerCertificadosRevision();
-    setCertsRaw(mapRevision(data));
-    setCargando(false);
+    try {
+      const data = await obtenerCertificadosRevision();
+      setCertsRaw(mapRevision(data));
+    } finally {
+      setCargando(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -515,7 +521,7 @@ export function RevisionCertificados() {
     return () => {
       activo = false;
     };
-  }, []);
+  }, [certificadosRealtime, calibracionesRealtime]);
 
   const pending = certsRaw.filter((c) => c.status === "pendiente");
   const selectedCert = certsRaw.find((c) => c.idCertificado === selected);

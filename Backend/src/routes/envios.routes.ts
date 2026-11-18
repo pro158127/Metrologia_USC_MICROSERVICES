@@ -9,6 +9,8 @@ import { enviarCorreoYEsperar } from '../services/email-delivery.service.js';
 import { transicionarOT, evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertAnyPermission } from '../lib/permissions.js';
+import { pendientesEntregaSalida } from '../services/recepcion-entrega.service.js';
+import { cerrarSeguimientoSiCompleto } from '../services/seguimiento-cierre.service.js';
 
 const otParamsSchema = z.object({ id: z.coerce.number() });
 
@@ -148,21 +150,19 @@ async function cargarContextoOT(fastify: FastifyInstance, idOT: number) {
 function pendientesEntrega(recepciones: Array<any>): string[] {
   const faltantes = new Set<string>();
   for (const recepcion of recepciones) {
-    const equipos = recepcion.recepcion_equipo_detalles.filter((d: any) => d.activacion !== false);
-    if (!recepcion.FECHA_SALIDA) faltantes.add('fecha de salida');
-    if (!recepcion.NOMBRE_RECIBE?.trim()) faltantes.add('nombre de quien recibe');
-    if (!recepcion.NOMBRE_EMPACA?.trim()) faltantes.add('nombre de quien empaca');
-    if (!/^Accesorios: (Bueno|Malo) -\s*\S/i.test(recepcion.ACCESORIOS ?? '')) {
-      faltantes.add('accesorios y estado general');
-    }
-    if (!recepcion.NOMBRE_RECIBE_SERVICIO?.trim()) faltantes.add('nombre de quien recibe el servicio');
-    if (equipos.length === 0) faltantes.add('instrumentos activos en la recepción');
-    for (const equipo of equipos) {
-      const salida = equipo.ESTADO_IBC?.salida;
-      if (!['E', 'T', 'D', 'A'].every((k) => typeof salida?.[k] === 'boolean')) {
-        faltantes.add(`estado IBC de salida de ${equipo.INSTRUMENTO}`);
-      }
-    }
+    const pendientes = pendientesEntregaSalida({
+      fechaSalida: recepcion.FECHA_SALIDA,
+      nombreRecibe: recepcion.NOMBRE_RECIBE,
+      nombreEmpaca: recepcion.NOMBRE_EMPACA,
+      accesorios: recepcion.ACCESORIOS,
+      nombreRecibeServicio: recepcion.NOMBRE_RECIBE_SERVICIO,
+      instrumentos: recepcion.recepcion_equipo_detalles.map((equipo: any) => ({
+        instrumento: equipo.INSTRUMENTO,
+        estadoIBC: equipo.ESTADO_IBC as { salida?: Record<string, unknown> } | null,
+        activacion: equipo.activacion,
+      })),
+    });
+    pendientes.forEach((pendiente) => faltantes.add(pendiente));
   }
   if (recepciones.length === 0) faltantes.add('recepción de equipos');
   return [...faltantes];
@@ -326,15 +326,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idOT = request.params.id;
-      const { ot, certificados, todosAprobados, entregaCompleta, entregasPendientes } = await cargarContextoOT(fastify, idOT);
+      const { ot, certificados, todosAprobados } = await cargarContextoOT(fastify, idOT);
 
       const destinoPago = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
       if (!destinoPago) {
         throw new AppError(409, 'No se puede registrar el pago: la OT no tiene un correo válido. Revise o actualice el correo electrónico.');
-      }
-
-      if (!entregaCompleta) {
-        throw new AppError(409, `No se puede subir el comprobante. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
       }
 
       const cotizacion = ot.ID_COTIZACION_FK
@@ -394,7 +390,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           data: { estado_pago: 'PAGADO' },
         });
 
-        // El pago registrado dispara automáticamente el estado "Certificado_enviado".
+        // Recalcula estados técnicos, pero el pago por sí solo no marca el certificado como enviado.
         await evaluarTransicionesOT(tx, idOT);
 
         // Crear (idempotente) la factura asociada a la cotización.
@@ -417,19 +413,6 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
               },
             });
           }
-        }
-
-        // Trazabilidad comercial: solo en la transición no-PAGADO -> PAGADO.
-        if (!yaPagada && ot.ID_COTIZACION_FK) {
-          await tx.seguimientos_comerciales.create({
-            data: {
-              ID_COTIZACION_FK: ot.ID_COTIZACION_FK,
-              TIPO: 'PAGO',
-              DESCRIPCION: `Comprobante de pago registrado — OT ${ot.CODIGO_OT}`,
-              RESULTADO: 'PAGADO',
-              ID_USUARIO_FK: Number(request.user?.sub ?? 0) || null,
-            },
-          });
         }
 
         await registrarBitacora(tx, {
@@ -464,6 +447,10 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           });
         }
 
+        if (ot.ID_COTIZACION_FK) {
+          await cerrarSeguimientoSiCompleto(tx, ot.ID_COTIZACION_FK, Number(request.user?.sub ?? 0) || null);
+        }
+
         return { idDocumento: documento.ID_DOCUMENTO, rutaUrl: documento.RUTA_URL, yaPagada };
       }, { timeout: 180_000 });
 
@@ -490,16 +477,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idOT = request.params.id;
-      const { ot, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } = await cargarContextoOT(
+      const { ot, certificados, comprobantes, todosAprobados } = await cargarContextoOT(
         fastify,
         idOT
       );
 
       if (comprobantes.length === 0) {
         throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
-      }
-      if (!entregaCompleta) {
-        throw new AppError(409, `No se pueden enviar los certificados. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
       }
       if (!todosAprobados) {
         throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
@@ -546,7 +530,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             userId: Number(request.user?.sub ?? 0), ip: request.ip,
             details: { codigoOT: ot.CODIGO_OT, totalCertificados: certificados.length },
         });
-        return await enviarCorreoYEsperar(emailData);
+        const jobId = await enviarCorreoYEsperar(emailData);
+        if (ot.ID_COTIZACION_FK) {
+          await cerrarSeguimientoSiCompleto(tx, ot.ID_COTIZACION_FK, Number(request.user?.sub ?? 0) || null);
+        }
+        return jobId;
       }, { timeout: 180_000 });
 
       return {
@@ -621,12 +609,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idCotizacion = request.params.id;
-      const { hijas, master, cotizacion, certificados, todosAprobados, entregaCompleta, entregasPendientes } =
+      const { hijas, master, cotizacion, certificados, todosAprobados } =
         await cargarContextoCotizacion(fastify, idCotizacion);
-
-      if (!entregaCompleta) {
-        throw new AppError(409, `No se puede subir el comprobante. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
-      }
 
       if (!todosAprobados) {
         throw new AppError(
@@ -673,6 +657,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           });
           await evaluarTransicionesOT(tx, hija.ID_ORDEN_TRABAJO);
         }
+        await cerrarSeguimientoSiCompleto(tx, idCotizacion, Number(request.user?.sub ?? 0) || null);
 
         // Crear (idempotente) la factura asociada a la cotización.
         const numeroFactura = cotizacion?.CODIGO_COTIZACION
@@ -725,14 +710,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idCotizacion = request.params.id;
-      const { hijas, master, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } =
+      const { hijas, master, certificados, comprobantes, todosAprobados } =
         await cargarContextoCotizacion(fastify, idCotizacion);
 
       if (comprobantes.length === 0) {
         throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
-      }
-      if (!entregaCompleta) {
-        throw new AppError(409, `No se pueden enviar los certificados. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
       }
       if (!todosAprobados) {
         throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
@@ -783,7 +765,9 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             userId: Number(request.user?.sub ?? 0), ip: request.ip,
             details: { idCotizacion, totalOTs: hijas.length, totalCertificados: certificados.length },
         });
-        return await enviarCorreoYEsperar(emailData);
+        const jobId = await enviarCorreoYEsperar(emailData);
+        await cerrarSeguimientoSiCompleto(tx, idCotizacion, Number(request.user?.sub ?? 0) || null);
+        return jobId;
       }, { timeout: 180_000 });
 
       return {

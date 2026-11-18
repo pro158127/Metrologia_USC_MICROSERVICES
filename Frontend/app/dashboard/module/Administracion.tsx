@@ -184,6 +184,7 @@ function RenderTabUsuarios({
   openCreate,
   openEdit,
   toggleEstado,
+  recargarUsuarios,
   showToast,
   rolColors,
 }: TabUsuariosProps) {
@@ -651,8 +652,13 @@ console.log(userdelted,"esto es  ")
         onClick={async()=>{
           setEleminar(u.idUsuario)
           try{
-         const a=await eliminarUsuario({idUsuario:u.idUsuario})
-        console.log(a,"jjsdoosd")
+         const respuesta=await eliminarUsuario({idUsuario:u.idUsuario})
+         if (respuesta.success) {
+           showToast(respuesta.message || "✅ Usuario eliminado y desactivado.");
+           await recargarUsuarios();
+         } else {
+           showToast(`❌ No se pudo eliminar: ${respuesta.error || "Error desconocido."}`);
+         }
         
         }
          
@@ -870,6 +876,7 @@ console.log(userdelted,"esto es  ")
 
         {puedeGestionarUsuarios && (
         <button
+        disabled={loadingrestaurar===u.idUsuario}
         
             className="px-3 py-2 rounded-xl cursor-pointer"
             style={{
@@ -881,7 +888,13 @@ console.log(userdelted,"esto es  ")
               async()=>{
           setRestaurar(u.idUsuario)
           try{
-         const a=await restaurarUsuario({idUsuario:u.idUsuario})}
+         const respuesta=await restaurarUsuario({idUsuario:u.idUsuario})
+         if (respuesta.success) {
+           showToast(respuesta.message || "✅ Usuario restaurado y activado.");
+           await recargarUsuarios();
+         } else {
+           showToast(`❌ No se pudo restaurar: ${respuesta.error || "Error desconocido."}`);
+         }}
           catch(error){
            showToast("Algo sucedio ,contacta al administrador")
           }
@@ -1845,6 +1858,7 @@ export function Administracion() {
       if (respuesta.success) {
         showToast("✅ Usuario actualizado exitosamente.");
         setShowModal(false);
+        await loadTable("usuarios", true);
       } else {
         showToast(`❌ Error: ${respuesta.error}`);
       }
@@ -1854,20 +1868,35 @@ export function Administracion() {
         showToast("⚠️ Ya existe un usuario con ese correo institucional.");
         return;
       }
-      await crearUsuarioGenerico({
+      const respuesta = await crearUsuarioGenerico({
         nombre: form.nombre,
         correo: form.correo,
         idRol: id_rol,
         estado: form.estado,
       });
-      showToast("✅ Usuario creado exitosamente.");
-      setShowModal(false);
+      if (respuesta.success) {
+        showToast(respuesta.warning
+          ? `⚠️ Usuario creado, pero no se pudo enviar el correo: ${respuesta.warning}`
+          : "✅ Usuario creado exitosamente.");
+        setShowModal(false);
+        await loadTable("usuarios", true);
+      } else {
+        showToast(`❌ No se pudo crear el usuario: ${respuesta.error || "Error desconocido."}`);
+      }
     }
   };
 
   const toggleEstado = async (id: number, estado: boolean) => {
-    await actualizarUsuarioGenerico(id, { estado: !estado });
+    const respuesta = await actualizarUsuarioGenerico(id, { estado: !estado });
+    if (!respuesta.success) {
+      showToast(`❌ No se pudo ${estado ? "desactivar" : "activar"} el usuario: ${respuesta.error || "Error desconocido."}`);
+      return;
+    }
+    showToast(estado ? "✅ Usuario desactivado." : "✅ Usuario activado.");
+    await loadTable("usuarios", true);
   };
+
+  const recargarUsuarios = useCallback(() => loadTable("usuarios", true), [loadTable]);
 console.log("LONGITUD STORE:", usuarios.length);
 console.log("LONGITUD FILTRADOS:", filteredUsers.length);
   return (
@@ -1935,6 +1964,7 @@ console.log("LONGITUD FILTRADOS:", filteredUsers.length);
             openCreate={openCreate}
             openEdit={openEdit}
             toggleEstado={toggleEstado}
+            recargarUsuarios={recargarUsuarios}
             showToast={showToast}
             rolColors={rolColors}
           />

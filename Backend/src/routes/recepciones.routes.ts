@@ -14,6 +14,8 @@ import {
 } from '../services/ot-edit-lock.service.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
+import { pendientesEntregaSalida } from '../services/recepcion-entrega.service.js';
+import { cerrarSeguimientoSiCompleto } from '../services/seguimiento-cierre.service.js';
 import {
   clienteRawToDtoSchema,
   cotizacionConDetallesRawToDtoSchema,
@@ -39,6 +41,7 @@ const REC_INCLUDE = {
   recepcion_equipo_detalles: {
     where: { OR: [{ activacion: true }, { activacion: null }] },
     orderBy: { ITEM: 'asc' },
+              include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
   },
   documentos: true,
   cotizaciones: { include: { clientes: true } },
@@ -78,6 +81,46 @@ function validarRecepcionDefinitiva(body: InstrumentoInput[], cabecera: { nombre
         ['E', 'T', 'D', 'A'].every((k) => typeof entrada?.[k] === 'boolean');
     })
   );
+}
+
+function calcularEstadoRecepcion(
+  instrumentos: InstrumentoInput[],
+  cabecera: {
+    estado?: string;
+    nombreEntrega?: string | null;
+    fechaRecepcion?: string | null;
+    fechaSalida?: string | null;
+    nombreRecibe?: string | null;
+    nombreEmpaca?: string | null;
+    accesorios?: string | null;
+    nombreRecibeServicio?: string | null;
+  },
+  nombreRecibeSesion: string,
+): 'BORRADOR' | 'RECIBIDO' | 'ENTREGADO' {
+  const entradaCompleta = validarRecepcionDefinitiva(instrumentos, cabecera);
+  const pendientesSalida = pendientesEntregaSalida({
+    fechaSalida: cabecera.fechaSalida,
+    nombreRecibe: nombreRecibeSesion || cabecera.nombreRecibe,
+    nombreEmpaca: cabecera.nombreEmpaca,
+    accesorios: cabecera.accesorios,
+    nombreRecibeServicio: cabecera.nombreRecibeServicio,
+    instrumentos: instrumentos.map((instrumento) => ({
+      instrumento: instrumento.instrumento,
+      estadoIBC: instrumento.estadoIBC as { salida?: Record<string, unknown> } | null,
+      activacion: true,
+    })),
+  });
+  const salidaCompleta = entradaCompleta && pendientesSalida.length === 0;
+
+  if (cabecera.estado === 'ENTREGADO' && !salidaCompleta) {
+    throw new AppError(409, 'No se puede cerrar la recepción: faltan datos de salida de uno o más instrumentos.');
+  }
+  if (cabecera.estado === 'RECIBIDO' && !entradaCompleta) {
+    throw new AppError(409, 'No se puede marcar RECIBIDO: complete datos de entrada de todos los instrumentos.');
+  }
+
+  if (!entradaCompleta) return 'BORRADOR';
+  return salidaCompleta ? 'ENTREGADO' : 'RECIBIDO';
 }
 
 /** Nombre del usuario autenticado (para autocompletar NOMBRE_RECIBE). */
@@ -145,6 +188,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           recepcion_equipo_detalles: {
             where: { OR: [{ activacion: true }, { activacion: null }] },
             orderBy: { ITEM: 'asc' },
+            include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
           },
           cotizaciones: { include: { clientes: true } },
           ordenes_trabajo: {
@@ -210,6 +254,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               recepcion_equipo_detalles: {
                 where: { OR: [{ activacion: true }, { activacion: null }] },
                 orderBy: { ITEM: 'asc' },
+                include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
               },
               cotizaciones: { include: { clientes: true } },
               ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
@@ -269,10 +314,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const body = request.body;
+      const estadoCalculado = calcularEstadoRecepcion(
+        body.instrumentos,
+        body,
+        nombreUsuarioActual(request),
+      );
       let instrumentosConId: InstrumentoInput[] = body.instrumentos.map((instrumento) => ({ ...instrumento, idUnidad: randomUUID() }));
-      if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
-        throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
-      }
       const idUsuario = Number(request.user?.sub ?? 0);
 
       const recepcion = await fastify.prisma.$transaction(async (tx) => {
@@ -396,7 +443,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             ACCESORIOS: body.accesorios ?? null,
             PRUEBAS_COMPLETAS: body.pruebasCompletas ?? true,
             OBSERVACIONES_PRUEBAS: body.observacionesPruebas ?? null,
-            ESTADO: body.estado ?? 'BORRADOR',
+            ESTADO: estadoCalculado,
             recepcion_equipo_detalles: {
               create: instrumentosConId.map((inst, idx) => mapDetalleCreate(inst, idx + 1)),
             },
@@ -412,6 +459,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         );
 
         await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
+        await cerrarSeguimientoSiCompleto(tx, cotizacion.ID_COTIZACION, idUsuario || null);
 
         await registrarBitacora(tx, {
           action: 'CREATE',
@@ -466,9 +514,11 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const { id } = request.params;
       const body = request.body;
-      if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
-        throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
-      }
+      const estadoCalculado = calcularEstadoRecepcion(
+        body.instrumentos,
+        body,
+        nombreUsuarioActual(request),
+      );
       const idUsuario = Number(request.user?.sub ?? 0);
 
       const recepcion = await fastify.prisma.$transaction(async (tx) => {
@@ -507,7 +557,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             ACCESORIOS: body.accesorios ?? null,
             PRUEBAS_COMPLETAS: body.pruebasCompletas ?? true,
             OBSERVACIONES_PRUEBAS: body.observacionesPruebas ?? null,
-            ...(body.estado ? { ESTADO: body.estado } : {}),
+            ESTADO: estadoCalculado,
           },
         });
 
@@ -726,6 +776,16 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           where: { ID_RECEPCION: id },
           include: REC_INCLUDE,
         });
+
+        const idCotizacionCierre = actual.ID_COTIZACION_FK ?? (actual.ID_ORDEN_TRABAJO_FK
+          ? (await tx.ordenes_trabajo.findUnique({
+              where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
+              select: { ID_COTIZACION_FK: true },
+            }))?.ID_COTIZACION_FK
+          : null);
+        if (idCotizacionCierre) {
+          await cerrarSeguimientoSiCompleto(tx, idCotizacionCierre, idUsuario || null);
+        }
 
         await registrarBitacora(tx, {
           action: 'UPDATE',

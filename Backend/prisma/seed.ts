@@ -249,7 +249,7 @@ async function main() {
     {
       id: 3,
       nombre: 'Técnico',
-      permisos: JSON.stringify({"permisos": {"clientes": {"consultar": false, "desactivar": false, "crear_editar": false, "ver_historial": false}, "revision": {"revisar_aprobar_acreditados": false, "revisar_aprobar_no_acreditados": false}, "ordenesOt": {"acceso": false}, "cotizaciones": {"crear_editar": false, "aprobar_rechazar": false, "enviar_al_cliente": false, "crear_version_corregida": false, "gestionar_catalogo_tarifas": false, "indicar_servicio_in_situ_laboratorio": false}, "administracion": {"gestionar_usuarios_roles": false, "consultar_bitacora_auditoria": false, "configurar_catalogo_parametros": false, "configurar_plantillas_documentos": false}, "entrega_y_envio": {"marcar_ot_pagada": false, "enviar_certificados_lotes": false, "previsualizar_antes_de_envio": false}, "ordenes_de_trabajo": {"ver_listado": true, "crear_editar": true, "cambiar_estado": true, "asignar_tecnico": false, "ver_bandeja_revision": true}, "recepcion_de_equipos": {"registrar": true, "generar_acta": true}, "calibracion_e_informes": {"adjuntar_pdf": true, "registrar_insumos_transporte": true}, "reportes_y_consolidados": {"exportar_base_de_datos": false, "ver_tablero_indicadores": false, "generar_consolidado_ventas": false, "ver_reportes_ext_vs_internos": false}, "firma_sello_y_certificacion": {"crear_version_corregida": false, "firmar_sellar_acreditados": false, "firmar_sellar_no_acreditados": false, "configurar_sello_logo_plantilla": false}}}),
+      permisos: JSON.stringify({"permisos": {"clientes": {"consultar": false, "desactivar": false, "crear_editar": false, "ver_historial": false}, "revision": {"revisar_aprobar_acreditados": false, "revisar_aprobar_no_acreditados": false}, "ordenesOt": {"acceso": false}, "cotizaciones": {"crear_editar": false, "aprobar_rechazar": false, "enviar_al_cliente": false, "crear_version_corregida": false, "gestionar_catalogo_tarifas": false, "indicar_servicio_in_situ_laboratorio": false}, "administracion": {"gestionar_usuarios_roles": false, "consultar_bitacora_auditoria": false, "configurar_catalogo_parametros": false, "configurar_plantillas_documentos": false}, "entrega_y_envio": {"marcar_ot_pagada": false, "enviar_certificados_lotes": false, "previsualizar_antes_de_envio": true}, "ordenes_de_trabajo": {"ver_listado": true, "crear_editar": true, "cambiar_estado": true, "asignar_tecnico": false, "ver_bandeja_revision": true}, "recepcion_de_equipos": {"registrar": true, "generar_acta": true}, "calibracion_e_informes": {"adjuntar_pdf": true, "registrar_insumos_transporte": true}, "reportes_y_consolidados": {"exportar_base_de_datos": false, "ver_tablero_indicadores": false, "generar_consolidado_ventas": false, "ver_reportes_ext_vs_internos": false}, "firma_sello_y_certificacion": {"crear_version_corregida": false, "firmar_sellar_acreditados": false, "firmar_sellar_no_acreditados": false, "configurar_sello_logo_plantilla": false}}}),
       justificacion: 'Permisos por defecto para Tecnico',
       directrizDirector: false,
     },
@@ -263,7 +263,7 @@ async function main() {
     {
       id: 5,
       nombre: 'Gestor Comercial',
-      permisos: JSON.stringify({"permisos": {"clientes": {"consultar": true, "desactivar": true, "crear_editar": true, "ver_historial": true}, "revision": {"revisar_aprobar_acreditados": false, "revisar_aprobar_no_acreditados": false}, "ordenesOt": {"acceso": true}, "cotizaciones": {"crear_editar": true, "aprobar_rechazar": true, "enviar_al_cliente": true, "crear_version_corregida": true, "gestionar_catalogo_tarifas": true, "indicar_servicio_in_situ_laboratorio": true}, "administracion": {"gestionar_usuarios_roles": false, "consultar_bitacora_auditoria": false, "configurar_catalogo_parametros": false, "configurar_plantillas_documentos": false}, "entrega_y_envio": {"marcar_ot_pagada": false, "enviar_certificados_lotes": false, "previsualizar_antes_de_envio": false}, "ordenes_de_trabajo": {"ver_listado": true, "crear_editar": false, "cambiar_estado": true, "asignar_tecnico": true, "ver_bandeja_revision": true}, "recepcion_de_equipos": {"registrar": false, "generar_acta": false}, "calibracion_e_informes": {"adjuntar_pdf": false, "registrar_insumos_transporte": false}, "reportes_y_consolidados": {"exportar_base_de_datos": false, "ver_tablero_indicadores": true, "generar_consolidado_ventas": true, "ver_reportes_ext_vs_internos": true}, "firma_sello_y_certificacion": {"crear_version_corregida": false, "firmar_sellar_acreditados": false, "firmar_sellar_no_acreditados": false, "configurar_sello_logo_plantilla": false}}}),
+      permisos: JSON.stringify({"permisos": {"clientes": {"consultar": true, "desactivar": true, "crear_editar": true, "ver_historial": true}, "revision": {"revisar_aprobar_acreditados": false, "revisar_aprobar_no_acreditados": false}, "ordenesOt": {"acceso": true}, "cotizaciones": {"crear_editar": true, "aprobar_rechazar": true, "enviar_al_cliente": true, "crear_version_corregida": true, "gestionar_catalogo_tarifas": true, "indicar_servicio_in_situ_laboratorio": true}, "administracion": {"gestionar_usuarios_roles": false, "consultar_bitacora_auditoria": false, "configurar_catalogo_parametros": false, "configurar_plantillas_documentos": false}, "entrega_y_envio": {"marcar_ot_pagada": false, "enviar_certificados_lotes": false, "previsualizar_antes_de_envio": true}, "ordenes_de_trabajo": {"ver_listado": true, "crear_editar": false, "cambiar_estado": true, "asignar_tecnico": true, "ver_bandeja_revision": true}, "recepcion_de_equipos": {"registrar": false, "generar_acta": false}, "calibracion_e_informes": {"adjuntar_pdf": false, "registrar_insumos_transporte": false}, "reportes_y_consolidados": {"exportar_base_de_datos": false, "ver_tablero_indicadores": true, "generar_consolidado_ventas": true, "ver_reportes_ext_vs_internos": true}, "firma_sello_y_certificacion": {"crear_version_corregida": false, "firmar_sellar_acreditados": false, "firmar_sellar_no_acreditados": false, "configurar_sello_logo_plantilla": false}}}),
       justificacion: 'Permisos por defecto para Gestor Comercial',
       directrizDirector: false,
     },
@@ -292,7 +292,27 @@ async function main() {
       VALUES (${role.id}, ${role.nombre}, ${role.permisos}::jsonb, ${role.justificacion}, ${role.directrizDirector})
       ON CONFLICT ("ID_ROL_INCREMENT") DO UPDATE SET
         "NOMBRE_ROL" = EXCLUDED."NOMBRE_ROL",
-        "PERMISOS_JSON" = EXCLUDED."PERMISOS_JSON",
+        "PERMISOS_JSON" = CASE
+          WHEN EXCLUDED."ID_ROL_INCREMENT" = 2 THEN
+            COALESCE(public.roles."PERMISOS_JSON", '{}'::jsonb) || jsonb_build_object(
+              'permisos',
+              COALESCE(public.roles."PERMISOS_JSON"->'permisos', '{}'::jsonb) || jsonb_build_object(
+                'revision',
+                COALESCE(public.roles."PERMISOS_JSON"#>'{permisos,revision}', '{}'::jsonb) ||
+                  jsonb_build_object('revisar_aprobar_no_acreditados', true)
+              )
+            )
+          WHEN EXCLUDED."ID_ROL_INCREMENT" IN (3, 5) THEN
+            COALESCE(public.roles."PERMISOS_JSON", '{}'::jsonb) || jsonb_build_object(
+              'permisos',
+              COALESCE(public.roles."PERMISOS_JSON"->'permisos', '{}'::jsonb) || jsonb_build_object(
+                'entrega_y_envio',
+                COALESCE(public.roles."PERMISOS_JSON"#>'{permisos,entrega_y_envio}', '{}'::jsonb) ||
+                  jsonb_build_object('previsualizar_antes_de_envio', true)
+              )
+            )
+          ELSE public.roles."PERMISOS_JSON"
+        END,
         "JUSTIFICACION" = EXCLUDED."JUSTIFICACION",
         "DIRECTRIZ_DIRECTOR" = EXCLUDED."DIRECTRIZ_DIRECTOR";
     `;
@@ -431,6 +451,7 @@ async function main() {
         payload     JSONB;
         row_data    JSONB;
         seq_val     BIGINT;
+        truncado_flag BOOLEAN := false;
     BEGIN
         IF (TG_OP = 'DELETE') THEN
             row_data := to_jsonb(OLD);
@@ -439,12 +460,17 @@ async function main() {
         END IF;
 
         -- 💡 FILTRO DE SEGURIDAD: Remover las columnas gigantes para no exceder los 8KB
-        IF (tabla_nombre = 'version_plantillas') THEN
+        IF (tabla_nombre = 'usuarios') THEN
+            -- Nunca emitir hashes de contraseña en eventos globales de Socket.IO.
+            row_data := row_data - 'contraseña' - 'contrase_a';
+        ELSIF (tabla_nombre = 'version_plantillas') THEN
             row_data := row_data - 'INPUT_SCHEMA' - 'MAPPING_CONFIG' - 'MAPEO_CONFIG' - 'MAPEO_EXCEL_JSON';
         ELSIF (tabla_nombre = 'calibraciones') THEN
             row_data := row_data - 'DATOS_TECNICOS_JSON';
         ELSIF (tabla_nombre = 'roles') THEN
             row_data := row_data - 'PERMISOS_JSON';
+            -- El cliente debe recargar el rol desde el endpoint autorizado.
+            truncado_flag := true;
         ELSIF (tabla_nombre = 'version_documentos') THEN
             row_data := row_data - 'content_json';
         ELSIF (tabla_nombre = 'document_chunks') THEN
@@ -456,7 +482,8 @@ async function main() {
         payload := jsonb_build_object(
             'tabla', tabla_nombre,
             'operacion', operacion,
-            'data', row_data
+            'data', row_data,
+            'truncado', truncado_flag
         );
 
         -- 💡 GUARD DE TAMAÑO: pg_notify falla si el payload supera ~8KB y, al estar
@@ -468,18 +495,28 @@ async function main() {
                 '__truncado', true,
                 'id', COALESCE(
                     row_data->'ID_COTIZACION',
+                    row_data->'ID_DETALLE',
                     row_data->'ID_ORDEN_TRABAJO',
                     row_data->'ID_RECEPCION',
+                    row_data->'ID_INSTRUMENTO',
                     row_data->'ID_CERTIFICADO',
+                    row_data->'ID_CERTIFICADO_FK',
                     row_data->'ID_CALIBRACION',
                     row_data->'ID_CLIENTE',
                     row_data->'ID_DOCUMENTO',
                     row_data->'ID_TARIFA',
                     row_data->'ID_SELLO',
                     row_data->'ID_USUARIO_AUTO_INCREMENT',
+                    row_data->'ID_ROL_INCREMENT',
                     row_data->'ID_NOTIFICACION',
                     row_data->'ID_FACTURA',
-                    row_data->'ID_SEGUIMIENTO'
+                    row_data->'ID_SEGUIMIENTO',
+                    row_data->'ID_VERSION',
+                    row_data->'ID_VERSION_PLANTILLA',
+                    row_data->'ID_PARAMETRO',
+                    row_data->'ID_HISTORIAL',
+                    row_data->'ID_PLANTILLA',
+                    row_data->'ID_PLANTILLA_SELLO'
                 )
             );
             payload := jsonb_build_object(

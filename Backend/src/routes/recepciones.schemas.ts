@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const estadosEnum = z.enum(['BORRADOR', 'ENVIADA', 'APROBADA', 'RECHAZADA', 'EN_SEGUIMIENTO']);
+export const estadosEnum = z.enum(['BORRADOR', 'RECIBIDO', 'ENTREGADO', 'ENVIADA', 'APROBADA', 'RECHAZADA', 'EN_SEGUIMIENTO']);
 export type EstadosZod = z.infer<typeof estadosEnum>;
 
 export const clienteDtoSchema = z.object({
@@ -79,6 +79,7 @@ export const recepcionDetalleDtoSchema = z.object({
   estadoIBC: z.unknown().nullable(),
   estampilla: z.string().nullable(),
   observaciones: z.string().nullable(),
+  calibracionIniciada: z.boolean().default(false),
 });
 export type RecepcionDetalleDto = z.infer<typeof recepcionDetalleDtoSchema>;
 
@@ -392,6 +393,7 @@ export const recepcionDetalleRawToDtoSchema = z
     ESTADO_IBC: z.unknown().nullish(),
     ESTAMPILLA: z.string().nullish(),
     OBSERVACIONES: z.string().nullish(),
+    calibraciones: z.unknown().nullish(),
   })
   .transform((raw): RecepcionDetalleDto => ({
     idInstrumento: raw.ID_INSTRUMENTO,
@@ -409,6 +411,7 @@ export const recepcionDetalleRawToDtoSchema = z
     estadoIBC: raw.ESTADO_IBC ?? null,
     estampilla: raw.ESTAMPILLA ?? null,
     observaciones: raw.OBSERVACIONES ?? null,
+    calibracionIniciada: raw.calibraciones != null,
   }));
 export type RecepcionDetalleRaw = z.input<typeof recepcionDetalleRawToDtoSchema>;
 

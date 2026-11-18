@@ -21,6 +21,18 @@ import {
 } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertPermission } from '../lib/permissions.js';
+
+function parsearFechaHoraCalibracion(fecha?: string | null, hora?: string | null): Date | null {
+  if (!fecha) return null;
+  const match = fecha.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, anio, mes, dia] = match;
+  const resultado = new Date(Number(anio), Number(mes) - 1, Number(dia));
+  const horaMatch = hora?.match(/^(\d{2}):(\d{2})$/);
+  if (horaMatch) resultado.setHours(Number(horaMatch[1]), Number(horaMatch[2]), 0, 0);
+  return resultado;
+}
+
 export default async function ordenesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
@@ -106,6 +118,17 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             clientes: true,
             cotizaciones: { include: { clientes: true } },
             orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
+            // El aviso de revisión de la OT se deriva de sus certificados activos,
+            // no del ESTADO_REVISION heredado de la cabecera de la OT.
+            recepciones_equipo: {
+              where: { VIGENTE: true },
+              include: {
+                recepcion_equipo_detalles: {
+                  where: { OR: [{ activacion: true }, { activacion: null }] },
+                  include: { calibraciones: { include: { certificados: true } } },
+                },
+              },
+            },
             _count: { select: { orden_trabajo_hijas: true } },
           },
           orderBy: { CREATED_AT: 'desc' },
@@ -169,8 +192,16 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           const otActualizada = await tx.ordenes_trabajo.update({
             where: { ID_ORDEN_TRABAJO: id },
             data: {
-              RESPONSABLE: data.responsableUsc,
+              ...(data.responsableUsc?.trim() ? { RESPONSABLE: data.responsableUsc.trim() } : {}),
               FECHA_CALIBRACION_DILIGENCIAMENTO: data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null,
+              FECHA_CALIBRACION: parsearFechaHoraCalibracion(data.fechaCalibracion),
+              hora: parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion),
+              ES_INTERNO_USC: data.lugarCalibracion === 'Interno USC',
+              ES_EN_SITIO: data.lugarCalibracion === 'En sitio',
+              ES_LAB_PERMANENTE: data.lugarCalibracion === 'Laboratorio permanente',
+              SITIO_CALIBRACION: data.lugarCalibracion === 'En sitio' ? 'CLIENTE' : 'LABORATORIO',
+              PERSONA_CONTACTO: data.personaContactar?.trim() || null,
+              TELEFONO_CONTACTO: data.telefonoCalibracion?.trim() || null,
               REQUIERE_ANEXO: data.requiereAnexo === 'Si',
               OBSERVACIONES: data.observacionesGenerales,
             },

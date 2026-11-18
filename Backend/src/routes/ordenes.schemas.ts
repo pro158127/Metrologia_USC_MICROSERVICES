@@ -139,6 +139,7 @@ export const ordenTrabajoDtoSchema = z.object({
   version: z.number(),
   vigente: z.boolean(),
   tieneHijas: z.boolean(),
+  certificadosPendientesRevision: z.boolean(),
   correoCertificado: z.string().nullable(),
   correoFactura: z.string().nullable(),
   fechaLimiteFacturacion: z.coerce.date().nullable(),
@@ -465,6 +466,13 @@ export const ordenTrabajoRawToDtoSchema = z
     clientes: clienteRawToDtoSchema.nullish(),
     cotizaciones: cotizacionRawToDtoSchema.nullish(),
     orden_trabajo_detalles: z.array(ordenTrabajoDetalleRawToDtoSchema).nullish(),
+    recepciones_equipo: z.array(z.object({
+      recepcion_equipo_detalles: z.array(z.object({
+        calibraciones: z.object({
+          certificados: z.object({ ESTADO_REVISION: z.string().nullish() }).nullish(),
+        }).nullish(),
+      }).passthrough()).nullish(),
+    }).passthrough()).nullish(),
     _count: z
       .object({ orden_trabajo_hijas: z.number().nullish() })
       .nullish(),
@@ -479,6 +487,11 @@ export const ordenTrabajoRawToDtoSchema = z
     version: raw.VERSION ?? 1,
     vigente: raw.VIGENTE ?? true,
     tieneHijas: (raw._count?.orden_trabajo_hijas ?? 0) > 0,
+    certificadosPendientesRevision: (raw.recepciones_equipo ?? []).some((recepcion) =>
+      (recepcion.recepcion_equipo_detalles ?? []).some(
+        (instrumento) => instrumento.calibraciones?.certificados?.ESTADO_REVISION === 'PENDIENTE_REVISION'
+      )
+    ),
     correoCertificado: raw.CORREO_CERTIFICADO ?? null,
     correoFactura: raw.CORREO_FACTURA ?? null,
     fechaLimiteFacturacion: raw.FECHA_LIMITE_FACTURACION ?? null,
@@ -576,9 +589,13 @@ export const estadoOtEnum = z.enum([
 export const consolidarOtBodySchema = z.object({
   responsableUsc: z.string().nullable(),
   fechaDiligenciamiento: z.string().nullable(),
+  fechaCalibracion: z.string().nullable().optional(),
+  horaCalibracion: z.string().nullable().optional(),
   requiereAnexo: z.string(),
   observacionesGenerales: z.string().nullable(),
   lugarCalibracion: z.string(),
+  personaContactar: z.string().nullable().optional(),
+  telefonoCalibracion: z.string().nullable().optional(),
   // El estado ya no se acepta como texto libre: la FSM lo calcula en backend.
   // Se mantiene opcional (y tolera "") por compatibilidad con el cliente actual.
   estadoOrden: z.union([estadoOtEnum, z.literal('')]).optional(),

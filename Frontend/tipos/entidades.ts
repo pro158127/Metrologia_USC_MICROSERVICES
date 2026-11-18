@@ -223,6 +223,7 @@ export interface OrdenTrabajoModel {
   version: number;
   vigente: boolean;
   tieneHijas: boolean;
+  certificadosPendientesRevision?: boolean;
   sitioCalibracion: string | null;
   correoCertificado: string | null;
   correoFactura: string | null;
@@ -281,6 +282,7 @@ export interface RecepcionEquipoDetalleModel {
   estadoIBC: unknown | null;
   estampilla: string | null;
   observaciones: string | null;
+  calibracionIniciada?: boolean;
 }
 
 export interface RecepcionEquipoModel {

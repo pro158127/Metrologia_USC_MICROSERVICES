@@ -87,6 +87,9 @@ const GestionPanel: React.FC<{
   onRefresh: () => void;
   onOpenOt: (id: number) => void;
 }> = ({ idCotizacion, codigoCotizacion, onClose, onToast, onRefresh, onOpenOt }) => {
+  const documentosRealtime = useDbTable("documentos");
+  const certificadosRealtime = useDbTable("certificados");
+  const ordenesRealtime = useDbTable("ordenes_trabajo");
   const [docs, setDocs] = useState<DocumentosEnvioCotizacion | null>(null);
   const [cargando, setCargando] = useState(true);
   const [subiendo, setSubiendo] = useState(false);
@@ -98,8 +101,14 @@ const GestionPanel: React.FC<{
   const puedeEnviarCertificados = can("entrega_y_envio", "enviar_certificados_lotes");
 
   const recargar = useCallback(() => {
-    getDocumentosEnvioCotizacion(idCotizacion).then((d) => setDocs(d));
+    getDocumentosEnvioCotizacion(idCotizacion).then((d) => setDocs(d)).catch(() => {});
   }, [idCotizacion]);
+
+  useEffect(() => {
+    if (cargando) return;
+    const timer = window.setTimeout(recargar, 150);
+    return () => window.clearTimeout(timer);
+  }, [documentosRealtime, certificadosRealtime, ordenesRealtime, cargando, recargar]);
 
   useEffect(() => {
     let activo = true;
@@ -180,7 +189,7 @@ const GestionPanel: React.FC<{
   const todosAprobados = docs?.todosAprobados ?? false;
   const entregaCompleta = docs?.entregaCompleta ?? false;
   const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
-  const puedeEnviar = todosAprobados && entregaCompleta && tieneComprobante && !!docs?.correo;
+  const puedeEnviar = todosAprobados && tieneComprobante && !!docs?.correo;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
@@ -249,8 +258,8 @@ const GestionPanel: React.FC<{
                 }`}
               >
                 {entregaCompleta
-                  ? "La información de entrega de todos los instrumentos está completa."
-                  : `Falta hacer la entrega en Recepciones: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}.`}
+                  ? "La salida de todos los instrumentos quedó registrada. La recepción está cerrada."
+                  : `Salida pendiente en Recepciones: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}. Puede completarse después del envío y no lo bloquea.`}
               </div>
 
               {/* Certificados */}
@@ -325,27 +334,25 @@ const GestionPanel: React.FC<{
                 {puedeMarcarPagada ? (
                   <label
                     className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed text-[11px] font-semibold transition-colors ${
-                      todosAprobados && entregaCompleta
+                      todosAprobados
                         ? "border-slate-300 bg-slate-50 text-slate-600 cursor-pointer hover:bg-slate-100"
                         : "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed"
                     }`}
                   >
                     <Upload size={14} />
                     <span>
-                      {todosAprobados && entregaCompleta
+                      {todosAprobados
                         ? subiendo
                           ? "Subiendo..."
                           : "Subir comprobante(s) (PDF, PNG o JPG)"
-                        : !entregaCompleta
-                          ? "Bloqueado: falta completar la entrega en Recepciones"
-                          : "Bloqueado: espera la aprobación de todos los certificados"}
+                        : "Bloqueado: espera la aprobación de todos los certificados"}
                     </span>
                     <input
                       type="file"
                       accept="image/png,image/jpeg,application/pdf"
                       multiple
                       className="hidden"
-                      disabled={!todosAprobados || !entregaCompleta || subiendo}
+                      disabled={!todosAprobados || subiendo}
                       onChange={(e) => {
                         const files = Array.from(e.target.files ?? []);
                         if (files.length) handleUpload(files);
@@ -556,7 +563,7 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
           codigoCotizacion={gestion.codigoCotizacion}
           onClose={() => setGestion(null)}
           onToast={showToast}
-          onRefresh={() => loadTable("ordenes_trabajo")}
+          onRefresh={() => loadTable("ordenes_trabajo", true)}
           onOpenOt={onOpenOt}
         />
       )}

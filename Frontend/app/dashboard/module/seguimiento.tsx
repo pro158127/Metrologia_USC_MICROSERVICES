@@ -26,6 +26,21 @@ const tipoIcono: Record<string, React.ReactNode> = {
 const formatoFecha = (v: Date | string | null | undefined) =>
   v ? new Date(v).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
+function origenSeguimiento(cotizacion: CotizacionModel): string {
+  const entrada = [...(cotizacion.historialEstados ?? [])]
+    .filter((item) => item.estadoNuevo === Estados.EN_SEGUIMIENTO)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+  if (entrada?.estadoAnterior === Estados.APROBADA) return "Aprobada · entrega completa";
+  if (entrada?.estadoAnterior === Estados.RECHAZADA) {
+    const motivo = `${entrada.motivo ?? ""} ${cotizacion.motivoRechazo ?? ""}`.toLowerCase();
+    return motivo.includes("vencimiento automático") || motivo.includes("vencimiento automatico")
+      ? "Vencida · pasó a seguimiento"
+      : "Rechazada · pasó a seguimiento";
+  }
+  return "Origen no registrado";
+}
+
 export default function SeguimientoComercial() {
   const cotizaciones = useDbTable("cotizaciones") as unknown as CotizacionModel[];
   const seguimientos = useDbTable("seguimientos_comerciales") as unknown as SeguimientoComercialModel[];
@@ -139,20 +154,20 @@ export default function SeguimientoComercial() {
           rowKey={(c) => c.idCotizacion}
           onRowClick={(c) => setSelectedId(c.idCotizacion)}
           emptyText="No hay cotizaciones en seguimiento."
-          minWidth="min-w-[560px]"
+          minWidth="min-w-[720px]"
           columns={[
             { header: "N° Cotización", render: (c) => <span className="font-mono font-bold text-slate-700">{c.codigo}</span> },
             { header: "Cliente", render: (c) => <span className="text-slate-600">{c.cliente?.razonSocial || "N/A"}</span> },
             { header: "Valor", render: (c) => <span className="font-mono text-slate-700">{Number(c.montoTotal ?? 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })}</span> },
             { header: "Enviada", render: (c) => <span className="text-slate-500">{formatoFecha(c.updatedAt ?? c.createdAt)}</span> },
-            { header: "Acción", render: () => <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">EN_SEGUIMIENTO</span> },
+            { header: "Origen", render: (c) => <span className="text-slate-600">{origenSeguimiento(c)}</span> },
           ]}
           cardTitle={(c) => c.codigo}
           cardFields={[
             { label: "Cliente", value: (c) => c.cliente?.razonSocial || "N/A" },
             { label: "Valor", value: (c) => Number(c.montoTotal ?? 0).toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }) },
             { label: "Enviada", value: (c) => formatoFecha(c.updatedAt ?? c.createdAt) },
-            { label: "Estado", value: () => "EN_SEGUIMIENTO" },
+            { label: "Origen", value: origenSeguimiento },
           ]}
         />
 
@@ -165,6 +180,7 @@ export default function SeguimientoComercial() {
               <div>
                 <div className="text-sm font-bold text-slate-800">{cotizacionSeleccionada.codigo}</div>
                 <div className="text-xs text-slate-500">{cotizacionSeleccionada.cliente?.razonSocial}</div>
+                <div className="mt-1 text-[11px] font-semibold text-indigo-700">{origenSeguimiento(cotizacionSeleccionada)}</div>
               </div>
 
               <div className="border border-slate-100 rounded-xl p-3 bg-slate-50/50 space-y-2">

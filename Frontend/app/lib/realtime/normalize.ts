@@ -226,7 +226,7 @@ export const normalizarPayload = (tabla: string, rawData: Record<string, any>): 
         estadoRevision: rawData.ESTADO_REVISION ?? rawData.estadoRevision ?? "PENDIENTE_REVISION",
         motivoRechazo: rawData.MOTIVO_RECHAZO ?? rawData.motivoRechazo ?? null,
         createdAt: rawData.CREATED_AT ?? rawData.createdAt ?? new Date(),
-        estado_pago: rawData.estado_pago ?? "PAGADO",
+        estado_pago: rawData.estado_pago ?? "PENDINDE",
         // Relación opcional: si el rawData trae instrumentos los incluye, si no array vacío
         instrumentos: rawData.instrumentos ?? rawData.INSTRUMENTOS ?? [],
       };

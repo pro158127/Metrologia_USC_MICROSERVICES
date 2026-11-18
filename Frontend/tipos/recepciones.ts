@@ -23,6 +23,7 @@ export type {
 export interface FilaInstrumento {
   id: string;
   idInstrumento?: number;
+  calibracionIniciada?: boolean;
   item?: number | null;
   instrumento: string;
   marca: string;
