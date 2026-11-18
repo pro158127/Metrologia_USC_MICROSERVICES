@@ -60,11 +60,21 @@ export interface AuditLogModel {
   action: string;
   tableName: string;
   recordId: string;
-  userId: number;
+  userId: number | null;
   createdAt: Date | string;
   details: unknown;
   ip: string;
   id: number;
+}
+export interface PlantillaSelloModel {
+  idPlantillaSello: number;
+  nombre: string;
+  descripcion: string | null;
+  templatePdfKey: string | null;
+  documentArea: unknown | null;
+  watermarkAreas: unknown | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
 export interface VersionPlantillaModel {
@@ -145,7 +155,8 @@ export interface HistorialEstadoCotizacionModel {
   idCotizacion: number;
   estadoAnterior: Estados | null;
   estadoNuevo: Estados;
-  idUsuario: number;
+  idUsuario: number | null;
+  motivo: string | null;
   createdAt: Date | string;
 }
 
@@ -173,6 +184,7 @@ export interface CotizacionModel {
   estado: Estados;
   enviar: boolean;
   descuento: number | null;
+  motivoRechazo: string | null;
   detalles: CotizacionDetalleModel[];
   cliente: ClienteModel | null;
   historialEstados: HistorialEstadoCotizacionModel[];
@@ -194,7 +206,7 @@ export interface OrdenTrabajoDetalleModel {
   unidad: string | null;
   intervaloRango: string | null;
   resolucion: string | null;
-  asignado: number;
+  asignado: number | null;
   declaracionConformidad: boolean;
   limiteControlEMC: string | null;
   docEspecificacion: string | null;
@@ -206,6 +218,12 @@ export interface OrdenTrabajoModel {
   codigo: string;
   idCotizacion: number | null;
   idCliente: number | null;
+  idOrdenTrabajoPadre: number | null;
+  idOtRaiz: number | null;
+  version: number;
+  vigente: boolean;
+  tieneHijas: boolean;
+  sitioCalibracion: string | null;
   correoCertificado: string | null;
   correoFactura: string | null;
   fechaLimiteFacturacion: Date | string | null;
@@ -240,17 +258,25 @@ export interface OrdenTrabajoModel {
   cliente?: ClienteModel | null;
   cotizacion?: CotizacionModel | null;
   instrumentos?: OrdenTrabajoDetalleModel[];
+  tecnicosInstrumentos?: Array<{
+    item: number;
+    instrumento: string;
+    nombreTecnico: string;
+  }>;
 }
 
 export interface RecepcionEquipoDetalleModel {
   idInstrumento: number;
   idRecepcion: number;
+  item?: number | null;
   instrumento: string;
   marca: string | null;
   modelo: string | null;
   serie: string | null;
   codigoInventario: string | null;
   resolucion: string | null;
+  sensorInt?: boolean;
+  sensorExt?: boolean;
   tipoSensorTemp: string | null;
   estadoIBC: unknown | null;
   estampilla: string | null;
@@ -262,6 +288,9 @@ export interface RecepcionEquipoModel {
   codigo: string;
   idCotizacion: number | null;
   idOrdenTrabajo: number | null;
+  idRecepcionRaiz: number | null;
+  version: number;
+  vigente: boolean;
   solicitante: string;
   nombreEntrega: string | null;
   sitioCalibracion: string;
@@ -301,6 +330,9 @@ export interface CertificadoModel {
   codigo: string;
   idCalibracion: number;
   idDocumento: number;
+  estadoRevision?: string;
+  motivoRechazo?: string | null;
+  idPlantillaSello?: number | null;
   sellos: CertificadoSelloModel[];
 }
 
@@ -333,12 +365,26 @@ export interface FacturaModel {
   numero: string;
   idOrdenTrabajo: number | null;
   idCliente: number | null;
+  idDocumento: number | null;
   fecha: Date | string;
   valor: number | string;
   estado: string;
   observacion: string | null;
   ordenTrabajo?: OrdenTrabajoModel | null;
   cliente?: ClienteModel | null;
+}
+
+export interface SeguimientoComercialModel {
+  idSeguimiento: number;
+  idCotizacion: number;
+  tipo: string;
+  descripcion: string;
+  fechaGestion: Date | string;
+  proximaGestion: Date | string | null;
+  resultado: string | null;
+  idUsuario: number | null;
+  createdAt: Date | string;
+  usuario?: { idUsuario: number; nombreCompleto: string; correo: string } | null;
 }
 
 export interface TramiteModel {

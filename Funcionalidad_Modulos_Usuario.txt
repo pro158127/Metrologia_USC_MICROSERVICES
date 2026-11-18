@@ -1,0 +1,418 @@
+================================================================================
+SISTEMA DE GESTIÓN DEL LABORATORIO DE METROLOGÍA USC
+Descripción de funcionalidad e interfaz por módulo (orientada al usuario final)
+================================================================================
+
+Este documento describe, en lenguaje sencillo, qué hace cada módulo del sistema
+y qué elementos de pantalla (botones, formularios, tablas, filtros) encuentra el
+usuario en cada uno.
+
+--------------------------------------------------------------------------------
+1. INICIO DE SESIÓN (LOGIN)
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Permite al usuario autenticarse con su correo institucional USC y su contraseña.
+- Valida credenciales, controla intentos fallidos y bloquea la cuenta tras superar
+  el límite de intentos o si está inactiva.
+- Al iniciar correctamente, lleva al usuario al Panel de Control (Dashboard).
+
+INTERFAZ
+- Pantalla dividida en dos: a la izquierda el logo y la frase "Plataforma de
+  control y trazabilidad para el Laboratorio de Metrología"; a la derecha la tarjeta
+  de acceso "Iniciar sesión".
+- Campo "Correo institucional" (ej. nombre@usc.edu.co).
+- Campo "Contraseña" con botón de ojo para mostrar/ocultar la contraseña.
+- Botón "Ingresar" (muestra "Verificando..." mientras carga).
+- Mensaje de error en rojo cuando las credenciales son inválidas o la cuenta no
+  está autorizada.
+- Aviso inferior: "Sesión expira tras 30 min de inactividad · HTTPS cifrado".
+- Enlace de "restablecer contraseña" (solo visible para el correo
+  director@usc.edu.co); para los demás se indica "contacta al administrador".
+
+--------------------------------------------------------------------------------
+2. RESTABLECER CONTRASEÑA
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Permite solicitar el restablecimiento de la contraseña mediante correo
+  institucional (envío de enlace de recuperación).
+
+INTERFAZ
+- Ventana "Restablecer" con el campo de correo institucional bloqueado (precargado).
+- Botón "Enviar enlace de recuperación".
+- Al enviar muestra "Instrucciones enviadas a tu correo".
+- Botones "Volver a iniciar sesión" y "Volver al inicio".
+
+--------------------------------------------------------------------------------
+3. PANEL DE CONTROL (DASHBOARD)
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Es la pantalla inicial tras iniciar sesión. Ofrece una vista general del
+  laboratorio: indicadores, certificados pendientes, alertas y actividad reciente.
+- Los datos provienen de cotizaciones, órdenes de trabajo, certificados, facturas
+  y clientes.
+
+INTERFAZ
+- Cabecera de bienvenida "PANEL DE CONTROL" con los totales de Clientes,
+  Cotizaciones, OT activas y Facturas.
+- 4 tarjetas de indicadores (KPI):
+  * "OT Activas" (respecto al total de OTs).
+  * "Cotizaciones pendientes".
+  * "Ingresos del mes" (en pesos colombianos y número de facturas del mes).
+  * "Certificados emitidos".
+- Tabla "Certificados pendientes de revisión" con columnas N° OT, Cliente,
+  Técnico, Tipo, Fecha y botón "Revisar".
+- Panel "Alertas del sistema" (OTs vencidas, sin responsable, certificados
+  pendientes) y "Actividad reciente".
+- Gráfica de barras "Cotizaciones emitidas vs aprobadas" (últimos 6 meses).
+- Gráfica circular "Distribución de servicios" por estado de las órdenes.
+- Pie de página "ISO/IEC 17025 · Laboratorio de Metrología USC".
+
+--------------------------------------------------------------------------------
+4. MENÚ LATERAL (BARRA DE NAVEGACIÓN)
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Permite desplazarse entre todos los módulos del sistema. Solo muestra los módulos
+  a los que el usuario tiene permiso según su rol.
+
+INTERFAZ (secciones y opciones)
+- PANEL PRINCIPAL: Dashboard.
+- GESTIÓN: Clientes, Cotizaciones, Seguimiento Comercial, Recepción de Equipos,
+  Importar OT, Órdenes de Trabajo.
+- TÉCNICO: Calibración e Informes, Revisión de Certificados, Firma y Sello.
+- OPERACIONES: Entrega y Envío, Reportes y Consolidados.
+- SISTEMA: Administración, Configuración General.
+- Botón "Cerrar sesión" y texto "ISO/IEC 17025 · Lab. USC".
+
+--------------------------------------------------------------------------------
+5. CLIENTES (GESTIÓN DE CLIENTES)
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Administrar el registro de clientes del laboratorio: crear, editar, activar/
+  desactivar y consultar el perfil de cada cliente.
+
+INTERFAZ
+- Tabla de clientes con columnas: Razón Social, NIT, Ciudad, Dirección (aparece
+  como "Dirrecion"), Teléfono, Último servicio, Estado y Acciones.
+- Caja de búsqueda "Buscar por razón social, NIT...".
+- Filtros de estado: "Todos", "Activos", "Inactivos".
+- Botón "Nuevo cliente" (+).
+- Botones por fila: "Ver Perfil" (ojo), "Editar" (lápiz), "Cambiar estado".
+- Estado del cliente: ACTIVO (verde) / INACTIVO (rojo).
+
+FORMULARIO NUEVO/EDITAR CLIENTE
+- Campos: Razón Social*, NIT/Cédula*, Correo Electrónico*, Nombre de Contacto,
+  Teléfono, Ciudad (desplegable de Colombia), Tipo de Cliente (Natural/Jurídico),
+  Dirección, adjuntar Documento RUT (PDF o imagen) y Observación.
+- Botones "Cancelar" y "Crear Cliente" / "Guardar Cambios".
+
+--------------------------------------------------------------------------------
+6. PERFIL DE CLIENTE (DETALLE)
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Ver la información completa de un cliente y toda su documentación: cotizaciones,
+  órdenes de trabajo, recepciones, certificados, comprobantes de pago y facturas.
+
+INTERFAZ
+- Tarjeta superior con Razón Social, Estado, Tipo de Cliente, NIT/CC, contacto,
+  correo, teléfono, ciudad y observaciones.
+- Botones "Volver a la lista", "Ver RUT del Cliente" y "Agregar factura".
+- Sección "Cotizaciones Registradas" con búsqueda por código y filtro por estado
+  (Todos, Borrador, Enviada, Aprobada, Rechazada, En seguimiento).
+- Cada cotización es una tarjeta desplegable con 5 carpetas de documentos:
+  "Cotización", "Órdenes de trabajo", "Recepciones", "Certificados" y
+  "Comprobantes de pago".
+- Documentos PDF se pueden "Ver"; Excel se pueden "Descargar".
+- En certificados hay botón "Trazabilidad" (línea de tiempo con Recepción,
+  Calibración y Revisión, más versiones y sellos del certificado).
+- Sección "Facturas Registradas" con tabla Número, Fecha, Valor, Estado, Observación.
+- Formulario "Agregar Factura": Número*, Fecha, Valor*, PDF opcional, Observación.
+
+--------------------------------------------------------------------------------
+7. COTIZACIONES
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Gestionar el ciclo de vida de una oferta comercial: crear, enviar, aprobar,
+  rechazar, dar seguimiento y generar nuevas versiones con trazabilidad.
+- Incluye un catálogo de tarifas que alimenta automáticamente los valores.
+
+INTERFAZ (3 vistas)
+1) "Cotizaciones" (lista):
+   - Buscador "Buscar cotización...".
+   - Filtros por estado: Todos, BORRADOR, ENVIADA, APROBADA, RECHAZADA, EN_SEGUIMIENTO.
+   - Tabla: N° Cotización, Cliente, Valor total, Estado, Fecha, Acciones.
+   - Botón "Catálogo de tarifas" y "Nueva cotización" (+).
+2) "Nueva cotización" (asistente de 2 pasos):
+   - Paso 1 "Cliente": buscador y lista de clientes.
+   - Paso 2 "Formulario": botón "Agregar items", tabla de ítems (Tipo Servicio,
+     Magnitud, Equipo/Puntos, Lugar Calibración, Norma, Cantidad, V. Unitario),
+     resumen de liquidación (descuento 0/10/15/20 %, viáticos y valor total).
+   - Botones "Anterior", "Cancelar", "Guardar como borrador" y "Enviar cotización".
+3) "Catálogo de Tarifas":
+   - Botones "Importar tarifas" y "Nuevo Ítem".
+   - Buscador y filtros por magnitud y tipo de servicio.
+   - Tabla: Instrumento, Magnitud, Norma, Precio Vigente, Historial, Acreditado,
+     Estado, Acciones (Ver historial, Editar, Activar/Desactivar).
+
+DETALLE DE COTIZACIÓN
+- Botones "Mostrar cambios", "Generar nueva versión" y "Cerrar visualización".
+- Panel "Estructura Comercial" y "Detalle de Ítems".
+- "Pipeline de cotización" con los pasos BORRADOR → ENVIADA → APROBADA → EN_SEGUIMIENTO.
+
+GENERAR NUEVA VERSIÓN
+- Permite editar ítems y precios y exige "Descripción del cambio" y "Aprobado por".
+- Historial de versiones con registros inmutables auditados.
+
+RECHAZO
+- Al pasar a RECHAZADA es obligatorio escribir "Describe el motivo del rechazo...".
+
+ESTADOS
+- BORRADOR (ámbar), ENVIADA (azul), APROBADA (verde), RECHAZADA (rojo),
+  EN_SEGUIMIENTO (gris).
+
+--------------------------------------------------------------------------------
+8. SEGUIMIENTO COMERCIAL
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Gestionar las gestiones comerciales (llamadas, correos, reuniones) sobre las
+  cotizaciones que están en estado "EN_SEGUIMIENTO".
+
+INTERFAZ
+- Buscador "Buscar cotización en seguimiento...".
+- Lista de cotizaciones en seguimiento: N° Cotización, Cliente, Valor, Enviada.
+- Panel de gestión con el detalle de la cotización seleccionada.
+- Formulario "Nueva gestión": tipo (LLAMADA, CORREO, REUNION, OTRO), fecha de
+  próxima gestión, descripción y resultado.
+- Botón "Registrar gestión".
+- "Historial de acciones" con las gestiones registradas (fecha, tipo, usuario,
+  descripción, resultado y próxima gestión) y botón de eliminar.
+
+--------------------------------------------------------------------------------
+9. RECEPCIÓN DE EQUIPOS (FORMATO R-CM010)
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Registrar y administrar la recepción de equipos que llegan al laboratorio,
+  asociándolos a un cliente, cotización y orden de trabajo.
+
+INTERFAZ
+- Pantalla "Recepciones de Equipos" con filtros: cliente, año, mes y fecha exacta.
+- Botón "Agregar Recepción" (+).
+- Tarjetas de recepción con código, fecha, cliente, referencias "Cot:" y "OT:",
+  y "N Equipos".
+
+FORMULARIO R-CM010
+- "Datos Generales": Cliente, Solicitante, Nombre quién entrega, Cotización, Orden
+  de Trabajo, Sitio de calibración (Laboratorio permanente / Instalaciones del
+  cliente), Fecha de recepción, Fecha de salida, Nombre quién recibe (automático),
+  Nombre quién empaca.
+- "Estructura de Equipos Metrológicos": tabla con Instrumento, Marca, Modelo, Serie,
+  Código Interno, Resolución, Tipo sensor temp, Estado del IBC (E·T·D·A en Entrada
+  y Salida, con botones de color verde/rojo), Estampilla, Observaciones y botón de
+  eliminar. Botón "Añadir Instrumento".
+- "Accesorios e Inspección": descripción y estado de accesorios (Bueno/Malo).
+- "Cierre Técnico Metrólogo": prueba de pesaje (SÍ/NO), campo "Si la respuesta es NO,
+  ¿Por qué?" y "Nombre quién calibra".
+- "Cierre de Servicio": "Nombre quién recibe el servicio".
+- Botón "Guardar Formato R-CM010" (guarda como RECIBIDO o BORRADOR según completitud).
+- Botones "Ver trazabilidad" y "Eliminar" (desactivar con motivo obligatorio).
+
+--------------------------------------------------------------------------------
+10. IMPORTAR OT
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Crear órdenes de trabajo a partir de un archivo Excel (.xlsx) con dos flujos:
+  Estándar (el sistema auto-detecta los datos) o Inverso (vincular manualmente a
+  una cotización existente).
+
+INTERFAZ
+- Título "Importar Orden de Trabajo".
+- Selección del flujo: "Flujo Estándar (Extraer Excel)" o "Flujo Inverso (Vincular Manual)".
+- Zona "Adjunta OT Excel" (solo .xlsx), con botón "Cambiar archivo" y "Siguiente Paso".
+- Aviso "Se detectó la cotización {n°}".
+- Campos N° OT, Fecha, Cliente/Solicitante (autocompletados).
+- Selector para asociar cotización vigente (o "Creación aislada").
+- Botón "Procesar Orden de Trabajo" (o "Procesar OT Vinculada a {n°}").
+- Tabla "Órdenes de Trabajo Generadas" con filtros (N° OT, cliente, fecha, estado)
+  y columnas N° OT, Cliente, Fecha, Equipos, Sitio, Cotización Referencia, Estado
+  y botón "Ver".
+
+--------------------------------------------------------------------------------
+11. ÓRDENES DE TRABAJO (OT)
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Ver, buscar y gestionar las órdenes de trabajo del laboratorio, con tres vistas:
+  Tablero (Kanban), Árbol (jerárquico) y Lista (tabla).
+
+INTERFAZ
+- Buscador "N° OT o cliente...".
+- Selector de vista: "Tablero", "Árbol", "Lista".
+
+VISTA TABLERO (KANBAN)
+- Columnas por estado: Creada, En recepción, Asignada, En calibración, Certificado
+  en revisión, Certificado aprobado, Certificado enviado.
+- Cada tarjeta muestra: código OT, cliente, técnico, fecha, cantidad de equipos.
+
+VISTA LISTA
+- Columnas: Código, Cliente, Equipos, Responsable, Estado, F. Calibración, Acción
+  (botón "Gestionar").
+
+VISTA ÁRBOL
+- Muestra la jerarquía Orden "Master" → órdenes hijas.
+
+DETALLE DE LA ORDEN
+- Botón "Volver al Panel".
+- Franja "CONSECUTIVO · VERSIÓN · VIGENCIA".
+- Banner de alertas (Vencida, Sin responsable, Sin fecha calibración, >10
+  instrumentos, Pendiente revisión, Alerta Retraso).
+- "Gestión de Personal y Equipamiento": botón "Asignar Técnico" (solo habilitado si
+  la OT está "En recepción"), con lista desplegable de técnicos por equipo.
+
+FORMULARIO R-CM05
+- Botón "Habilitar Campos del Formulario".
+- Secciones: Datos para certificado, Información de los instrumentos (límite de 10,
+  con anexo obligatorio si se supera), Información de calibración (si es en sitio),
+  Información del solicitante, Consecutivo y fecha, y Observaciones.
+- Botón "Consolidar Orden R-CM05".
+
+--------------------------------------------------------------------------------
+12. CALIBRACIÓN E INFORMES
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Módulo del técnico para adjuntar los certificados PDF a los instrumentos que le
+  fueron asignados y reenviar certificados corregidos cuando fueron devueltos.
+
+INTERFAZ
+- Tarjetas KPI: Total Asignados, Por Cargar, Devueltos/Obs., Procesados.
+- Filtros "Filtrar por Orden de Trabajo (OT)" y "Filtrar por Cliente".
+- Lista de "Mis Instrumentos Asignados" (tarjetas con OT, equipo, estampilla,
+  cliente y estado).
+- Panel de carga: "Inyección de Archivo" (normal) o "Reenvío Obligatorio" (devuelto).
+  Muestra la observación del Director si fue devuelto, campo "Seleccionar certificado
+  PDF" (máx. 10MB) y botones "Vincular a Estampilla" / "Reenviar Certificado".
+
+ESTADOS
+- Pendiente (ámbar), Adjuntado (azul), En revisión (púrpura), Devuelto (rojo),
+  Firmado (verde).
+
+--------------------------------------------------------------------------------
+13. REVISIÓN DE CERTIFICADOS
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Bandeja para Directores Técnicos y Coordinadoras: revisar los certificados
+  pendientes, aprobarlos (pasan a cola de firma) o rechazarlos/devolverlos al técnico.
+
+INTERFAZ
+- Título "Revisión de Certificados" con contador de pendientes y rol del usuario.
+- Tabla ordenable: N° OT, Estampilla, Instrumento, Cliente, Técnico, Tipo
+  (Acreditado/No acreditado), Fecha subida, En espera, Acciones.
+- Botones "Aprobar" (verde) y "Rechazar" (rojo); usuarios sin permiso ven "Lectura".
+- Visor de PDF integrado (panel lateral).
+- Ventana "Confirmar aprobación".
+- Ventana "Rechazar Certificado" con campo obligatorio "Motivo del rechazo".
+
+--------------------------------------------------------------------------------
+14. FIRMA Y SELLO
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Módulo listado en el menú (sección TÉCNICO) para la firma y sello de certificados.
+- NOTA: actualmente esta opción aparece en el menú pero no tiene una pantalla
+  funcional implementada (no renderiza contenido al seleccionarla).
+
+--------------------------------------------------------------------------------
+15. ENTREGA Y ENVÍO
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Herramienta de la Secretaría para preparar y despachar certificados: previsualizar
+  PDFs, registrar comprobante de pago y enviar certificados al correo del cliente.
+
+INTERFAZ
+- Título "Entrega y Envío de Certificados".
+- Filtros: Estado (Todos, Certificado en revisión, Certificado enviado), Fecha y
+  búsqueda "Buscar..." (cliente u OT).
+- Tabla: OT, Cliente, Correo, Certificados, Estado, Fecha, Acciones ("Gestionar").
+- Panel lateral: estado de aprobación, lista de certificados con botón "Ver",
+  sección "Comprobante de pago" (subir PDF/PNG/JPG, bloqueado si no todos aprobados)
+  y botón "Enviar certificados al cliente".
+- Visor de PDF integrado.
+
+--------------------------------------------------------------------------------
+16. REPORTES Y CONSOLIDADOS
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Módulo de análisis y auditoría: indicadores, gráficas, resúmenes y reportes de
+  trazabilidad.
+
+INTERFAZ
+- Botones "Exportar PDF" y "Exportar Excel".
+- Filtros por fecha (inicio/fin), tipo de servicio, cliente y técnico.
+- 4 tarjetas KPI: Cotizaciones emitidas, Tasa de conversión, Ingresos facturados,
+  Órdenes internas USC.
+- Gráfica "Calibraciones por mes" (Externo vs Interno USC).
+- Gráfica "Tasa de conversión mensual".
+- Tabla "Resumen por técnico": Técnico, OT completadas, Equipos calibrados,
+  Promedio días por OT.
+- Tabla "Búsqueda de certificados históricos (RF-41)": búsqueda por N° certificado,
+  NIT o instrumento; columna "Ver PDF + trazabilidad".
+- Bloque "Reporte de trazabilidad para auditorías (RF-46)": escribir número de
+  factura y botón "Generar reporte auditoría"; descarga como "PDF (auditor)" o
+  "Excel (análisis)".
+
+--------------------------------------------------------------------------------
+17. ADMINISTRACIÓN DEL SISTEMA
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Módulo exclusivo para el Director/administrador: gestión de usuarios, bitácora de
+  auditoría y configuración del sistema.
+
+PESTAÑA "GESTIÓN DE USUARIOS"
+- Buscador "Buscar por nombre, correo o rol...".
+- Botón "Nuevo usuario" (+).
+- Tabla: Nombre, Correo institucional, Rol (badge de color), Estado (Activo/Inactivo),
+  Último acceso, Acciones (Editar, Restablecer contraseña, Eliminar).
+- Sección "Usuarios eliminados" con botón "restaurar".
+- Formulario: Nombre completo*, Correo institucional*, Rol, Estado inicial
+  (Activo/Inactivo). Al crear se envía contraseña temporal por correo.
+
+PESTAÑA "BITÁCORA DE AUDITORÍA"
+- Registro de solo lectura e inmutable.
+- Filtros: Usuario/Nombre, Módulo, Rol, Fecha.
+- Botones "Exportar a Excel" y "Recargar".
+- Tabla: Fecha/Hora, Usuario, Rol, Acción realizada, Módulo, Dirección IP.
+
+PESTAÑA "CONFIGURACIÓN DEL SISTEMA"
+- "Plantillas de documentos": gestión y edición de plantillas de Excel, con editor de
+  mapeo de variables, botones "Editar Plantilla", "Review", "Historial".
+- "Sello y marca de agua": catálogo de sellos y plantillas base, con configurador de
+  bounding boxes (zonas de documento y sello) y previsualización.
+- "Parámetros del sistema": alertas y notificaciones (días de retraso, vencimiento,
+  remitente) y frecuencia de respaldo automático. Botón "Guardar parámetros".
+
+--------------------------------------------------------------------------------
+18. CONFIGURACIÓN GENERAL
+--------------------------------------------------------------------------------
+FUNCIONALIDAD
+- Opción del menú (sección SISTEMA) destinada a la configuración general del sistema.
+- NOTA: actualmente esta opción aparece en el menú pero no tiene una pantalla
+  funcional independiente implementada (no renderiza contenido al seleccionarla).
+  La configuración de plantillas, sellos y parámetros se encuentra dentro del módulo
+  de Administración.
+
+--------------------------------------------------------------------------------
+RESUMEN DE FLUJO GENERAL DEL SISTEMA
+--------------------------------------------------------------------------------
+1. El usuario inicia sesión (Login) y accede al Panel de Control.
+2. Desde Clientes gestiona el registro de clientes.
+3. En Cotizaciones crea y envía ofertas; con el Catálogo de Tarifas controla precios.
+4. En Seguimiento Comercial registra las gestiones sobre cotizaciones en seguimiento.
+5. Una cotización aprobada puede convertirse en Orden de Trabajo (importando un Excel
+   en "Importar OT" o gestionándola en "Órdenes de Trabajo").
+6. En Recepción de Equipos se registra la entrada de equipos (formato R-CM010).
+7. En Órdenes de Trabajo se asignan técnicos y se consolida el formato R-CM05.
+8. El técnico carga los certificados en Calibración e Informes.
+9. El Director revisa y aprueba/rechaza en Revisión de Certificados.
+10. La Secretaría despacha los certificados en Entrega y Envío.
+11. Reportes y Consolidados permite análisis y auditoría.
+12. Administración permite gestionar usuarios, auditoría y configuración.
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================

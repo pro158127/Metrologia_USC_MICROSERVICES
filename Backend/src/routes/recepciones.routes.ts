@@ -1,0 +1,998 @@
+import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
+import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
+import { AppError } from '../lib/errors.js';
+import { assertPermission } from '../lib/permissions.js';
+import { generarConsecutivo } from '../services/consecutivo.service.js';
+import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
+import { registrarBitacora } from '../services/bitacora.service.js';
+import { sincronizarCotizacionDesdeRecepcion } from '../services/cotizacion-sync.service.js';
+import {
+  validarIdentidadInstrumentosRecepcion,
+  validarOTEditableAntesDeCalibrar,
+} from '../services/ot-edit-lock.service.js';
+import { getGenerationExcelQueue } from '../lib/queue/queue.js';
+import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
+import {
+  clienteRawToDtoSchema,
+  cotizacionConDetallesRawToDtoSchema,
+  datosInicialesResponseSchema,
+  historialCambioDtoSchema,
+  InstrumentoRecepcionInput,
+  ordenTrabajoResumenRawToDtoSchema,
+  recepcionBodySchema,
+  recepcionEquipoRawToDtoSchema,
+  recepcionInstrumentoParamsSchema,
+  recepcionParamsSchema,
+  recepcionesEnriquecidasResponseSchema,
+  respuestaHistorialRecepcionSchema,
+  respuestaRecepcionMutacionSchema,
+  respuestaSoftDeleteSchema,
+  softDeleteInstrumentoBodySchema,
+  tarifaRawToDtoSchema,
+} from './recepciones.schemas.js';
+
+type InstrumentoInput = InstrumentoRecepcionInput;
+
+const REC_INCLUDE = {
+  recepcion_equipo_detalles: {
+    where: { OR: [{ activacion: true }, { activacion: null }] },
+    orderBy: { ITEM: 'asc' },
+  },
+  documentos: true,
+  cotizaciones: { include: { clientes: true } },
+  ordenes_trabajo: {
+    include: {
+      clientes: true,
+      cotizaciones: true,
+      orden_trabajo_detalles: {
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+        include: { usuarios: { select: { NOMBRE_COMPLETO: true } } },
+      },
+    },
+  },
+} satisfies Prisma.recepciones_equipoInclude;
+
+/** Normaliza el sitio de calibración al enum `sitio_calibracion`. */
+function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' {
+  if (!valor) return 'LABORATORIO';
+  const v = valor.toUpperCase();
+  if (v.includes('LAB')) return 'LABORATORIO';
+  if (v.includes('CLI')) return 'CLIENTE';
+  return 'LABORATORIO';
+}
+
+function parseVersion(numeroVersion?: string | null): number {
+  const match = numeroVersion?.match(/V?(\d+)/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function validarRecepcionDefinitiva(body: InstrumentoInput[], cabecera: { nombreEntrega?: string | null; fechaRecepcion?: string | null }) {
+  return Boolean(
+    cabecera.nombreEntrega?.trim() && cabecera.fechaRecepcion && body.length > 0 &&
+    body.every((inst) => {
+      const entrada = (inst.estadoIBC as any)?.entrada;
+      return [inst.instrumento, inst.marca, inst.modelo, inst.serie, inst.codigoInventario, inst.resolucion]
+        .every((v) => v != null && String(v).trim() !== '') &&
+        ['E', 'T', 'D', 'A'].every((k) => typeof entrada?.[k] === 'boolean');
+    })
+  );
+}
+
+/** Nombre del usuario autenticado (para autocompletar NOMBRE_RECIBE). */
+function nombreUsuarioActual(request: {
+  user?: { name?: string; user?: { nombreCompleto?: string } } | null;
+}): string {
+  return request.user?.name ?? request.user?.user?.nombreCompleto ?? '';
+}
+
+function mapDetalleCreate(inst: InstrumentoInput, item: number) {
+  return {
+    ITEM: item,
+    INSTRUMENTO: inst.instrumento,
+    MARCA: inst.marca ?? null,
+    MODELO: inst.modelo ?? null,
+    SERIE: inst.serie ?? null,
+    CODIGO_INVENTARIO: inst.codigoInventario ?? null,
+    RESOLUCION: inst.resolucion ?? null,
+    TIPO_SENSOR_TEMP_init: inst.sensorInt ?? false,
+    TIPO_SENSOR_TEMP_ext: inst.sensorExt ?? false,
+    ESTADO_IBC: (inst.estadoIBC ?? {}) as Prisma.InputJsonValue,
+    ESTAMPILLA: inst.estampilla && inst.estampilla.trim() ? inst.estampilla.trim() : null,
+    OBSERVACIONES: inst.observaciones ?? null,
+    activacion: true,
+  };
+}
+
+function mapDetalleUpdate(inst: InstrumentoInput, item: number) {
+  return {
+    ITEM: item,
+    INSTRUMENTO: inst.instrumento,
+    MARCA: inst.marca ?? null,
+    MODELO: inst.modelo ?? null,
+    SERIE: inst.serie ?? null,
+    CODIGO_INVENTARIO: inst.codigoInventario ?? null,
+    RESOLUCION: inst.resolucion ?? null,
+    TIPO_SENSOR_TEMP_init: inst.sensorInt ?? false,
+    TIPO_SENSOR_TEMP_ext: inst.sensorExt ?? false,
+    ESTADO_IBC: (inst.estadoIBC ?? {}) as Prisma.InputJsonValue,
+    ESTAMPILLA: inst.estampilla && inst.estampilla.trim() ? inst.estampilla.trim() : null,
+    OBSERVACIONES: inst.observaciones ?? null,
+    activacion: true,
+  };
+}
+
+export default async function recepcionesRoutes(fastify: FastifyInstance) {
+  fastify.setValidatorCompiler(validatorCompiler);
+  fastify.setSerializerCompiler(serializerCompiler);
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.get(
+    '/api/v1/recepciones/enriquecidas',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        response: { 200: recepcionesEnriquecidasResponseSchema },
+      },
+    },
+    async () => {
+      const recepciones = await fastify.prisma.recepciones_equipo.findMany({
+        where: { VIGENTE: true, activacion: { not: false } },
+        include: {
+          recepcion_equipo_detalles: {
+            where: { OR: [{ activacion: true }, { activacion: null }] },
+            orderBy: { ITEM: 'asc' },
+          },
+          cotizaciones: { include: { clientes: true } },
+          ordenes_trabajo: {
+            include: {
+              clientes: true,
+              cotizaciones: true,
+              orden_trabajo_detalles: {
+                where: { OR: [{ activacion: true }, { activacion: null }] },
+                include: { usuarios: { select: { NOMBRE_COMPLETO: true } } },
+              },
+            },
+          },
+          documentos: true,
+        },
+        orderBy: { FECHA_RECEPCION: 'desc' },
+      });
+
+      return recepciones.map((rec) => {
+        let clienteNombre = 'Cliente no especificado';
+        if (rec.cotizaciones?.clientes?.RAZON_SOCIAL) {
+          clienteNombre = rec.cotizaciones.clientes.RAZON_SOCIAL;
+        } else if (rec.ordenes_trabajo?.clientes?.RAZON_SOCIAL) {
+          clienteNombre = rec.ordenes_trabajo.clientes.RAZON_SOCIAL;
+        } else if (rec.ID_COTIZACION_FK && rec.cotizaciones?.clientes) {
+          clienteNombre = rec.cotizaciones.clientes.RAZON_SOCIAL || 'Sin razón social';
+        } else if (rec.ID_ORDEN_TRABAJO_FK && rec.ordenes_trabajo?.clientes) {
+          clienteNombre = rec.ordenes_trabajo.clientes.RAZON_SOCIAL || 'Sin razón social';
+        }
+
+        const codigoCotizacion = rec.cotizaciones?.CODIGO_COTIZACION || '';
+        const codigoOT = rec.ordenes_trabajo?.CODIGO_OT || '';
+
+        return {
+          idRecepcion: rec.ID_RECEPCION,
+          codigo: rec.CODIGO_RECEPCION || `REC-${rec.ID_RECEPCION}`,
+          clienteNombre,
+          fecha: rec.FECHA_RECEPCION
+            ? new Date(rec.FECHA_RECEPCION).toISOString().split('T')[0]
+            : '',
+          cantidadInstrumentos: rec.recepcion_equipo_detalles?.length || 0,
+          codigoCotizacion,
+          codigoOT,
+          raw: recepcionEquipoRawToDtoSchema.parse(rec),
+        };
+      });
+    }
+  );
+
+  app.get(
+    '/api/v1/recepciones',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        response: { 200: datosInicialesResponseSchema },
+      },
+    },
+    async () => {
+      const [recepciones, clientes, cotizaciones, ordenes, tarifas] =
+        await fastify.prisma.$transaction([
+          fastify.prisma.recepciones_equipo.findMany({
+            where: { VIGENTE: true, activacion: { not: false } },
+            include: {
+              recepcion_equipo_detalles: {
+                where: { OR: [{ activacion: true }, { activacion: null }] },
+                orderBy: { ITEM: 'asc' },
+              },
+              cotizaciones: { include: { clientes: true } },
+              ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
+              documentos: true,
+            },
+            orderBy: { FECHA_RECEPCION: 'desc' },
+          }),
+          fastify.prisma.clientes.findMany({ orderBy: { RAZON_SOCIAL: 'asc' } }),
+          fastify.prisma.cotizaciones.findMany({
+            include: {
+              clientes: { select: { ID_CLIENTE: true, RAZON_SOCIAL: true, CORREO: true } },
+              cotizacion_detalles: true,
+            },
+            orderBy: { CREATED_AT: 'desc' },
+          }),
+          fastify.prisma.ordenes_trabajo.findMany({
+            include: {
+              clientes: { select: { ID_CLIENTE: true, RAZON_SOCIAL: true, CORREO: true } },
+              cotizaciones: { select: { ID_COTIZACION: true, CODIGO_COTIZACION: true } },
+            },
+            orderBy: { CREATED_AT: 'desc' },
+          }),
+          fastify.prisma.tarifas.findMany({
+            include: { historial_tarifas: true },
+            orderBy: { Instrumento: 'asc' },
+          }),
+        ]);
+
+      return {
+        recepciones: recepciones.map((r) => recepcionEquipoRawToDtoSchema.parse(r)),
+        clientes: clientes.map((c) => clienteRawToDtoSchema.parse(c)),
+        cotizaciones: cotizaciones.map((c) => cotizacionConDetallesRawToDtoSchema.parse(c)),
+        ordenes: ordenes.map((o) => ordenTrabajoResumenRawToDtoSchema.parse(o)),
+        tarifas: tarifas.map((t) => tarifaRawToDtoSchema.parse(t)),
+      };
+    }
+  );
+
+  // ==========================================================================
+  // POST /api/v1/recepciones — Creación standalone (ingeniería inversa)
+  // Autogenera Cotización base → OT → Recepción dentro de una transacción.
+  // ==========================================================================
+  app.post(
+    '/api/v1/recepciones',
+    {
+      preHandler: [
+        fastify.authenticate,
+        async () => {
+          await verificarPlantillasOperativas(fastify.prisma);
+        },
+      ],
+      schema: {
+        body: recepcionBodySchema,
+        response: { 200: respuestaRecepcionMutacionSchema },
+      },
+    },
+    async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
+      const body = request.body;
+      if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
+        throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
+      }
+      const idUsuario = Number(request.user?.sub ?? 0);
+
+      const recepcion = await fastify.prisma.$transaction(async (tx) => {
+        // 1. Resolver o crear la Cotización base
+        let cotizacion = body.cotizacionCodigo
+          ? await tx.cotizaciones.findFirst({
+              where: { CODIGO_COTIZACION: body.cotizacionCodigo },
+            })
+          : null;
+
+        if (!cotizacion) {
+          const codigoCot = await generarConsecutivo(tx, 'COT');
+          cotizacion = await tx.cotizaciones.create({
+            data: {
+              CODIGO_COTIZACION: codigoCot,
+              ID_CLIENTE_FK: body.idCliente ?? null,
+              ESTADO: 'BORRADOR',
+              MONTO_TOTAL: 0,
+            },
+          });
+        }
+
+        // 2. Resolver o crear la OT homóloga
+        let ot = body.ordenTrabajoCodigo
+          ? await tx.ordenes_trabajo.findFirst({
+              where: { CODIGO_OT: body.ordenTrabajoCodigo },
+            })
+          : null;
+
+        if (!ot) {
+          const codigoOT = await generarConsecutivo(tx, 'OT');
+          ot = await tx.ordenes_trabajo.create({
+            data: {
+              CODIGO_OT: codigoOT,
+              ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
+              ID_CLIENTE_FK: body.idCliente ?? cotizacion.ID_CLIENTE_FK,
+              no_cotizacion: cotizacion.CODIGO_COTIZACION,
+              estado: 'Creada',
+              orden_trabajo_detalles: {
+                create: body.instrumentos.map((inst, idx) => ({
+                  ITEM: idx + 1,
+                  INSTRUMENTO: inst.instrumento,
+                  TIPO_SERVICIO: 'Calibración',
+                  FABRICANTE: inst.marca ?? null,
+                  MODELO: inst.modelo ?? null,
+                  SERIE: inst.serie ?? null,
+                  CODIGO_INVENTARIO: inst.codigoInventario ?? null,
+                  asignado: null,
+                  activacion: true,
+                })),
+              },
+            },
+          });
+        }
+
+        await validarOTEditableAntesDeCalibrar(tx, ot.ID_ORDEN_TRABAJO, 'instrumentos de recepción');
+
+        // 3. Crear la Recepción enlazada
+        const codigoRec = await generarConsecutivo(tx, 'REC');
+        const nueva = await tx.recepciones_equipo.create({
+          data: {
+            CODIGO_RECEPCION: codigoRec,
+            ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
+            ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
+            SOLICITANTE: body.solicitante,
+            NOMBRE_ENTREGA: body.nombreEntrega ?? null,
+            SITIO_CALIBRACION: normalizarSitio(body.sitioCalibracion),
+            FECHA_RECEPCION: new Date(body.fechaRecepcion),
+            FECHA_SALIDA: body.fechaSalida ? new Date(body.fechaSalida) : null,
+            NOMBRE_RECIBE: nombreUsuarioActual(request) || body.nombreRecibe || null,
+            NOMBRE_EMPACA: body.nombreEmpaca ?? null,
+            NOMBRE_CALIBRA: body.nombreCalibra ?? null,
+            NOMBRE_RECIBE_SERVICIO: body.nombreRecibeServicio ?? null,
+            ACCESORIOS: body.accesorios ?? null,
+            PRUEBAS_COMPLETAS: body.pruebasCompletas ?? true,
+            OBSERVACIONES_PRUEBAS: body.observacionesPruebas ?? null,
+            ESTADO: body.estado ?? 'BORRADOR',
+            recepcion_equipo_detalles: {
+              create: body.instrumentos.map((inst, idx) => mapDetalleCreate(inst, idx + 1)),
+            },
+          },
+          include: REC_INCLUDE,
+        });
+
+        await sincronizarCotizacionDesdeRecepcion(
+          tx,
+          cotizacion.ID_COTIZACION,
+          body.instrumentos.map((instrumento) => ({ instrumento: instrumento.instrumento })),
+          normalizarSitio(body.sitioCalibracion),
+        );
+
+        await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
+
+        await registrarBitacora(tx, {
+          action: 'CREATE',
+          tableName: 'recepciones_equipo',
+          recordId: nueva.ID_RECEPCION,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: nueva.CODIGO_RECEPCION,
+            idCotizacion: cotizacion.ID_COTIZACION,
+            idOrdenTrabajo: ot.ID_ORDEN_TRABAJO,
+          },
+        });
+
+        return nueva;
+      });
+
+      // Encolar generación documental después del commit
+      const job = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+      await getGenerationExcelQueue().add('generar_recepcion', {
+        tipo: 3,
+        id_registro: recepcion.ID_RECEPCION,
+        codigo_actual: recepcion.CODIGO_RECEPCION,
+        tipo_entry: 'prod',
+        id_job: job.id,
+        id_usuario: idUsuario,
+      });
+
+      return {
+        ok: true as const,
+        data: recepcionEquipoRawToDtoSchema.parse(recepcion),
+        message: 'Recepción creada y enlazada a su cotización/OT.',
+        id_job: job.id,
+      };
+    }
+  );
+
+  // ==========================================================================
+  // PUT /api/v1/recepciones/:id — Actualización con sincronización y versionado
+  // ==========================================================================
+  app.put(
+    '/api/v1/recepciones/:id',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: recepcionParamsSchema,
+        body: recepcionBodySchema,
+        response: { 200: respuestaRecepcionMutacionSchema },
+      },
+    },
+    async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
+      const { id } = request.params;
+      const body = request.body;
+      if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
+        throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
+      }
+      const idUsuario = Number(request.user?.sub ?? 0);
+
+      const recepcion = await fastify.prisma.$transaction(async (tx) => {
+        const actual = await tx.recepciones_equipo.findUnique({
+          where: { ID_RECEPCION: id },
+          include: { recepcion_equipo_detalles: true },
+        });
+        if (!actual) throw new AppError(404, 'Recepción no encontrada');
+
+        if (actual.ID_ORDEN_TRABAJO_FK) {
+          await validarIdentidadInstrumentosRecepcion(
+            tx,
+            actual.ID_ORDEN_TRABAJO_FK,
+            actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false),
+            body.instrumentos,
+          );
+        }
+
+        // 1. Nuevo consecutivo versionado de la Recepción
+        const nuevoCodigoRec = await generarConsecutivo(tx, 'REC', actual.CODIGO_RECEPCION);
+
+        // 2. Cabecera
+        await tx.recepciones_equipo.update({
+          where: { ID_RECEPCION: id },
+          data: {
+            CODIGO_RECEPCION: nuevoCodigoRec,
+            SOLICITANTE: body.solicitante,
+            NOMBRE_ENTREGA: body.nombreEntrega ?? null,
+            SITIO_CALIBRACION: normalizarSitio(body.sitioCalibracion),
+            FECHA_RECEPCION: new Date(body.fechaRecepcion),
+            FECHA_SALIDA: body.fechaSalida ? new Date(body.fechaSalida) : null,
+            NOMBRE_RECIBE: nombreUsuarioActual(request) || body.nombreRecibe || null,
+            NOMBRE_EMPACA: body.nombreEmpaca ?? null,
+            NOMBRE_CALIBRA: body.nombreCalibra ?? null,
+            NOMBRE_RECIBE_SERVICIO: body.nombreRecibeServicio ?? null,
+            ACCESORIOS: body.accesorios ?? null,
+            PRUEBAS_COMPLETAS: body.pruebasCompletas ?? true,
+            OBSERVACIONES_PRUEBAS: body.observacionesPruebas ?? null,
+            ...(body.estado ? { ESTADO: body.estado } : {}),
+          },
+        });
+
+        // 3. Sincronizar instrumentos (match por ITEM/posición, soft-delete de sobrantes)
+        const existentes = actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false).sort(
+          (a, b) => (a.ITEM ?? 0) - (b.ITEM ?? 0) || a.ID_INSTRUMENTO - b.ID_INSTRUMENTO
+        );
+        const usados = new Set<number>();
+
+        for (let i = 0; i < body.instrumentos.length; i++) {
+          const inst = body.instrumentos[i];
+          const item = i + 1;
+          const match =
+            (inst.idInstrumento != null
+              ? existentes.find((d) => d.ID_INSTRUMENTO === inst.idInstrumento && !usados.has(d.ID_INSTRUMENTO))
+              : existentes.find((d) => d.ITEM === item && !usados.has(d.ID_INSTRUMENTO)) ??
+                existentes.find((d) => !usados.has(d.ID_INSTRUMENTO)));
+
+          if (match) {
+            usados.add(match.ID_INSTRUMENTO);
+            await tx.recepcion_equipo_detalles.update({
+              where: { ID_INSTRUMENTO: match.ID_INSTRUMENTO },
+              data: mapDetalleUpdate(inst, item),
+            });
+          } else {
+            await tx.recepcion_equipo_detalles.create({
+              data: { ID_RECEPCION_FK: id, ...mapDetalleCreate(inst, item) },
+            });
+          }
+        }
+
+        // Soft delete de instrumentos removidos (NO DELETE físico)
+        const sobrantes = existentes.filter((d) => !usados.has(d.ID_INSTRUMENTO));
+        for (const d of sobrantes) {
+          if (d.activacion === false) continue;
+          await tx.recepcion_equipo_detalles.update({
+            where: { ID_INSTRUMENTO: d.ID_INSTRUMENTO },
+            data: { activacion: false },
+          });
+        }
+
+        // 4. Sincronizar campos compartidos hacia la OT homóloga + versionar OT
+        if (actual.ID_ORDEN_TRABAJO_FK) {
+          const otDetalles = await tx.orden_trabajo_detalles.findMany({
+            where: { ID_ORDEN_TRABAJO_FK: actual.ID_ORDEN_TRABAJO_FK },
+          });
+
+          let otCambio = false;
+
+          for (let i = 0; i < body.instrumentos.length; i++) {
+            const inst = body.instrumentos[i];
+            const item = i + 1;
+            const detalleAnterior = inst.idInstrumento != null
+              ? existentes.find((d) => d.ID_INSTRUMENTO === inst.idInstrumento)
+              : null;
+            const otDet =
+              (detalleAnterior ? otDetalles.find((d) => d.ITEM === detalleAnterior.ITEM) : undefined) ??
+              (!inst.idInstrumento ? otDetalles.find((d) => d.ITEM === item) : undefined) ??
+              otDetalles.find((d) => d.INSTRUMENTO === inst.instrumento);
+
+            if (otDet) {
+              const marca = inst.marca ?? null;
+              const modelo = inst.modelo ?? null;
+              const serie = inst.serie ?? null;
+              const codigoInventario = inst.codigoInventario ?? null;
+
+              const cambio =
+                otDet.ITEM !== item ||
+                otDet.INSTRUMENTO !== inst.instrumento ||
+                otDet.FABRICANTE !== marca ||
+                otDet.MODELO !== modelo ||
+                otDet.SERIE !== serie ||
+                otDet.CODIGO_INVENTARIO !== codigoInventario ||
+                otDet.activacion === false;
+
+              if (cambio) {
+                otCambio = true;
+                await tx.orden_trabajo_detalles.update({
+                  where: { ID_DETALLE: otDet.ID_DETALLE },
+                  data: {
+                    ITEM: item,
+                    INSTRUMENTO: inst.instrumento,
+                    FABRICANTE: marca,
+                    MODELO: modelo,
+                    SERIE: serie,
+                    CODIGO_INVENTARIO: codigoInventario,
+                    activacion: true,
+                  },
+                });
+              }
+            } else {
+              // Instrumento nuevo en recepción: crear su detalle en la OT.
+              otCambio = true;
+              await tx.orden_trabajo_detalles.create({
+                data: {
+                  ID_ORDEN_TRABAJO_FK: actual.ID_ORDEN_TRABAJO_FK,
+                  ITEM: item,
+                  INSTRUMENTO: inst.instrumento,
+                  TIPO_SERVICIO: 'Calibración',
+                  FABRICANTE: inst.marca ?? null,
+                  MODELO: inst.modelo ?? null,
+                  SERIE: inst.serie ?? null,
+                  CODIGO_INVENTARIO: inst.codigoInventario ?? null,
+                  asignado: null,
+                  activacion: true,
+                },
+              });
+            }
+          }
+
+          // Solo se versiona el consecutivo de la OT si sus datos cambiaron.
+          if (otCambio) {
+            const otActual = await tx.ordenes_trabajo.findUnique({
+              where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
+              select: { CODIGO_OT: true },
+            });
+            if (otActual) {
+              const nuevoCodigoOT = await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT);
+              await tx.ordenes_trabajo.update({
+                where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
+                data: { CODIGO_OT: nuevoCodigoOT },
+              });
+            }
+          }
+
+          await evaluarTransicionesOT(tx, actual.ID_ORDEN_TRABAJO_FK);
+        }
+
+        // 5. Sincronizar la cotización: agrupar por cantidad y recalcular monto.
+        if (actual.ID_COTIZACION_FK) {
+          await sincronizarCotizacionDesdeRecepcion(
+            tx,
+            actual.ID_COTIZACION_FK,
+            body.instrumentos,
+            normalizarSitio(body.sitioCalibracion ?? actual.SITIO_CALIBRACION),
+          );
+        }
+
+        const final = await tx.recepciones_equipo.findUnique({
+          where: { ID_RECEPCION: id },
+          include: REC_INCLUDE,
+        });
+
+        await registrarBitacora(tx, {
+          action: 'UPDATE',
+          tableName: 'recepciones_equipo',
+          recordId: id,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            codigo: final!.CODIGO_RECEPCION,
+            idCotizacion: actual.ID_COTIZACION_FK,
+            idOrdenTrabajo: actual.ID_ORDEN_TRABAJO_FK,
+          },
+        });
+
+        return final!;
+      });
+
+      // Encolar Excel (Recepción + OT) tras el commit
+      const excelQueue = getGenerationExcelQueue();
+      const jobRec = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+      await excelQueue.add('actualizacion_recepcion', {
+        tipo: 3,
+        id_registro: recepcion.ID_RECEPCION,
+        codigo_actual: recepcion.CODIGO_RECEPCION,
+        tipo_entry: 'prod',
+        id_job: jobRec.id,
+        id_usuario: idUsuario,
+      });
+      if (recepcion.ID_ORDEN_TRABAJO_FK) {
+        const jobOt = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+        await excelQueue.add('actualizacion_orden', {
+          tipo: 2,
+          id_registro: recepcion.ID_ORDEN_TRABAJO_FK,
+          codigo_actual: recepcion.ordenes_trabajo?.CODIGO_OT,
+          tipo_entry: 'prod',
+          id_job: jobOt.id,
+          id_usuario: idUsuario,
+        });
+      }
+
+      return {
+        ok: true as const,
+        data: recepcionEquipoRawToDtoSchema.parse(recepcion),
+        message: 'Recepción actualizada, sincronizada y versionada.',
+      };
+    }
+  );
+
+  // ==========================================================================
+  // DELETE (soft) /api/v1/recepciones/:id/instrumentos/:idInstrumento
+  // Desactiva el ítem en Recepción, OT y Cotización + auditoría + historial.
+  // ==========================================================================
+  app.delete(
+    '/api/v1/recepciones/:id/instrumentos/:idInstrumento',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: recepcionInstrumentoParamsSchema,
+        body: softDeleteInstrumentoBodySchema,
+        response: { 200: respuestaSoftDeleteSchema },
+      },
+    },
+    async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
+      const { id, idInstrumento } = request.params;
+      const idUsuario = Number(request.user?.sub ?? 0);
+      const ip = request.ip;
+      const motivo = request.body?.descripcion ?? null;
+      const observaciones = request.body?.observaciones ?? null;
+      const aprobo = request.body?.aprobo ?? String(idUsuario);
+
+      let idCotizacionFinal: number | null = null;
+      let idOrdenTrabajoFinal: number | null = null;
+      let codigoRecepcion = '';
+
+      await fastify.prisma.$transaction(async (tx) => {
+        const rec = await tx.recepciones_equipo.findUnique({
+          where: { ID_RECEPCION: id },
+          include: { recepcion_equipo_detalles: true },
+        });
+        if (!rec) throw new AppError(404, 'Recepción no encontrada');
+
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          await validarOTEditableAntesDeCalibrar(tx, rec.ID_ORDEN_TRABAJO_FK, 'instrumentos de recepción');
+        }
+
+        const detalle = rec.recepcion_equipo_detalles.find(
+          (d) => d.ID_INSTRUMENTO === idInstrumento
+        );
+        if (!detalle) throw new AppError(404, 'Instrumento no encontrado en la recepción');
+
+        const instrumentosActivos = rec.recepcion_equipo_detalles.filter((d) => d.activacion !== false);
+        if (detalle.activacion === false) {
+          throw new AppError(404, 'El instrumento ya está desactivado en la recepción');
+        }
+        if (instrumentosActivos.length <= 1) {
+          throw new AppError(409, 'No se puede eliminar el último instrumento activo de una recepción.');
+        }
+
+        // 1. Soft delete en Recepción
+        await tx.recepcion_equipo_detalles.update({
+          where: { ID_INSTRUMENTO: idInstrumento },
+          data: { activacion: false },
+        });
+
+        // 2. Soft delete en OT
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          const otDetPorItem = detalle.ITEM != null
+            ? await tx.orden_trabajo_detalles.findFirst({
+                where: {
+                  ID_ORDEN_TRABAJO_FK: rec.ID_ORDEN_TRABAJO_FK,
+                  ITEM: detalle.ITEM,
+                  OR: [{ activacion: true }, { activacion: null }],
+                },
+              })
+            : null;
+          const otDet = otDetPorItem ?? await tx.orden_trabajo_detalles.findFirst({
+            where: {
+              ID_ORDEN_TRABAJO_FK: rec.ID_ORDEN_TRABAJO_FK,
+              INSTRUMENTO: detalle.INSTRUMENTO,
+              OR: [{ activacion: true }, { activacion: null }],
+            },
+          });
+          if (otDet) {
+            await tx.orden_trabajo_detalles.update({
+              where: { ID_DETALLE: otDet.ID_DETALLE },
+              data: { activacion: false },
+            });
+          }
+        }
+
+        // 3. Sincronizar cotización (agrupar por cantidad + recalcular monto).
+        const cotizacionId = rec.ID_COTIZACION_FK;
+        if (cotizacionId) {
+          const activosRec = await tx.recepcion_equipo_detalles.findMany({
+            where: { ID_RECEPCION_FK: id, activacion: { not: false } },
+          });
+          await sincronizarCotizacionDesdeRecepcion(
+            tx,
+            cotizacionId,
+            activosRec.map((d) => ({ instrumento: d.INSTRUMENTO })),
+            rec.SITIO_CALIBRACION ?? 'LABORATORIO',
+          );
+        }
+
+        // 4. Versionar OT y recepción para reflejar el cambio en sus consecutivos.
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          const otActual = await tx.ordenes_trabajo.findUnique({
+            where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
+            select: { CODIGO_OT: true },
+          });
+          if (otActual) {
+            await tx.ordenes_trabajo.update({
+              where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
+              data: { CODIGO_OT: await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT) },
+            });
+          }
+        }
+        codigoRecepcion = await generarConsecutivo(tx, 'REC', rec.CODIGO_RECEPCION);
+        await tx.recepciones_equipo.update({
+          where: { ID_RECEPCION: id },
+          data: { CODIGO_RECEPCION: codigoRecepcion },
+        });
+
+        // 4. Auditoría (bitácora compartida)
+        await registrarBitacora(tx, {
+          action: 'SOFT_DELETE',
+          tableName: 'recepcion_equipo_detalles',
+          recordId: idInstrumento,
+          userId: idUsuario,
+          ip,
+          details: {
+            before: {
+              instrumento: detalle.INSTRUMENTO,
+              activacion: detalle.activacion,
+            },
+            after: { activacion: false },
+            motivo: motivo ?? 'Sin motivo especificado',
+          },
+        });
+
+        // 5. Historial de cambios de la cotización (con el motivo capturado)
+        if (cotizacionId) {
+          const ultimo = await tx.historial_cambios.findFirst({
+            where: { id_cotizacion: cotizacionId },
+            orderBy: { created_at: 'desc' },
+          });
+          const nextVersion = parseVersion(ultimo?.numero_version) + 1;
+          await tx.historial_cambios.create({
+            data: {
+              id: crypto.randomUUID(),
+              numero_version: `V${nextVersion}`,
+              fecha_cambio: new Date(),
+              descripcion:
+                motivo ??
+                `Eliminación (soft delete) del equipo "${detalle.INSTRUMENTO}" de la recepción ${rec.CODIGO_RECEPCION}.`,
+              requiere_validacion_hoja: false,
+              observaciones,
+              aprobo,
+              id_cotizacion: cotizacionId,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          });
+
+          // Versionar el consecutivo de la cotización (acción originada en recepción).
+          const cotActual = await tx.cotizaciones.findUnique({
+            where: { ID_COTIZACION: cotizacionId },
+            select: { CODIGO_COTIZACION: true },
+          });
+          if (cotActual) {
+            await tx.cotizaciones.update({
+              where: { ID_COTIZACION: cotizacionId },
+              data: {
+                CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotActual.CODIGO_COTIZACION),
+              },
+            });
+          }
+        }
+
+        // 6. Recalcular el estado automático de la OT tras el soft delete.
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          await evaluarTransicionesOT(tx, rec.ID_ORDEN_TRABAJO_FK);
+        }
+
+        idCotizacionFinal = cotizacionId;
+        idOrdenTrabajoFinal = rec.ID_ORDEN_TRABAJO_FK ?? null;
+      });
+
+      // 7. Regenerar documentos dependientes (nueva versión visible en Gestión de Clientes).
+      const excelQueue = getGenerationExcelQueue();
+      if (idCotizacionFinal) {
+        const jobCot = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+        await excelQueue.add('actualizacion_cotizacion', {
+          tipo: 1,
+          id_registro: idCotizacionFinal,
+          codigo_actual: null,
+          tipo_entry: 'prod',
+          id_job: jobCot.id,
+          id_usuario: idUsuario,
+        });
+      }
+      if (idOrdenTrabajoFinal) {
+        const jobOt = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+        await excelQueue.add('actualizacion_orden', {
+          tipo: 2,
+          id_registro: idOrdenTrabajoFinal,
+          codigo_actual: null,
+          tipo_entry: 'prod',
+          id_job: jobOt.id,
+          id_usuario: idUsuario,
+        });
+      }
+      const jobRec = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+      await excelQueue.add('actualizacion_recepcion', {
+        tipo: 3,
+        id_registro: id,
+        codigo_actual: codigoRecepcion,
+        tipo_entry: 'prod',
+        id_job: jobRec.id,
+        id_usuario: idUsuario,
+      });
+
+      return {
+        ok: true as const,
+        message: 'Instrumento desactivado (soft delete) en recepción, OT y cotización.',
+      };
+    }
+  );
+
+  // ==========================================================================
+  // DELETE (soft) /api/v1/recepciones/:id — Soft delete de la Recepción completa
+  // ==========================================================================
+  app.delete(
+    '/api/v1/recepciones/:id',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: recepcionParamsSchema,
+        body: softDeleteInstrumentoBodySchema.optional(),
+        response: { 200: respuestaSoftDeleteSchema },
+      },
+    },
+    async (request) => {
+      assertPermission(request, 'recepcion_de_equipos', 'registrar');
+      const idUsuario = Number(request.user?.sub ?? 0);
+      const ip = request.ip;
+      const motivo = request.body?.descripcion ?? null;
+      const observaciones = request.body?.observaciones ?? null;
+      const aprobo = request.body?.aprobo ?? String(idUsuario);
+
+      await fastify.prisma.$transaction(async (tx) => {
+        const rec = await tx.recepciones_equipo.findUnique({
+          where: { ID_RECEPCION: request.params.id },
+        });
+        if (!rec) throw new AppError(404, 'Recepción no encontrada');
+
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          await validarOTEditableAntesDeCalibrar(tx, rec.ID_ORDEN_TRABAJO_FK, 'instrumentos de recepción');
+        }
+
+        // Soft delete de la recepción (no se borra físicamente).
+        await tx.recepciones_equipo.update({
+          where: { ID_RECEPCION: rec.ID_RECEPCION },
+          data: { activacion: false, VIGENTE: false },
+        });
+
+        await registrarBitacora(tx, {
+          action: 'SOFT_DELETE',
+          tableName: 'recepciones_equipo',
+          recordId: rec.ID_RECEPCION,
+          userId: idUsuario,
+          ip,
+          details: {
+            before: { codigo: rec.CODIGO_RECEPCION, activacion: true },
+            after: { activacion: false },
+            motivo: motivo ?? 'Sin motivo especificado',
+          },
+        });
+
+        // Trazabilidad sobre la cotización vinculada (si existe).
+        if (rec.ID_COTIZACION_FK) {
+          const ultimo = await tx.historial_cambios.findFirst({
+            where: { id_cotizacion: rec.ID_COTIZACION_FK },
+            orderBy: { created_at: 'desc' },
+          });
+          const nextVersion = parseVersion(ultimo?.numero_version) + 1;
+          await tx.historial_cambios.create({
+            data: {
+              id: crypto.randomUUID(),
+              numero_version: `V${nextVersion}`,
+              fecha_cambio: new Date(),
+              descripcion:
+                motivo ?? `Eliminación (soft delete) de la recepción ${rec.CODIGO_RECEPCION}.`,
+              requiere_validacion_hoja: false,
+              observaciones,
+              aprobo,
+              id_cotizacion: rec.ID_COTIZACION_FK,
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          });
+        }
+      });
+
+      return {
+        ok: true as const,
+        message: 'Recepción desactivada (soft delete).',
+      };
+    }
+  );
+
+  // ==========================================================================
+  // GET /api/v1/recepciones/:id/historial — Trazabilidad vía historial_cambios
+  // ==========================================================================
+  app.get(
+    '/api/v1/recepciones/:id/historial',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: recepcionParamsSchema,
+        response: { 200: respuestaHistorialRecepcionSchema },
+      },
+    },
+    async (request) => {
+      const rec = await fastify.prisma.recepciones_equipo.findUnique({
+        where: { ID_RECEPCION: request.params.id },
+      });
+      if (!rec) throw new AppError(404, 'Recepción no encontrada');
+
+      if (!rec.ID_COTIZACION_FK) {
+        return { ok: true as const, data: [] };
+      }
+
+      const historial = await fastify.prisma.historial_cambios.findMany({
+        where: { id_cotizacion: rec.ID_COTIZACION_FK },
+        orderBy: { created_at: 'desc' },
+      });
+
+      return {
+        ok: true as const,
+        data: historial.map((h) =>
+          historialCambioDtoSchema.parse({
+            id: h.id,
+            numeroVersion: h.numero_version,
+            fechaCambio: h.fecha_cambio,
+            descripcion: h.descripcion,
+            observaciones: h.observaciones,
+            aprobo: h.aprobo,
+            idCotizacion: h.id_cotizacion,
+            createdAt: h.created_at,
+          })
+        ),
+      };
+    }
+  );
+}

@@ -5,32 +5,7 @@
   "description": "Contrato de entrada para la plantilla de Recepción, Reporte y Entrega de Instrumentos del Laboratorio de Metrología (R-CM010 Versión 004)",
   "fields": {
     "scalars": [
-      {
-        "key": "codigo_formato",
-        "label": "Código del Formato",
-        "dataType": "STRING",
-        "required": true,
-        "defaultValue": "R-CM010"
-      },
-      {
-        "key": "version_formato",
-        "label": "Versión del Formato",
-        "dataType": "STRING",
-        "required": true,
-        "defaultValue": "004"
-      },
-      {
-        "key": "fecha_vigencia_formato",
-        "label": "Fecha de Vigencia del Formato",
-        "dataType": "DATE",
-        "required": true
-      },
-      {
-        "key": "solicitante",
-        "label": "Solicitante",
-        "dataType": "STRING",
-        "required": true
-      },
+
       {
         "key": "nombre_quien_entrega",
         "label": "Nombre quién entrega",

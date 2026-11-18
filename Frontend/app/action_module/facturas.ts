@@ -10,6 +10,7 @@ export type FacturaModel = {
   numero: string;
   idOrdenTrabajo: number | null;
   idCliente: number | null;
+  idDocumento: number | null;
   fecha: Date | string;
   valor: number;
   estado: string;
@@ -40,5 +41,38 @@ export async function obtenerFacturas(): Promise<ResponseAction<FacturaModel[]>>
     console.error('[obtenerFacturas_ERROR]:', error);
     if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
     return { ok: false, error: 'Error al consultar las facturas.' };
+  }
+}
+
+export interface CrearFacturaInput {
+  numero: string;
+  idOrdenTrabajo?: number | null;
+  idCliente?: number | null;
+  fecha?: Date | string;
+  valor: number;
+  observacion?: string | null;
+  estado?: string;
+  archivo?: { nombre: string; rutaUrl: string; mimeType: string } | null;
+}
+
+// ==========================================
+// Crear una factura (con PDF opcional)
+// ==========================================
+export async function crearFactura(
+  input: CrearFacturaInput
+): Promise<ResponseAction<FacturaModel>> {
+  try {
+    const session = await auth();
+    const res = await fastifyRequest<{ ok: boolean; data: FacturaModel }>(
+      session,
+      '/api/v1/facturas',
+      { method: 'POST', body: input }
+    );
+
+    return { ok: true, data: res.data };
+  } catch (error) {
+    console.error('[crearFactura_ERROR]:', error);
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
+    return { ok: false, error: 'Error al crear la factura.' };
   }
 }

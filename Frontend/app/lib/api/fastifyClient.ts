@@ -1,7 +1,7 @@
 import { generarTokenBackend } from '@/app/lib/auth-token';
 
 // Usa variable de entorno con fallback para compatibilidad en Docker / Local
-export const BASE_URL =  'http://metrologia_backend:3001';
+export const BASE_URL = process.env.BACKEND_INTERNAL_URL || 'http://metrologia_backend:3001';
 
 export interface FastifyRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -13,6 +13,8 @@ interface SessionLike {
     id?: string | number;
     id_user?: string | number;
     email?: string | null;
+    name?: string | null;
+    role?: string;
     permissions?: { permisos?: Record<string, unknown> } | null;
   } | null;
 }
@@ -39,9 +41,12 @@ export async function fastifyRequest<T = unknown>(
   const token = await generarTokenBackend({
     sub: String(id),
     email: session.user.email ?? '',
+    name: session.user.name ?? '',
+    role: session.user.role ?? '',
     user: {
       id: String(id),
       email: session.user.email ?? '',
+      nombreCompleto: session.user.name ?? '',
       permissions: { permisos: session.user.permissions?.permisos ?? {} },
     },
   });
@@ -51,15 +56,18 @@ export async function fastifyRequest<T = unknown>(
     Authorization: `Bearer ${token}`,
   };
 
-  // 2. SOLUCIÓN AL HTTP 400: Asignar Content-Type SOLO si se envía un body
-  if (opts.body !== undefined) {
+  // 2. SOLUCIÓN AL HTTP 400: Asignar Content-Type SOLO si se envía un body JSON
+  const isFormData = typeof FormData !== 'undefined' && opts.body instanceof FormData;
+  if (opts.body !== undefined && !isFormData) {
     headers['Content-Type'] = 'application/json';
   }
 
   const res = await fetch(`${BASE_URL}${path}`, {
     method: opts.method ?? 'GET',
     headers,
-    ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+    ...(opts.body !== undefined
+      ? { body: isFormData ? (opts.body as FormData) : JSON.stringify(opts.body) }
+      : {}),
   });
 
   const data = (await res.json().catch(() => ({}))) as { error?: string };

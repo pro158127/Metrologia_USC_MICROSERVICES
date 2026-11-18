@@ -1,8 +1,37 @@
 import { createServer } from 'http';
 import { parse } from 'url';
+import crypto from 'crypto';
 import next from 'next';
 import { Server as SocketIOServer } from 'socket.io';
 import { Client } from 'pg';
+
+// Verifica un JWT HS256 firmado con AUTH_SECRET (compatible con @fastify/jwt
+// y con el token generado en app/lib/auth-token.ts). Devuelve el subject o null.
+function verificarTokenSocket(token: string): string | null {
+  try {
+    const [headerB64, payloadB64, signature] = token.split('.');
+    if (!headerB64 || !payloadB64 || !signature) return null;
+    const secret = process.env.AUTH_SECRET;
+    if (!secret) return null;
+
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(signingInput)
+      .digest('base64url');
+    const recibida = Buffer.from(signature);
+    const esperada = Buffer.from(expected);
+    if (recibida.length !== esperada.length || !crypto.timingSafeEqual(recibida, esperada)) {
+      return null;
+    }
+
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    if (typeof payload.exp === 'number' && Date.now() / 1000 > payload.exp) return null;
+    return String(payload.sub);
+  } catch {
+    return null;
+  }
+}
 
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
@@ -30,22 +59,29 @@ app.prepare().then(async () => {
   global.io = io;
 
   // 2. GESTIÓN DE CONEXIONES Y SALAS PRIVADAS
+  // Autenticación por JWT en el handshake (auth.token). El userId se deriva del
+  // token y nunca se confía del query del cliente.
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token as string | undefined;
+    if (!token) return next(new Error('No autenticado: falta token.'));
+    const userId = verificarTokenSocket(token);
+    if (!userId) return next(new Error('Token inválido o expirado.'));
+    (socket as any).data = { userId };
+    next();
+  });
+
   io.on('connection', (socket) => {
-    const userId = socket.handshake.query.userId as string | undefined;
+    const userId = (socket as any).data?.userId as string | undefined;
+    const salaDestino = `user_room_${userId}`;
+    if (userId && userId !== 'undefined' && userId !== 'null') {
+      socket.join(salaDestino);
+      console.log(`👤 Socket [${socket.id}] autenticado, unido a la sala: ${salaDestino}`);
+    }
 
-    const unirseASala = (id: string) => {
-      if (id && id !== 'undefined' && id !== 'null') {
-        const salaDestino = `user_room_${id}`;
-        socket.join(salaDestino);
-        console.log(`👤 Socket [${socket.id}] unido a la sala: ${salaDestino}`);
-      }
-    };
-
-    // Unirse inmediatamente si viene autenticado
-    if (userId) unirseASala(userId);
-
-    // Evento explícito por si el token/sesión de NextAuth tarda en cargar en el cliente
-    socket.on('unirse_sala_usuario', (id: string) => unirseASala(id));
+    // Se conserva por compatibilidad; la sala siempre sale del token.
+    socket.on('unirse_sala_usuario', () => {
+      if (userId && userId !== 'undefined' && userId !== 'null') socket.join(salaDestino);
+    });
 
     socket.on('disconnect', () => {
       console.log(`🔌 Cliente desconectado (Socket ID: ${socket.id})`);
@@ -53,6 +89,10 @@ app.prepare().then(async () => {
   });
 
   // 3. CONEXIÓN A POSTGRESQL (LISTEN/NOTIFY)
+  //    ⚠️ SOLO EN DESARROLLO. En producción el backend (postgrest-listener.ts) es
+  //    la única fuente de LISTEN/NOTIFY; este listener duplicado se desactiva para
+  //    evitar doble procesamiento y doble carga de conexiones a Postgres.
+  if (dev) {
   const isLocalDb = process.env.DATABASE_URL?.includes('localhost') || process.env.DATABASE_URL?.includes('127.0.0.1');
 
   const pgClient = new Client({
@@ -69,7 +109,7 @@ app.prepare().then(async () => {
       if (msg.channel === 'cambio_tablas' && msg.payload) {
         try {
           const evento = JSON.parse(msg.payload);
-          const { tabla, operacion, data } = evento;
+          const { tabla, operacion, data, seq, truncado } = evento;
 
          const clientesConectados = io.engine.clientsCount;
 console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacion} | 👥 Clientes socket activos: ${clientesConectados}`);
@@ -86,7 +126,9 @@ console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacio
               io.to(salaDestino).emit('cambio_realtime', {
                 tabla,
                 operacion,
-                data
+                data,
+                seq,
+                truncado
               });
 
               console.log(`🔒 Notificación [${operacion}] enviada a ${salaDestino}`);
@@ -98,7 +140,9 @@ console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacio
             io.emit('cambio_realtime', {
               tabla,
               operacion,
-              data
+              data,
+              seq,
+              truncado
             });
           }
         } catch (parseErr) {
@@ -111,6 +155,7 @@ console.log(`📡 Cambio detectado -> Tabla: "${tabla}" | Operación: ${operacio
 
   } catch (err) {
     console.error('❌ Error al conectar Postgres Realtime:', err);
+  }
   }
 
   // 4. INICIALIZAR SERVIDOR

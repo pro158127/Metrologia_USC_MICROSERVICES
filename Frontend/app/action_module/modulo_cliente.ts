@@ -134,6 +134,7 @@ export async function crearCliente(input: CrearClienteInput) {
           tipoCliente: input.tipoCliente ?? 'NATURAL',
           ciudad: input.ciudad ?? 'Cali',
           idRutDocumento: input.idRutDocumento ?? null,
+          dirrecion: input.dirrecion ?? "sin dirreciion", 
         },
       }
     );
@@ -316,5 +317,83 @@ export async function crearDocumento(input: CrearDocumentoInput) {
     }
 
     return { success: false, error: "Error interno del servidor al crear el documento." };
+  }
+}
+
+// ============================================================
+// Documentos categorizados por cotización
+// ============================================================
+
+export interface DocumentoVersionItem {
+  idVersion: number;
+  version: number;
+  rutaUrl: string;
+  createdAt: string;
+  usuario: string | null;
+}
+
+export interface DocumentoItem {
+  idDocumento: number;
+  nombre: string;
+  rutaUrl: string;
+  mimeType: string;
+  createdAt: string;
+  versionActual: number;
+  versiones: DocumentoVersionItem[];
+}
+
+export interface CertificadoTrazabilidad {
+  instrumento: string | null;
+  serie: string | null;
+  fechaCalibracion: string | null;
+  tecnico: string | null;
+  estadoRevision: string;
+  revisadoAt: string | null;
+  revisor: string | null;
+  motivoRechazo: string | null;
+  versiones: DocumentoVersionItem[];
+  sellos: string[];
+}
+
+export interface DocumentoCertificadoItem {
+  idCertificado: number;
+  codigoCertificado: string;
+  idDocumento: number;
+  nombre: string;
+  rutaUrl: string | null;
+  mimeType: string;
+  createdAt: string;
+  versiones: DocumentoVersionItem[];
+  trazabilidad: CertificadoTrazabilidad;
+}
+
+export interface DocumentosCotizacionCategorias {
+  idCotizacion: number;
+  codigo: string;
+  categorias: {
+    recepcion: DocumentoItem[];
+    cotizacion: DocumentoItem[];
+    ordenTrabajo: DocumentoItem[];
+    comprobantes: DocumentoItem[];
+    certificados: DocumentoCertificadoItem[];
+  };
+}
+
+/** Obtiene los documentos de una cotización agrupados en 5 categorías. */
+export async function obtenerDocumentosCotizacion(
+  idCotizacion: number
+): Promise<DocumentosCotizacionCategorias | null> {
+  try {
+    const session = await auth();
+    if (!session?.user) return null;
+
+    const res = await fastifyRequest<{ ok: boolean; data: DocumentosCotizacionCategorias }>(
+      session,
+      `/api/v1/cotizaciones/${idCotizacion}/documentos`
+    );
+    return res.data ?? null;
+  } catch (error) {
+    console.error('Error en obtenerDocumentosCotizacion:', error);
+    return null;
   }
 }

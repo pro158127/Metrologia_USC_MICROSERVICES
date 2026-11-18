@@ -1,24 +1,29 @@
 // next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // En Next.js 16 se declaran los orígenes válidos (IPs locales y del contenedor)
+  // Oculta el indicador visual de desarrollo de Next.js. Los errores siguen
+  // apareciendo en la terminal y en la consola del navegador.
+  devIndicators: false,
+
+  // allowedDevOrigins es útil en desarrollo para los assets estáticos
   allowedDevOrigins: [
-    '192.168.1.3',
     'localhost:3000',
-    '127.0.0.1',
-    '172.18.0.6',
-    '172.18.0.*', // Comodín para toda la subred de Docker
+    '*.devtunnels.ms'
   ],
 
-  async rewrites() {
-    return [
-      {
-        // Redirige todo /api/* EXCEPTO /api/auth/* usando Negative Lookahead
-        source: '/api/:path((?!auth).*)*',
-        destination: 'http://backend:3001/api/:path*',
-      },
-    ];
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '20mb',
+      allowedOrigins: [
+        'localhost:3000',
+        '*.devtunnels.ms'
+      ]
+    },
+    // Reduce el grafo de módulos de librerías pesadas en desarrollo.
+    optimizePackageImports: ['recharts', 'xlsx', 'exceljs', 'lucide-react']
   },
+
+
 };
 
 module.exports = nextConfig;

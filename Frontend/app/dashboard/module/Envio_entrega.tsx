@@ -1,44 +1,44 @@
-// 1. Imports
-import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { Send, CheckCircle, Lock, Plus, X, FileText, Eye, Upload, Paperclip } from "lucide-react";
-import type {
-  OTItem,
-  HistorialItem,
-  AlertBannerProps,
-  ToastProps,
-  HeaderProps,
-  ColumnFacturadasProps,
-  ColumnListasEnvioProps,
-  ColumnSinFacturarProps,
-  DetailPanelProps,
-  SendPanelProps,
-  HistoryTableProps,
-} from "@/tipos/envio";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+// ============================================================
+// Envio_entrega.tsx — Módulo de Envíos / Entregas (Secretaría)
+// Lista agrupada por cotización (hijas) + reglas de comprobante + visor PDF.
+// ============================================================
+"use client";
 
-// ========== UTILIDADES DE FORMATO ==========
-const formatValor = (val: number) => {
-  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(val);
-};
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  Send,
+  Eye,
+  Upload,
+  FileText,
+  X,
+  RefreshCw,
+  Filter,
+  CheckCircle,
+  Clock,
+  Paperclip,
+} from "lucide-react";
+import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import {
+  getDocumentosEnvioCotizacion,
+  subirComprobanteCotizacion,
+  enviarCertificadosCotizacion,
+  type DocumentosEnvioCotizacion,
+} from "@/app/action_module/envios";
+import { generarUrlArchivo } from "@/app/action_module/archivos";
+import { validarArchivo } from "@/app/lib/upload";
 
 const formatFecha = (fecha: string | Date | null) => {
-  if (!fecha) return "";
+  if (!fecha) return "—";
   const d = typeof fecha === "string" ? new Date(fecha) : fecha;
-  return d.toLocaleString("es-CO");
+  return d.toLocaleDateString("es-CO");
 };
 
-// 2. Declaración de Componentes Hijos (Extraídos)
+// -----------------------------------------------------------------------------
+// Sub-componentes
+// -----------------------------------------------------------------------------
 
-const AlertBanner: React.FC<AlertBannerProps> = ({ count }) => {
-  if (count === 0) return null;
-  return (
-    <div className="flex items-center justify-center bg-orange-200 text-orange-900 py-2.5 mb-5 rounded-xl">
-      <span className="text-sm font-bold">⚠️ {count} OTs sin factura registrada</span>
-    </div>
-  );
-};
-
-const Toast: React.FC<ToastProps> = ({ message }) => {
+const Toast: React.FC<{ message: string }> = ({ message }) => {
   if (!message) return null;
   return (
     <div className="fixed top-4 right-4 z-50 px-4 py-3 rounded-xl max-w-sm bg-slate-900 text-white text-xs font-bold shadow-lg border border-slate-800">
@@ -47,721 +47,521 @@ const Toast: React.FC<ToastProps> = ({ message }) => {
   );
 };
 
-const Header: React.FC<HeaderProps> = ({ selectedCount, totalCerts, onOpenSendPanel }) => {
-  return (
-    <div className="flex items-center justify-between mb-7">
-      <h1 className="text-xl font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
-        Entrega y Envío de Certificados
-      </h1>
-      {selectedCount > 0 && (
+const PdfViewerModal: React.FC<{
+  url: string | null;
+  titulo: string;
+  cargando: boolean;
+  onClose: () => void;
+}> = ({ url, titulo, cargando, onClose }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+    <div className="w-full max-w-4xl h-dvh sm:h-[85vh] rounded-2xl bg-white shadow-xl border border-slate-100 flex flex-col">
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+        <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+          <FileText size={16} /> {titulo}
+        </div>
         <button
-          onClick={onOpenSendPanel}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#5680F9] text-white text-xs font-bold border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-[0_2px_8px_rgba(86,128,249,0.25)]"
+          onClick={onClose}
+          className="text-slate-400 hover:text-slate-700 border-none bg-transparent cursor-pointer"
         >
-          <Send size={16} /> Enviar seleccionadas ({selectedCount} OT · {totalCerts} certs)
+          <X size={18} />
         </button>
+      </div>
+      <div className="flex-1 overflow-hidden rounded-b-2xl bg-slate-100">
+        {cargando || !url ? (
+          <div className="h-full flex items-center justify-center text-xs text-slate-500">
+            {cargando ? "Generando visor..." : "No se pudo cargar el documento."}
+          </div>
+        ) : (
+          <iframe src={url} title={titulo} className="w-full h-full border-none" />
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const GestionPanel: React.FC<{
+  idCotizacion: number;
+  codigoCotizacion: string;
+  onClose: () => void;
+  onToast: (msg: string) => void;
+  onRefresh: () => void;
+  onOpenOt: (id: number) => void;
+}> = ({ idCotizacion, codigoCotizacion, onClose, onToast, onRefresh, onOpenOt }) => {
+  const [docs, setDocs] = useState<DocumentosEnvioCotizacion | null>(null);
+  const [cargando, setCargando] = useState(true);
+  const [subiendo, setSubiendo] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [firmando, setFirmando] = useState(false);
+  const [viewer, setViewer] = useState<{ url: string | null; titulo: string } | null>(null);
+  const { can } = usePermissions();
+  const puedeMarcarPagada = can("entrega_y_envio", "marcar_ot_pagada");
+  const puedeEnviarCertificados = can("entrega_y_envio", "enviar_certificados_lotes");
+
+  const recargar = useCallback(() => {
+    getDocumentosEnvioCotizacion(idCotizacion).then((d) => setDocs(d));
+  }, [idCotizacion]);
+
+  useEffect(() => {
+    let activo = true;
+    getDocumentosEnvioCotizacion(idCotizacion)
+      .then((d) => {
+        if (activo) {
+          setDocs(d);
+          setCargando(false);
+        }
+      })
+      .catch(() => {
+        if (activo) setCargando(false);
+      });
+    return () => {
+      activo = false;
+    };
+  }, [idCotizacion]);
+
+  const verDocumento = useCallback(
+    async (rutaUrl: string | null, titulo: string) => {
+      if (!rutaUrl) {
+        onToast("⚠️ El documento no tiene ruta registrada.");
+        return;
+      }
+      setViewer({ url: null, titulo });
+      setFirmando(true);
+      const url = await generarUrlArchivo(rutaUrl);
+      setFirmando(false);
+      setViewer({ url, titulo });
+    },
+    [onToast]
+  );
+
+  const handleUpload = useCallback(
+    async (files: File[]) => {
+      const validos: File[] = [];
+      for (const file of files) {
+        const error = validarArchivo(file, { extensionesPermitidas: ["pdf", "png", "jpg", "jpeg"] });
+        if (error) {
+          onToast(`❌ ${error}`);
+        } else {
+          validos.push(file);
+        }
+      }
+      if (validos.length === 0) return;
+
+      setSubiendo(true);
+      let fallos = 0;
+      for (const file of validos) {
+        const res = await subirComprobanteCotizacion(idCotizacion, file);
+        if (!res.ok) fallos += 1;
+      }
+      setSubiendo(false);
+      if (fallos > 0) {
+        onToast(`❌ No se pudieron subir ${fallos} comprobante(s).`);
+      } else {
+        onToast(`✅ ${validos.length} comprobante(s) registrado(s).`);
+      }
+      recargar();
+      onRefresh();
+    },
+    [idCotizacion, onToast, recargar, onRefresh]
+  );
+
+  const handleEnviar = useCallback(async () => {
+    setEnviando(true);
+    const res = await enviarCertificadosCotizacion(idCotizacion);
+    setEnviando(false);
+    if (!res.ok) {
+      onToast(`❌ ${res.error ?? "No se pudo enviar."}`);
+      return;
+    }
+    onToast(`✅ ${res.message ?? "Certificados enviados."}`);
+    recargar();
+    onRefresh();
+  }, [idCotizacion, onToast, recargar, onRefresh]);
+
+  const todosAprobados = docs?.todosAprobados ?? false;
+  const entregaCompleta = docs?.entregaCompleta ?? false;
+  const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
+  const puedeEnviar = todosAprobados && entregaCompleta && tieneComprobante && !!docs?.correo;
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
+      <div className="w-full max-w-2xl h-full bg-white shadow-2xl overflow-y-auto">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-6 py-4">
+          <div>
+            <div className="text-sm font-black text-slate-800">Cotización {codigoCotizacion}</div>
+            <div className="text-[11px] text-slate-400">
+              {docs?.cliente ?? "Cargando..."} · {docs?.correo ?? "sin correo"}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-700 border-none bg-transparent cursor-pointer"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {cargando ? (
+            <div className="text-xs text-slate-400">Cargando documentos...</div>
+          ) : (
+            <>
+              {/* OTs vinculadas */}
+              <section>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Órdenes de Trabajo vinculadas
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {(docs?.ots ?? []).map((ot) => (
+                    <button
+                      key={ot.idOrdenTrabajo}
+                      onClick={() => onOpenOt(ot.idOrdenTrabajo)}
+                      className="font-mono text-[11px] font-bold text-[#5680F9] bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-1 hover:bg-blue-100 transition-colors cursor-pointer"
+                    >
+                      {ot.codigo}
+                    </button>
+                  ))}
+                </div>
+                {docs?.masterCodigo && (
+                  <div className="mt-2 text-[11px] text-slate-400">
+                    OT Master: <span className="font-mono font-semibold">{docs.masterCodigo}</span>
+                  </div>
+                )}
+              </section>
+
+              {/* Estado de aprobación */}
+              <div
+                className={`rounded-xl border px-4 py-3 text-xs font-bold ${
+                  todosAprobados
+                    ? "bg-emerald-50 border-emerald-100 text-emerald-700"
+                    : "bg-amber-50 border-amber-100 text-amber-700"
+                }`}
+              >
+                {todosAprobados
+                  ? "Todos los certificados están aprobados."
+                  : "Aún hay certificados pendientes de aprobación."}
+              </div>
+
+              <div
+                className={`rounded-xl border px-4 py-3 text-xs font-bold ${
+                  entregaCompleta
+                    ? "bg-emerald-50 border-emerald-100 text-emerald-700"
+                    : "bg-amber-50 border-amber-100 text-amber-800"
+                }`}
+              >
+                {entregaCompleta
+                  ? "La información de entrega de todos los instrumentos está completa."
+                  : `Falta hacer la entrega en Recepciones: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}.`}
+              </div>
+
+              {/* Certificados */}
+              <section>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Certificados ({docs?.certificados.length ?? 0})
+                </h3>
+                <div className="flex flex-col gap-2">
+                  {(docs?.certificados ?? []).map((c) => (
+                    <div
+                      key={c.idCertificado}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-700 truncate">
+                          {c.codigo}
+                        </div>
+                        <div className="text-[11px] text-slate-400 truncate">
+                          {c.instrumento} · {c.estampilla ?? "sin estampilla"} · OT {c.codigoOT}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            c.estadoRevision === "APROBADO"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                              : c.estadoRevision === "RECHAZADO"
+                              ? "bg-rose-50 text-rose-700 border-rose-100"
+                              : "bg-amber-50 text-amber-700 border-amber-100"
+                          }`}
+                        >
+                          {c.estadoRevision}
+                        </span>
+                        <button
+                          onClick={() => verDocumento(c.rutaUrl, c.codigo)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-slate-200 text-[#5680F9] text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-100"
+                        >
+                          <Eye size={12} /> Ver
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {(docs?.certificados.length ?? 0) === 0 && (
+                    <div className="text-[11px] text-slate-400 italic">
+                      No hay certificados registrados para esta cotización.
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* Comprobantes */}
+              <section>
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Comprobantes de pago ({docs?.comprobantes.length ?? 0})
+                </h3>
+                {(docs?.comprobantes ?? []).map((comp) => (
+                  <div
+                    key={comp.idDocumento}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 mb-2"
+                  >
+                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-800">
+                      <Paperclip size={14} /> {comp.nombre}
+                    </div>
+                    <button
+                      onClick={() => verDocumento(comp.rutaUrl, comp.nombre)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-emerald-200 text-emerald-700 text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                    >
+                      <Eye size={12} /> Ver
+                    </button>
+                  </div>
+                ))}
+                {puedeMarcarPagada ? (
+                  <label
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border border-dashed text-[11px] font-semibold transition-colors ${
+                      todosAprobados && entregaCompleta
+                        ? "border-slate-300 bg-slate-50 text-slate-600 cursor-pointer hover:bg-slate-100"
+                        : "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed"
+                    }`}
+                  >
+                    <Upload size={14} />
+                    <span>
+                      {todosAprobados && entregaCompleta
+                        ? subiendo
+                          ? "Subiendo..."
+                          : "Subir comprobante(s) (PDF, PNG o JPG)"
+                        : !entregaCompleta
+                          ? "Bloqueado: falta completar la entrega en Recepciones"
+                          : "Bloqueado: espera la aprobación de todos los certificados"}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,application/pdf"
+                      multiple
+                      className="hidden"
+                      disabled={!todosAprobados || !entregaCompleta || subiendo}
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        if (files.length) handleUpload(files);
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    Sin permisos para subir comprobante de pago.
+                  </span>
+                )}
+              </section>
+
+              {/* Enviar */}
+              {puedeEnviarCertificados && (
+                <button
+                  onClick={handleEnviar}
+                  disabled={!puedeEnviar || enviando}
+                  className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold uppercase tracking-wider border-none transition-colors ${
+                    puedeEnviar && !enviando
+                      ? "bg-[#5680F9] text-white cursor-pointer hover:bg-[#4069E2]"
+                      : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                  }`}
+                >
+                  {enviando ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
+                  {enviando ? "Enviando..." : "Enviar certificados al cliente"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {viewer && (
+        <PdfViewerModal
+          url={viewer.url}
+          titulo={viewer.titulo}
+          cargando={firmando}
+          onClose={() => setViewer(null)}
+        />
       )}
     </div>
   );
 };
 
-const ColumnFacturadas: React.FC<ColumnFacturadasProps> = ({
-  items,
-  selectedIds,
-  onSelectDetail,
-  onConfirmarPago,
-}) => {
-  return (
-    <div className="flex flex-col min-h-0">
-      <div className="flex items-center gap-2 mb-4">
-        <CheckCircle size={15} className="text-emerald-500" />
-        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">OT facturadas</span>
-        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-bold">
-          {items.length}
-        </span>
-      </div>
-      <div className="flex flex-col gap-4 max-h-[560px] overflow-y-auto pr-1 pb-1">
-        {items.length === 0 && (
-          <div className="text-[11px] text-slate-400 italic px-1 py-6 text-center border border-dashed border-slate-200 rounded-2xl">
-            No hay OT en este estado.
-          </div>
-        )}
-        {items.map((ot) => (
-          <div
-            key={ot.id}
-            className="rounded-2xl p-5 transition-all bg-white border cursor-pointer hover:shadow-sm"
-            style={{
-              borderColor: selectedIds.includes(ot.id) ? "#5680F9" : "#E2E8F0",
-              boxShadow: selectedIds.includes(ot.id)
-                ? "0 4px 12px rgba(86,128,249,0.06)"
-                : "0 2px 4px rgba(15,23,42,0.01)",
-            }}
-            onClick={() => onSelectDetail(ot)}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-[#5680F9] font-mono">{ot.id}</span>
-              </div>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 text-[10px] font-bold">
-                ✓ Facturado
-              </span>
-            </div>
-            <div className="text-xs font-bold text-slate-700 mb-1.5">{ot.cliente}</div>
-            <div className="text-[11px] text-slate-400">📧 {ot.correo}</div>
-            <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100/70">
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-bold text-slate-700 font-mono">{ot.valor}</span>
-                <span className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <FileText size={12} /> {ot.certs} cert(s)
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  onConfirmarPago(ot.id);
-                }}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-emerald-700 transition-colors"
-              >
-                Confirmar pago
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
+// -----------------------------------------------------------------------------
+// Componente principal
+// -----------------------------------------------------------------------------
 
-const ColumnListasEnvio: React.FC<ColumnListasEnvioProps> = ({
-  items,
-  selectedIds,
-  onToggleSelected,
-}) => {
-  return (
-    <div className="flex flex-col min-h-0">
-      <div className="flex items-center gap-2 mb-4">
-        <Send size={15} className="text-blue-500" />
-        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Listas para envío</span>
-        <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-bold">
-          {items.length}
-        </span>
-      </div>
-      <div className="flex flex-col gap-4 max-h-[560px] overflow-y-auto pr-1 pb-1">
-        {items.length === 0 && (
-          <div className="text-[11px] text-slate-400 italic px-1 py-6 text-center border border-dashed border-slate-200 rounded-2xl">
-            No hay OT en este estado.
-          </div>
-        )}
-        {items.map((ot) => (
-          <div
-            key={ot.id}
-            className="rounded-2xl p-5 bg-white border border-blue-200 shadow-sm cursor-pointer hover:shadow-md transition-all"
-            onClick={() => onToggleSelected(ot.id)}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold text-[#5680F9] font-mono">{ot.id}</span>
-              <span className="px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-bold">
-                ✓ PAGADO
-              </span>
-            </div>
-            <div className="text-xs font-bold text-slate-700 mb-1.5">{ot.cliente}</div>
-            <div className="text-[11px] text-slate-400">📧 {ot.correo}</div>
-            <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
-              <span className="text-xs font-bold text-slate-700 font-mono">{ot.valor}</span>
-              <span className="flex items-center gap-1 text-[10px] font-bold text-blue-600 uppercase tracking-wider">
-                <FileText size={12} />
-                {ot.certs} cert(s)
-              </span>
-            </div>
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleSelected(ot.id);
-                }}
-                className={`w-full py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
-                  selectedIds.includes(ot.id)
-                    ? "bg-green-600 text-white"
-                    : "bg-[#5680F9] text-white hover:bg-[#4069E2]"
-                }`}
-              >
-                {selectedIds.includes(ot.id) ? "✓ Seleccionada" : "Seleccionar para envío"}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const ColumnSinFacturar: React.FC<ColumnSinFacturarProps> = ({
-  items,
-  paymentSelector,
-  selectedMethod,
-  comprobantes,
-  onSetPaymentSelector,
-  onSetSelectedMethod,
-  onUploadComprobante,
-  onConfirmarFactura,
-}) => {
-  const handleFileChange = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      onUploadComprobante(id, file.name);
-    }
-  };
-
-  return (
-    <div className="flex flex-col min-h-0">
-      <div className="flex items-center gap-2 mb-4">
-        <Lock size={15} className="text-red-700" />
-        <span className="text-xs font-bold text-red-700 uppercase tracking-wider">Pendientes de factura</span>
-        <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 text-[10px] font-bold">
-          {items.length}
-        </span>
-      </div>
-      <div className="flex flex-col gap-4 max-h-[560px] overflow-y-auto pr-1 pb-1">
-        {items.length === 0 && (
-          <div className="text-[11px] text-slate-400 italic px-1 py-6 text-center border border-dashed border-slate-200 rounded-2xl">
-            No hay OT en este estado.
-          </div>
-        )}
-        {items.map((ot) => {
-          const isEditing = paymentSelector === ot.id;
-          const comprobanteNombre = comprobantes[ot.id];
-          const puedeConfirmar = Boolean(selectedMethod) && Boolean(comprobanteNombre);
-
-          return (
-            <div key={ot.id} className="rounded-2xl p-5 bg-slate-50/50 border border-slate-200/60 opacity-90 shadow-inner">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold text-slate-500 font-mono">{ot.id}</span>
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 text-[10px] font-bold">
-                  <Lock size={10} /> Sin factura
-                </span>
-              </div>
-              <div className="text-xs font-bold text-slate-500 mb-1.5">{ot.cliente}</div>
-              <div className="text-[11px] text-slate-400">📧 {ot.correo}</div>
-
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-200/50">
-                <span className="text-xs font-semibold text-slate-400 font-mono">
-                  {ot.valor} · {ot.certs} cert(s)
-                </span>
-                {!isEditing && (
-                  <button
-                    onClick={() => onSetPaymentSelector(ot.id)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-[#5680F9] text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-50 transition-colors"
-                  >
-                    <CheckCircle size={12} /> Registrar factura
-                  </button>
-                )}
-              </div>
-
-              {isEditing && (
-                <div className="mt-3 flex flex-col gap-3 bg-white p-4 border border-slate-200 rounded-xl">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                      Método de pago
-                    </label>
-                    <select
-                      value={selectedMethod}
-                      onChange={(e) => onSetSelectedMethod(e.target.value)}
-                      className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-xs"
-                    >
-                      <option value="">Seleccione un método</option>
-                      <option value="Efectivo">Efectivo</option>
-                      <option value="Tarjeta">Tarjeta</option>
-                      <option value="Transferencia">Transferencia</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                      Comprobante de pago (imagen o PDF)
-                    </label>
-                    <label
-                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border border-dashed text-[11px] font-semibold cursor-pointer transition-colors ${
-                        comprobanteNombre
-                          ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                          : "border-slate-300 bg-slate-50 text-slate-500 hover:bg-slate-100"
-                      }`}
-                    >
-                      {comprobanteNombre ? (
-                        <>
-                          <Paperclip size={13} />
-                          <span className="truncate">{comprobanteNombre}</span>
-                        </>
-                      ) : (
-                        <>
-                          <Upload size={13} />
-                          <span>Subir comprobante</span>
-                        </>
-                      )}
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        className="hidden"
-                        onChange={(e) => handleFileChange(ot.id, e)}
-                      />
-                    </label>
-                    {!comprobanteNombre && (
-                      <p className="text-[10px] text-red-500 mt-1.5">
-                        Debes subir el comprobante para poder confirmar.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2 justify-end">
-                    <button
-                      onClick={() => onSetPaymentSelector(null)}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-200 transition-colors"
-                    >
-                      <X size={13} /> Cancelar
-                    </button>
-                    <button
-                      onClick={() => onConfirmarFactura(ot.id)}
-                      disabled={!puedeConfirmar}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
-                        puedeConfirmar
-                          ? "bg-[#5680F9] text-white cursor-pointer hover:bg-[#4069E2]"
-                          : "bg-slate-200 text-slate-400 cursor-not-allowed"
-                      }`}
-                    >
-                      Confirmar
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-const DetailPanel: React.FC<DetailPanelProps> = ({
-  detail,
-  email,
-  cc,
-  message,
-  onSetEmail,
-  onSetCC,
-  onSetMessage,
-  onSend,
-  onClose,
-  onCertificadoPress,
-}) => {
-  return (
-    <div className="mt-2 mb-7 rounded-2xl p-6 bg-white border border-slate-200 shadow-md">
-      <div className="flex items-center justify-between mb-5">
-        <h2 className="text-sm font-bold text-slate-800 border-l-[3px] border-[#5680F9] pl-2">
-          Detalle — {detail.id}
-        </h2>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-700 bg-transparent border-none cursor-pointer">
-          <X size={18} />
-        </button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-        <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-            Correo del cliente
-          </label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => onSetEmail(e.target.value)}
-            className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-            CC (opcional)
-          </label>
-          <input
-            type="email"
-            value={cc}
-            onChange={(e) => onSetCC(e.target.value)}
-            placeholder="cc@empresa.com"
-            className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
-          />
-        </div>
-      </div>
-      <div className="mb-5">
-        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Mensaje</label>
-        <textarea
-          rows={3}
-          value={message}
-          onChange={(e) => onSetMessage(e.target.value)}
-          className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-[#5680F9]"
-        />
-      </div>
-      <div className="mb-6">
-        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">
-          Certificados adjuntos
-        </span>
-        <div className="flex flex-col gap-2">
-          {Array.from({ length: detail.certs }).map((_, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-slate-50 border border-slate-100 rounded-lg text-xs font-mono text-slate-600"
-            >
-              <span className="flex items-center gap-2">
-                <FileText size={12} className="text-[#5680F9]" />
-                Certificado_{detail.id}_{i + 1}.pdf
-              </span>
-              <button
-                type="button"
-                onClick={() => onCertificadoPress(detail.id, i + 1)}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-slate-200 text-[#5680F9] text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:bg-slate-100 transition-colors"
-              >
-                <Eye size={12} /> Ver
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-3">
-        <button
-          onClick={onSend}
-          className="flex items-center gap-2 px-4 py-2.5 bg-[#5680F9] text-white text-xs font-bold rounded-xl hover:bg-[#4069E2] transition-colors"
-        >
-          <Send size={14} /> Enviar certificado por Outlook
-        </button>
-        <button
-          onClick={onClose}
-          className="px-4 py-2.5 bg-slate-100 text-slate-700 text-xs font-bold rounded-xl hover:bg-slate-200 transition-colors"
-        >
-          Cerrar
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const SendPanel: React.FC<SendPanelProps> = ({
-  selectedOTs,
-  totalCerts,
-  ccEmail,
-  onSetCcEmail,
-  onEnviar,
-  onClose,
-}) => {
-  return (
-    <div className="rounded-2xl p-6 mb-7 bg-white border-2 border-[#C7D2FE] shadow-[0_8px_30px_rgba(86,128,249,0.1)]">
-      <div className="flex items-center justify-between mb-5">
-        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider border-l-[3px] border-[#5680F9] pl-2">
-          Panel de envío
-        </span>
-        <button onClick={onClose} className="bg-transparent border-none cursor-pointer">
-          <X size={18} color="#94A3B8" />
-        </button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <div className="bg-slate-50/50 p-5 rounded-xl border border-slate-100">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
-            OT seleccionadas
-          </div>
-          <div className="divide-y divide-slate-100 max-h-36 overflow-y-auto">
-            {selectedOTs.map((o) => (
-              <div key={o.id} className="flex items-center justify-between py-2.5">
-                <span className="text-xs font-bold text-[#5680F9] font-mono">{o.id}</span>
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{o.certs} cert(s)</span>
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-between pt-3.5 border-t border-slate-200/50 mt-2">
-            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Total</span>
-            <span className="text-xs font-extrabold text-[#5680F9] font-mono">{totalCerts} certificados PDF</span>
-          </div>
-        </div>
-        <div className="bg-slate-50/50 p-5 rounded-xl border border-slate-100 flex flex-col justify-between">
-          <div>
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Correos destino</div>
-            <div className="divide-y divide-slate-100 max-h-28 overflow-y-auto font-mono text-[11px] text-slate-600">
-              {selectedOTs.map((o) => (
-                <div key={o.id} className="py-2.5">📧 {o.correo}</div>
-              ))}
-            </div>
-          </div>
-          <div className="mt-4">
-            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-              Agregar CC (opcional)
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                value={ccEmail}
-                onChange={(e) => onSetCcEmail(e.target.value)}
-                placeholder="cc@empresa.com"
-                className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-xs font-medium outline-none focus:border-[#5680F9]"
-              />
-              <button className="bg-transparent border-none cursor-pointer">
-                <Plus size={14} color="#5680F9" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <button
-        onClick={onEnviar}
-        className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#5680F9] text-white text-xs font-bold uppercase tracking-wider border-none cursor-pointer hover:bg-[#4069E2] transition-colors shadow-sm"
-      >
-        <Send size={16} /> Enviar certificados seleccionados
-      </button>
-    </div>
-  );
-};
-
-const HistoryTable: React.FC<HistoryTableProps> = ({ historial }) => {
-  return (
-    <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden">
-      <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/30">
-        <span className="text-xs font-bold text-slate-700 uppercase tracking-wider border-l-[3px] border-[#5680F9] pl-2">
-          Historial de envíos
-        </span>
-      </div>
-      <table className="w-full text-left text-xs">
-        <thead>
-          <tr className="bg-slate-50 border-b border-slate-100">
-            {["Fecha y hora", "OT enviadas", "Correo destino", "Certificados", "Estado"].map((h) => (
-              <th key={h} className="px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {historial.map((h, i) => (
-            <tr key={i} className="transition-colors hover:bg-slate-50/50 bg-white">
-              <td className="px-4 py-4 text-slate-400 font-mono">{h.fecha}</td>
-              <td className="px-4 py-4 text-[#5680F9] font-bold font-mono">{h.ots}</td>
-              <td className="px-4 py-4 text-slate-500 font-mono truncate max-w-xs">{h.correo}</td>
-              <td className="px-4 py-4 text-slate-700 font-semibold">{h.certs} cert(s)</td>
-              <td className="px-4 py-4">
-                <span
-                  className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${
-                    h.estado === "enviado"
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                      : "bg-rose-50 text-rose-700 border-rose-100"
-                  }`}
-                >
-                  {h.estado === "enviado" ? "✓ Enviado" : "✗ Error"}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-// 3. Declaración del Componente Padre (MainRenderer)
-
-export function MainRendererenv() {
+export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }) {
   const ordenes = useDbTable("ordenes_trabajo");
   const clientes = useDbTable("clientes");
-  const facturas = useDbTable("facturas");
-  const usuarios = useDbTable("usuarios");
   const { loadTable } = useDbActions();
+  const loadingEnvio = useDbLoading("ordenes_trabajo");
 
   useEffect(() => {
     loadTable("ordenes_trabajo");
     loadTable("clientes");
-    loadTable("facturas");
-    loadTable("usuarios");
   }, [loadTable]);
 
-  const [paymentSelector, setPaymentSelector] = useState<string | null>(null);
-  const [selectedMethod, setSelectedMethod] = useState<string>("");
-  const [comprobantes, setComprobantes] = useState<Record<string, string>>({});
-  const [selected, setSelected] = useState<string[]>([]);
-  const [selectedDetail, setSelectedDetail] = useState<OTItem | null>(null);
-  const [detailEmail, setDetailEmail] = useState<string>("");
-  const [detailMessage, setDetailMessage] = useState<string>(
-    "Estimado cliente, adjuntamos los certificados de calibración correspondientes a su orden de trabajo."
-  );
-  const [detailCC, setDetailCC] = useState<string>("");
+  const [busqueda, setBusqueda] = useState<string>("");
+  const [gestion, setGestion] = useState<{ idCotizacion: number; codigoCotizacion: string } | null>(null);
   const [toast, setToast] = useState("");
-  const [historialExtra, setHistorialExtra] = useState<HistorialItem[]>([]);
-  const [showSendPanel, setShowSendPanel] = useState(false);
-  const [ccEmail, setCcEmail] = useState("");
-
-  const items = useMemo<OTItem[]>(() => {
-    return ordenes
-      .filter((ot) => ot.estado === "Certificado_enviado")
-      .map((ot) => {
-        const factura = facturas.find((f) => f.idOrdenTrabajo === ot.idOrdenTrabajo);
-        return {
-          id: ot.codigo,
-          cliente: ot.cliente?.razonSocial ?? "",
-          correo: ot.correoCertificado ?? ot.cliente?.correo ?? "",
-          certs: ot.instrumentos?.length ?? 0,
-          valor: formatValor(Number(factura?.valor ?? 0)),
-          facturado: Boolean(factura),
-          pagado: ot.estado_pago === "PAGADO",
-        };
-      });
-  }, [ordenes, facturas, usuarios, clientes]);
-
-  const historialBase = useMemo<HistorialItem[]>(() => {
-    return ordenes
-      .filter((ot) => ot.estado === "Certificado_enviado")
-      .map((ot) => ({
-        fecha: formatFecha(ot.createdAt),
-        ots: ot.codigo,
-        correo: ot.correoCertificado ?? ot.cliente?.correo ?? "",
-        certs: ot.instrumentos?.length ?? 0,
-        estado: "enviado" as const,
-      }));
-  }, [ordenes, usuarios]);
-
-  const historial = useMemo<HistorialItem[]>(
-    () => [...historialExtra, ...historialBase],
-    [historialExtra, historialBase]
-  );
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(""), 4000);
   }, []);
 
-  const confirmarPago = useCallback((id: string) => {
-    showToast(`✅ Pago confirmado para ${id}`);
-    setSelectedDetail(null);
-  }, [showToast]);
-
-  const toggleSelected = useCallback((id: string) => {
-    const ot = items.find((o) => o.id === id);
-    if (!ot?.facturado || !ot?.pagado) return;
-    setSelected((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
-  }, [items]);
-
-  const handleUploadComprobante = useCallback((id: string, fileName: string) => {
-    setComprobantes((prev) => ({ ...prev, [id]: fileName }));
-  }, []);
-
-  const handleCertificadoPress = useCallback((otId: string, certIndex: number) => {
-    console.log("certificadoPress", { otId, certIndex });
-  }, []);
-
-  const handleConfirmarFactura = useCallback((id: string) => {
-    if (!selectedMethod || !comprobantes[id]) {
-      showToast("⚠️ Debes seleccionar el método de pago y subir el comprobante.");
-      return;
+  // Agrupa hijas por cotización; el grupo aparece cuando TODAS están en Certificado_aprobado.
+  const grupos = useMemo(() => {
+    const hijas = ordenes.filter((o) => o.sitioCalibracion != null && o.vigente !== false);
+    const map = new Map<number, typeof hijas>();
+    for (const h of hijas) {
+      if (h.idCotizacion == null) continue;
+      const lista = map.get(h.idCotizacion) ?? [];
+      lista.push(h);
+      map.set(h.idCotizacion, lista);
     }
-    showToast(`✅ ${id} registrada como facturada con ${selectedMethod} (comprobante: ${comprobantes[id]}).`);
-    setPaymentSelector(null);
-    setSelectedMethod("");
-  }, [selectedMethod, comprobantes, showToast]);
-
-  const selectedOTs = useMemo(() => items.filter((o) => selected.includes(o.id)), [items, selected]);
-  const totalCerts = useMemo(() => selectedOTs.reduce((acc, o) => acc + o.certs, 0), [selectedOTs]);
-
-  const handleEnviar = useCallback(() => {
-    if (selectedOTs.length === 0) return;
-    const correos = [...new Set(selectedOTs.map((o) => o.correo))].join(", ");
-    const newEntry: HistorialItem = {
-      fecha: new Date().toLocaleString("es-CO"),
-      ots: selectedOTs.map((o) => o.id).join(", "),
-      correo: correos + (ccEmail ? `, ${ccEmail}` : ""),
-      certs: totalCerts,
-      estado: "enviado",
-    };
-    setHistorialExtra((prev) => [newEntry, ...prev]);
-    showToast(`✅ Correo enviado a ${correos} con ${totalCerts} certificados adjuntos.`);
-    setSelected([]);
-    setShowSendPanel(false);
-    setCcEmail("");
-  }, [selectedOTs, ccEmail, totalCerts, showToast]);
-
-  const facturadas = useMemo(() => items.filter((o) => o.facturado && !o.pagado), [items]);
-  const listasEnvio = useMemo(() => items.filter((o) => o.facturado && o.pagado), [items]);
-  const sinFacturar = useMemo(() => items.filter((o) => !o.facturado), [items]);
+    return Array.from(map.entries())
+      .map(([idCotizacion, hs]) => {
+        const master = ordenes.find(
+          (o) => o.idCotizacion === idCotizacion && o.sitioCalibracion == null
+        );
+        const cliente =
+          clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.razonSocial ??
+          hs[0]?.cliente?.razonSocial ??
+          "—";
+        const todosAprobados = hs.every((h) => h.estado === "Certificado_aprobado");
+        return {
+          idCotizacion,
+          codigoCotizacion: hs[0]?.cotizacion?.codigo ?? "—",
+          masterCodigo: master?.codigo ?? "—",
+          cliente,
+          correo:
+            hs[0]?.correoCertificado ??
+            clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.correo ??
+            "—",
+          totalHijas: hs.length,
+          todosAprobados,
+          fecha: hs[0]?.createdAt,
+        };
+      })
+      .filter((g) => g.todosAprobados)
+      .filter((g) => {
+        if (!busqueda) return true;
+        const q = busqueda.toLowerCase();
+        return (
+          g.cliente.toLowerCase().includes(q) ||
+          g.codigoCotizacion.toLowerCase().includes(q) ||
+          g.masterCodigo.toLowerCase().includes(q)
+        );
+      });
+  }, [ordenes, clientes, busqueda]);
 
   return (
     <div className="module-page" style={{ position: "relative" }}>
-      <AlertBanner count={sinFacturar.length} />
       <Toast message={toast} />
 
-      <Header
-        selectedCount={selected.length}
-        totalCerts={totalCerts}
-        onOpenSendPanel={() => setShowSendPanel(true)}
-      />
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-7">
-        <ColumnFacturadas
-          items={facturadas}
-          selectedIds={selected}
-          onSelectDetail={(ot) => {
-            setSelectedDetail(ot);
-            setDetailEmail(ot.correo);
-            setDetailCC("");
-            setDetailMessage(
-              "Estimado cliente, adjuntamos los certificados de calibración correspondientes a su orden de trabajo."
-            );
-          }}
-          onConfirmarPago={confirmarPago}
-        />
-
-        <ColumnListasEnvio
-          items={listasEnvio}
-          selectedIds={selected}
-          onToggleSelected={toggleSelected}
-        />
-
-        <ColumnSinFacturar
-          items={sinFacturar}
-          paymentSelector={paymentSelector}
-          selectedMethod={selectedMethod}
-          comprobantes={comprobantes}
-          onSetPaymentSelector={(id) => {
-            setPaymentSelector(id);
-            setSelectedMethod("");
-          }}
-          onSetSelectedMethod={setSelectedMethod}
-          onUploadComprobante={handleUploadComprobante}
-          onConfirmarFactura={handleConfirmarFactura}
-        />
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
+            Entrega y Envío de Certificados
+          </h1>
+          <p className="text-xs text-slate-400 mt-1 pl-3">
+            Cotizaciones con todas sus órdenes aprobadas, listas para pago y despacho.
+          </p>
+        </div>
+        <span className="text-xs font-mono font-bold text-slate-500">{grupos.length} cotizaciones</span>
       </div>
 
-      {selectedDetail && (
-        <DetailPanel
-          detail={selectedDetail}
-          email={detailEmail}
-          cc={detailCC}
-          message={detailMessage}
-          onSetEmail={setDetailEmail}
-          onSetCC={setDetailCC}
-          onSetMessage={setDetailMessage}
-          onCertificadoPress={handleCertificadoPress}
-          onSend={() => {
-            showToast(`✅ Certificado enviado por Outlook para ${selectedDetail.id}`);
-            setSelectedDetail(null);
-          }}
-          onClose={() => setSelectedDetail(null)}
+      {/* Búsqueda */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm mb-5 grid grid-cols-1 gap-4">
+        <div className="relative">
+          <Filter size={11} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por cliente o cotización..."
+            className="w-full pl-9 pr-3 py-2 text-xs font-semibold border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-[#5680F9]"
+          />
+        </div>
+      </div>
+
+      {/* Tabla */}
+      <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-100">
+              {["Cotización", "OT Master", "Cliente", "Correo", "Hijas", "Fecha", "Acciones"].map((h) => (
+                <th
+                  key={h}
+                  className="px-4 py-3.5 text-slate-400 font-bold uppercase tracking-wider text-[10px]"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {loadingEnvio ? (
+              [1, 2, 3, 4, 5].map((n) => (
+                <tr key={n}>
+                  <td colSpan={7} className="px-4 py-3.5">
+                    <div className="h-4 rounded bg-slate-200 animate-pulse" />
+                  </td>
+                </tr>
+              ))
+            ) : grupos.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                  No hay cotizaciones listas para entrega.
+                </td>
+              </tr>
+            ) : (
+              grupos.map((g) => (
+                <tr key={g.idCotizacion} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-4 py-3.5 font-mono font-bold text-[#5680F9]">{g.codigoCotizacion}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500">{g.masterCodigo}</td>
+                  <td className="px-4 py-3.5 font-semibold text-slate-700">{g.cliente}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">{g.correo}</td>
+                  <td className="px-4 py-3.5 text-slate-600">{g.totalHijas}</td>
+                  <td className="px-4 py-3.5 text-slate-400 font-mono">{formatFecha(g.fecha as string)}</td>
+                  <td className="px-4 py-3.5">
+                    <button
+                      onClick={() => setGestion({ idCotizacion: g.idCotizacion, codigoCotizacion: g.codigoCotizacion })}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#5680F9] text-white text-[10px] font-bold uppercase tracking-wider cursor-pointer hover:bg-[#4069E2] transition-colors border-none"
+                    >
+                      <CheckCircle size={12} /> Gestionar
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-400">
+        <Clock size={12} /> El comprobante se habilita solo cuando todos los certificados están aprobados.
+      </div>
+
+      {gestion && (
+        <GestionPanel
+          key={gestion.idCotizacion}
+          idCotizacion={gestion.idCotizacion}
+          codigoCotizacion={gestion.codigoCotizacion}
+          onClose={() => setGestion(null)}
+          onToast={showToast}
+          onRefresh={() => loadTable("ordenes_trabajo")}
+          onOpenOt={onOpenOt}
         />
       )}
-
-      {showSendPanel && (
-        <SendPanel
-          selectedOTs={selectedOTs}
-          totalCerts={totalCerts}
-          ccEmail={ccEmail}
-          onSetCcEmail={setCcEmail}
-          onEnviar={handleEnviar}
-          onClose={() => setShowSendPanel(false)}
-        />
-      )}
-
-      <HistoryTable historial={historial} />
     </div>
   );
 }
 
-// 4. Exportación por defecto
 export default MainRendererenv;

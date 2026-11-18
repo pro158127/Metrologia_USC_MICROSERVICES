@@ -1,6 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
+/.pnpm-data
+,pnpm-store
+.pnpm-store/
 /node_modules
 /.pnp
 .pnp.*
@@ -31,7 +34,8 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
+/.env
+
 
 # vercel
 .vercel
@@ -41,5 +45,9 @@ yarn-error.log*
 next-env.d.ts
 
 /app/generated/prisma
+/Frontend/generated/prisma/
 *.deb
 *.deb
+
+.docker-data/
+*.sql.gz.pnpm-store/

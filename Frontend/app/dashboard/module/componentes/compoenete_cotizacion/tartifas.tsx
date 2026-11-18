@@ -1,5 +1,5 @@
 'use client';
-
+import { toast, Toaster } from "sonner";
 import React, { useEffect, useState, useMemo } from "react";
 import {
   Plus,
@@ -11,8 +11,10 @@ import {
   History,
   Calendar,
   Filter,
+ Upload
 } from "lucide-react";
 import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   obtenerTodasLasTarifas,
   crearTarifa,
@@ -41,7 +43,10 @@ const formatCurrency = (val: number) => {
 // ----------------------------------------------------------------------
 // Componentes Hijos
 // ----------------------------------------------------------------------
-
+import { consolidarTarifas } from "@/app/action_module/template";
+import { consultar_outputshema } from "@/app/action_module/template";
+import { MapeoConfigTarifas } from "backend/src/routes/plantillas.schemas";
+import { MappingConfig } from "@/tipos/plantillas";
 const CatalogHeaderControls = ({
   searchTerm,
   setSearchTerm,
@@ -53,29 +58,95 @@ const CatalogHeaderControls = ({
   tiposServicioDisponibles,
   onOpenCreate,
 }: CatalogHeaderControlsProps) => {
+  const { can } = usePermissions();
+  const puedeGestionar = can("cotizaciones", "gestionar_catalogo_tarifas");
+
+const handleButton_tarifas = async () => {
+    try {
+      const schema = await consultar_outputshema('cotizacion');
+      if(!schema.response.success || !schema.response.data.MAPPING_CONFIG){
+        console.error("Error: No se encontró la configuración de mapeo para cotización");
+        return;
+      }
+      console.log("esta aqio ")
+      console.log(schema.response.data.MAPPING_CONFIG,"CONFIGURACION DE MAPEOS",schema)
+      const toparse = (schema.response.data.MAPPING_CONFIG || {}) as MappingConfig;
+      
+      const tablaTarifas = toparse.mappings.tables.find((e) => e.key === "tabla_tarifas");
+      
+      const parse: MapeoConfigTarifas = {
+        columnas: {
+          instrumento: tablaTarifas?.columns.find((i) => i.key === "instrumentos")?.column ?? 'sin definir',
+          magnitud: tablaTarifas?.columns.find((i) => i.key === "magnitud")?.column ?? 'sin definir',
+          norma: tablaTarifas?.columns.find((i) => i.key === "norma_guia_tecnica")?.column ?? 'sin definir',
+          tipoServicio: tablaTarifas?.columns.find((i) => i.key === "tipo_servicio")?.column ?? 'sin definir',
+        },
+        filaEncabezados: tablaTarifas?.star_header ?? 0,
+        filaInicialDatos: tablaTarifas?.startRow ?? 0,
+        // CORRECCIÓN AQUÍ: === en lugar de =
+        columnasPrecios: tablaTarifas?.columns.find((e) => e.key === "columnas_precios")?.columnsList
+      };
+      console.log(parse,"aqAUQIIEOW")
+      const action = await consolidarTarifas(1, parse);
+      console.log("Tarifas consolidadas:", action);
+
+    } catch (error) {
+      console.error("Error al importar tarifas:", error);
+      return { success: false, error: error instanceof Error ? error.message : "Error desconocido" };
+    }
+  };
+
+
   return (
     <div className="flex flex-col space-y-4 px-6 py-5 border-b border-slate-100 bg-slate-50/50">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="h-5 w-1 bg-[#5680F9] rounded-full"></span>
-            <h2 className="text-base font-bold text-slate-800">Catálogo de Tarifas Metrológicas</h2>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5 ml-3">
-            Gestión de tarifas e historial de precios sincronizados en tiempo real
-          </p>
-        </div>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
+  
+  {/* Sección de Texto */}
+  <div>
+    <div className="flex items-center gap-2">
+      <span className="h-5 w-1 bg-[#5680F9] rounded-full"></span>
+      <h2 className="text-base font-bold text-slate-800">Catálogo de Tarifas Metrológicas</h2>
+    </div>
+    <p className="text-xs text-slate-500 mt-0.5 ml-3">
+      Gestión de tarifas e historial de precios sincronizados en tiempo real
+    </p>
+  </div>
 
-        <button
-          onClick={() => {
-            onOpenCreate();
-          }}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[#5680F9] hover:bg-blue-600 text-white font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap self-end sm:self-auto"
-        >
-          <Plus size={15} />
-          <span>Nuevo Ítem</span>
-        </button>
-      </div>
+  {/* Sección de Acciones: Agrupadas en su propio flex-container */}
+  <div className="flex items-center gap-2 self-end sm:self-auto">
+    
+    {/* Botón Secundario (Importar) */}
+    {puedeGestionar && (
+    <button
+      onClick={async ()=>{const  v=handleButton_tarifas();
+        const res=await v
+        if(res && !res.success){
+          toast.error(res.error || "Error desconocido al importar tarifas")
+        }
+        else{
+          toast.success("Importación de tarifas iniciada correctamente. Se notificará al finalizar el proceso.")
+        }
+      }}
+      className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap"
+    >
+      <Upload size={15} />
+      <span>Importar tarifas</span>
+    </button>
+    )}
+
+    {/* Botón Primario (Nuevo Ítem) */}
+    {puedeGestionar && (
+    <button
+      onClick={() => { onOpenCreate(); }}
+      className="flex items-center gap-1.5 px-4 py-2 bg-[#5680F9] hover:bg-blue-600 text-white font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap"
+    >
+      <Plus size={15} />
+      <span>Nuevo Ítem</span>
+    </button>
+    )}
+    
+  </div>
+</div>
 
       {/* Barra de Búsqueda y Filtros */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
@@ -274,7 +345,7 @@ const CatalogFormModal = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 w-full max-w-lg max-h-[90dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
           <h3 className="text-sm font-bold text-slate-800">
             {initialData ? "Editar Tarifa / Actualizar Precio" : "Nueva Tarifa de Catálogo"}
@@ -411,6 +482,8 @@ const CatalogRow = ({
   onToggleStatus,
   onViewHistory,
 }: CatalogRowProps) => {
+  const { can } = usePermissions();
+  const puedeGestionar = can("cotizaciones", "gestionar_catalogo_tarifas");
   return (
     <tr className="hover:bg-slate-50/60 transition-colors">
       <td className="px-4 py-3 align-top">
@@ -441,22 +514,26 @@ const CatalogRow = ({
       </td>
       <td className="px-4 py-3 align-top">
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onEdit(item)}
-            className="p-2 text-slate-500 hover:text-[#5680F9] hover:bg-blue-50 rounded-lg transition"
-            title="Editar"
-          >
-            <Edit3 size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => onToggleStatus(item.idTarifa, item.estado)}
-            className={`p-2 rounded-lg transition ${item.estado === "ACTIVO" ? "text-emerald-600 hover:bg-emerald-50" : "text-rose-600 hover:bg-rose-50"}`}
-            title={item.estado === "ACTIVO" ? "Desactivar" : "Activar"}
-          >
-            <Power size={14} />
-          </button>
+          {puedeGestionar && (
+            <button
+              type="button"
+              onClick={() => onEdit(item)}
+              className="p-2 text-slate-500 hover:text-[#5680F9] hover:bg-blue-50 rounded-lg transition"
+              title="Editar"
+            >
+              <Edit3 size={14} />
+            </button>
+          )}
+          {puedeGestionar && (
+            <button
+              type="button"
+              onClick={() => onToggleStatus(item.idTarifa, item.estado)}
+              className={`p-2 rounded-lg transition ${item.estado === "ACTIVO" ? "text-emerald-600 hover:bg-emerald-50" : "text-rose-600 hover:bg-rose-50"}`}
+              title={item.estado === "ACTIVO" ? "Desactivar" : "Activar"}
+            >
+              <Power size={14} />
+            </button>
+          )}
         </div>
       </td>
     </tr>
@@ -468,7 +545,7 @@ const CatalogRow = ({
 // ----------------------------------------------------------------------
 export const CatalogTableView = () => {
   const tarifas = useDbTable("tarifas");
-  const { setDbState, loadTable } = useDbActions();
+  const { mergeTable, loadTable, setTableLoading } = useDbActions();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMagnitud, setSelectedMagnitud] = useState("TODAS");
   const [selectedTipoServicio, setSelectedTipoServicio] = useState("TODOS");
@@ -508,12 +585,14 @@ export const CatalogTableView = () => {
   };
 
   const recargarTarifas = async () => {
-    const res = await obtenerTodasLasTarifas();
-    if (res.ok && res.data) {
-      setDbState((prev) => ({
-        ...prev,
-        tarifas: res.data as unknown as typeof prev.tarifas,
-      }));
+    setTableLoading("tarifas", true);
+    try {
+      const res = await obtenerTodasLasTarifas();
+      if (res.ok && res.data) {
+        mergeTable("tarifas", res.data as unknown as TarifaModel[]);
+      }
+    } finally {
+      setTableLoading("tarifas", false);
     }
   };
 

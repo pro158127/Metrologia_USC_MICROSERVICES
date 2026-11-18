@@ -1,25 +1,28 @@
 // app/api/excel/snapshot/route.ts
 import { NextResponse } from "next/server";
 import { Worker } from "worker_threads";
+import { realpath } from "node:fs/promises";
 import path from "path";
+import { auth } from "@/app/Login/types/auth";
 import { cacheService } from "@/app/lib/cache/chacheService";
 
 /**
  * Envoltorio asíncrono para ejecutar el Worker Thread sin congelar el Event Loop
  */
-function ejecutarWorkerExcel(absolutePath: string, documentId: string): Promise<any> {
+function ejecutarWorkerExcel(absolutePath: string, documentId: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const workerPath = path.join(process.cwd(), "lib", "workers", "excelParser.worker.js");
+    const workerPath = path.join(process.cwd(), "app", "lib", "Workers", "excelParse.worker.js");
 
     const worker = new Worker(workerPath, {
       workerData: { absolutePath, documentId },
     });
 
-    worker.on("message", (msg) => {
-      if (msg.success) {
-        resolve(msg.snapshot);
+    worker.on("message", (msg: unknown) => {
+      const resultado = msg as { success?: boolean; snapshot?: unknown; error?: string };
+      if (resultado.success) {
+        resolve(resultado.snapshot);
       } else {
-        reject(new Error(msg.error || "Error desconocido procesando el Excel"));
+        reject(new Error(resultado.error || "Error desconocido procesando el Excel"));
       }
       worker.terminate();
     });
@@ -39,6 +42,26 @@ function ejecutarWorkerExcel(absolutePath: string, documentId: string): Promise<
 
 export async function POST(req: Request) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Debes iniciar sesión" }, { status: 401 });
+    }
+
+    let permisos: unknown = session.user.permissions;
+    if (typeof permisos === "string") {
+      try {
+        permisos = JSON.parse(permisos);
+      } catch {
+        permisos = null;
+      }
+    }
+    const puedeConfigurarPlantillas =
+      (permisos as { permisos?: Record<string, Record<string, boolean>> } | null)
+        ?.permisos?.administracion?.configurar_plantillas_documentos === true;
+    if (!puedeConfigurarPlantillas) {
+      return NextResponse.json({ error: "No tienes permiso para importar plantillas" }, { status: 403 });
+    }
+
     const body = await req.json();
     const { documentId, relativeFilePath } = body;
 
@@ -63,7 +86,28 @@ export async function POST(req: Request) {
     }
 
     // 2. CACHE MISS: EJECUTAR WORKER EN HILO SECUNDARIO
-    const absolutePath = path.join(process.cwd(), relativeFilePath);
+    if (typeof relativeFilePath !== "string" || !relativeFilePath.toLowerCase().endsWith(".xlsx")) {
+      return NextResponse.json(
+        { error: "La ruta debe apuntar a un archivo Excel .xlsx" },
+        { status: 400 }
+      );
+    }
+
+    const projectRoot = await realpath(process.cwd());
+    let absolutePath = path.resolve(projectRoot, relativeFilePath);
+    if (!absolutePath.startsWith(`${projectRoot}${path.sep}`)) {
+      return NextResponse.json(
+        { error: "La ruta del archivo no puede salir del directorio del proyecto" },
+        { status: 400 }
+      );
+    }
+    absolutePath = await realpath(absolutePath);
+    if (!absolutePath.startsWith(`${projectRoot}${path.sep}`)) {
+      return NextResponse.json(
+        { error: "La ruta real del archivo no puede salir del directorio del proyecto" },
+        { status: 400 }
+      );
+    }
     const nuevoSnapshot = await ejecutarWorkerExcel(absolutePath, documentId);
 
     // 3. GUARDAR EN CACHÉ PARA FUTURAS PETICIONES
@@ -75,10 +119,10 @@ export async function POST(req: Request) {
       snapshot: nuevoSnapshot,
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[API_EXCEL_SNAPSHOT_ERROR]", error);
     return NextResponse.json(
-      { error: error.message || "Error interno del servidor" },
+      { error: error instanceof Error ? error.message : "Error interno del servidor" },
       { status: 500 }
     );
   }

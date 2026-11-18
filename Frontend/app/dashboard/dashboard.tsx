@@ -40,7 +40,8 @@ import type {
   SystemStat,
   RecentActivityItem,
 } from "@/tipos/dashboard";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { useSession } from "next-auth/react";
 
 // ========== UTILIDADES DE FORMATO ==========
 const formatMoneda = (val: number) =>
@@ -73,7 +74,7 @@ const cardContainerStyle =
 
 // 2. Declaración de Componentes Hijos (Extraídos)
 
-const WelcomeHeaderSection: React.FC<WelcomeHeaderSectionProps> = ({ systemStats }) => {
+const WelcomeHeaderSection: React.FC<WelcomeHeaderSectionProps> = ({ systemStats, userName }) => {
   return (
     <div className={`mb-6 ${cardContainerStyle}`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -82,7 +83,7 @@ const WelcomeHeaderSection: React.FC<WelcomeHeaderSectionProps> = ({ systemStats
             PANEL DE CONTROL
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-500 pl-4">
-            Bienvenido, Luis Burgos.
+            Bienvenido, {userName ?? "usuario"}.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -120,15 +121,28 @@ const KpiGridSection: React.FC<KpiGridSectionProps> = ({ kpiData }) => {
   );
 };
 
-const PendingCertificatesSection: React.FC<PendingCertsTableProps> = ({ onNavigate, pendingCerts, pendingCount }) => {
+const PendingCertificatesSection: React.FC<PendingCertsTableProps & {
+  title?: string;
+  subtitle?: string;
+  navigateTo?: Parameters<PendingCertsTableProps["onNavigate"]>[0];
+  actionLabel?: string;
+}> = ({
+  onNavigate,
+  pendingCerts,
+  pendingCount,
+  title = "Certificados pendientes de revisión",
+  subtitle = "Resumen de las órdenes con prioridad alta y próximas entregas.",
+  navigateTo = "revision",
+  actionLabel = "Revisar",
+}) => {
   return (
     <section className={cardContainerStyle}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-base font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
-            Certificados pendientes de revisión
+            {title}
           </h2>
-          <p className="mt-1 text-xs text-slate-400 pl-4">Resumen de las órdenes con prioridad alta y próximas entregas.</p>
+          <p className="mt-1 text-xs text-slate-400 pl-4">{subtitle}</p>
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-100 px-3 py-1.5 text-xs font-bold text-rose-700">
           <span className="inline-flex h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
@@ -159,10 +173,10 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps> = ({ onNaviga
                 <td className="px-4 py-3.5 text-slate-400 font-mono">{row.fecha}</td>
                 <td className="px-4 py-3.5">
                   <button
-                    onClick={() => onNavigate("revision")}
+                    onClick={() => onNavigate(navigateTo)}
                     className="rounded-lg bg-[#5680F9] px-3 py-1.5 text-[10px] font-bold text-white transition hover:bg-[#4069E2] cursor-pointer"
                   >
-                    Revisar
+                    {actionLabel}
                   </button>
                 </td>
               </tr>
@@ -172,7 +186,7 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps> = ({ onNaviga
       </div>
       <div className="mt-4 flex justify-end">
         <button
-          onClick={() => onNavigate("revision")}
+          onClick={() => onNavigate(navigateTo)}
           className="inline-flex items-center gap-1.5 text-xs font-bold text-[#5680F9] transition hover:text-[#4069E2] cursor-pointer"
         >
           Ver todos los pendientes <ExternalLink size={12} />
@@ -304,12 +318,24 @@ const FooterSection: React.FC = () => {
 // 3. Declaración del Componente Padre (`MainRenderer` / `Dashboard`)
 
 export function Dashboard({ onNavigate }: DashboardProps) {
+  const { data: session } = useSession();
   const cotizaciones = useDbTable("cotizaciones");
   const ordenes = useDbTable("ordenes_trabajo");
   const certificados = useDbTable("certificados");
   const facturas = useDbTable("facturas");
   const clientes = useDbTable("clientes");
   const { loadTable } = useDbActions();
+  const loadingCotizaciones = useDbLoading("cotizaciones");
+  const loadingOrdenes = useDbLoading("ordenes_trabajo");
+  const loadingCertificados = useDbLoading("certificados");
+  const loadingFacturas = useDbLoading("facturas");
+  const loadingClientes = useDbLoading("clientes");
+  const loadingDashboard =
+    loadingCotizaciones ||
+    loadingOrdenes ||
+    loadingCertificados ||
+    loadingFacturas ||
+    loadingClientes;
 
   useEffect(() => {
     loadTable("cotizaciones");
@@ -426,7 +452,67 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     }));
   }, [ordenes]);
 
+  const rol = (session?.user?.role as string) || "";
+  const esTecnico = rol === "Técnico";
+  const esSecretaria = rol === "Secretaria";
+
+  const pendingSection = useMemo<{
+    title: string;
+    subtitle: string;
+    navigateTo: Parameters<PendingCertsTableProps["onNavigate"]>[0];
+    actionLabel: string;
+  }>(() => {
+    if (esTecnico) {
+      return {
+        title: "Instrumentos para calibración",
+        subtitle: "Equipos asignados a ti pendientes de calibrar.",
+        navigateTo: "calibracion",
+        actionLabel: "Calibrar",
+      };
+    }
+    if (esSecretaria) {
+      return {
+        title: "Órdenes para comprobación de pagos",
+        subtitle: "Órdenes con certificados aprobados pendientes de pago.",
+        navigateTo: "entrega",
+        actionLabel: "Comprobar",
+      };
+    }
+    return {
+      title: "Certificados pendientes de revisión",
+      subtitle: "Resumen de las órdenes con prioridad alta y próximas entregas.",
+      navigateTo: "revision",
+      actionLabel: "Revisar",
+    };
+  }, [esTecnico, esSecretaria]);
+
   const pendingCerts = useMemo<PendingCertRow[]>(() => {
+    if (esTecnico) {
+      const miId = Number(session?.user?.id_user);
+      return ordenes
+        .filter((o) => (o.instrumentos ?? []).some((inst) => Number(inst.asignado) === miId))
+        .filter((o) => o.estado === "Asignada" || o.estado === "En_calibración")
+        .slice(0, 4)
+        .map((o) => ({
+          ot: o.codigo,
+          cliente: o.cliente?.razonSocial ?? "",
+          tecnico: o.responsable ?? "",
+          tipo: o.estado ?? "",
+          fecha: formatFechaCorta(o.createdAt),
+        }));
+    }
+    if (esSecretaria) {
+      return ordenes
+        .filter((o) => o.estado === "Certificado_aprobado" && o.estado_pago !== "PAGADO")
+        .slice(0, 4)
+        .map((o) => ({
+          ot: o.codigo,
+          cliente: o.cliente?.razonSocial ?? "",
+          tecnico: o.responsable ?? "",
+          tipo: o.estado ?? "",
+          fecha: formatFechaCorta(o.createdAt),
+        }));
+    }
     return ordenes
       .filter((o) => o.estadoRevision === "PENDIENTE_REVISION")
       .slice(0, 4)
@@ -437,7 +523,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         tipo: o.estado ?? "",
         fecha: formatFechaCorta(o.createdAt),
       }));
-  }, [ordenes]);
+  }, [esTecnico, esSecretaria, ordenes, session]);
 
   const alerts = useMemo<AlertItem[]>(() => {
     const otsSinResponsable = ordenes.filter((o) => !o.responsable).length;
@@ -517,17 +603,42 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
   return (
     <div className="p-8 overflow-y-auto h-full bg-[#F8FAFC] text-slate-900">
-      <WelcomeHeaderSection systemStats={systemStats} />
-      <KpiGridSection kpiData={kpiData} />
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
-        <PendingCertificatesSection onNavigate={onNavigate} pendingCerts={pendingCerts} pendingCount={pendingCerts.length} />
-        <SystemAlertsSection alerts={alerts} recentActivity={recentActivity} />
-      </div>
-      <div className="grid gap-4 xl:grid-cols-[3fr_2fr] mb-6">
-        <QuotesBarChartSection barData={barData} />
-        <ServiceDistributionPieChartSection pieData={pieData} />
-      </div>
-      <FooterSection />
+      {loadingDashboard ? (
+        <div className="space-y-6 animate-pulse">
+          <div className="h-24 rounded-[24px] bg-slate-200" />
+          <div className="grid gap-4 xl:grid-cols-4">
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} className="h-32 rounded-[24px] bg-slate-200" />
+            ))}
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
+            <div className="h-64 rounded-[24px] bg-slate-200" />
+            <div className="h-64 rounded-[24px] bg-slate-200" />
+          </div>
+        </div>
+      ) : (
+        <>
+          <WelcomeHeaderSection systemStats={systemStats} userName={session?.user?.name} />
+          <KpiGridSection kpiData={kpiData} />
+          <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
+            <PendingCertificatesSection
+              onNavigate={onNavigate}
+              pendingCerts={pendingCerts}
+              pendingCount={pendingCerts.length}
+              title={pendingSection.title}
+              subtitle={pendingSection.subtitle}
+              navigateTo={pendingSection.navigateTo}
+              actionLabel={pendingSection.actionLabel}
+            />
+            <SystemAlertsSection alerts={alerts} recentActivity={recentActivity} />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[3fr_2fr] mb-6">
+            <QuotesBarChartSection barData={barData} />
+            <ServiceDistributionPieChartSection pieData={pieData} />
+          </div>
+          <FooterSection />
+        </>
+      )}
     </div>
   );
 }

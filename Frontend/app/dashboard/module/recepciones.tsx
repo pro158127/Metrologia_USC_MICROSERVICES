@@ -19,10 +19,18 @@ import {
   Plus,
   Trash2,
   Search,
+  History,
+  X,
 } from "lucide-react";
 
 // Importar el contexto y los tipos
-import { useDbTable, useDbActions } from "./../../componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables_recharge";
+import { useSession } from "next-auth/react";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
+import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
+import { VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
+import type { QuoteItem, TarifaOption, cambiospayload } from "@/tipos/cotizacion";
 import type {
   FilaInstrumento,
   FormularioRecepcion,
@@ -45,7 +53,6 @@ import type {
 // ============================================================
 
 const generarIdUnico = () => Math.random().toString(36).substring(2, 9);
-
 const crearFilaInstrumentoVacia = (): FilaInstrumento => ({
   id: generarIdUnico(),
   instrumento: "",
@@ -54,10 +61,9 @@ const crearFilaInstrumentoVacia = (): FilaInstrumento => ({
   serie: "",
   codigoInterno: "",
   resolucion: "",
-  ibcE: false,
-  ibcT: false,
-  ibcD: false,
-  ibcA: false,
+  // 🟢 Separamos IBC en Entrada (_in) y Salida (_out) con estado inicial null (gris)
+  ibcE_in: null, ibcT_in: null, ibcD_in: null, ibcA_in: null,
+  ibcE_out: null, ibcT_out: null, ibcD_out: null, ibcA_out: null,
   sensorInt: false,
   sensorExt: false,
   estampilla: "",
@@ -126,6 +132,8 @@ const FilterBar = ({
   onDiaChange,
   onAgregarRecepcion,
 }: FilterBarProps) => {
+  const { can } = usePermissions();
+  const puedeRegistrar = can("recepcion_de_equipos", "registrar");
   const MESES = [
     { value: "all", label: "Todos los meses" },
     { value: "01", label: "Enero" },
@@ -209,6 +217,7 @@ const FilterBar = ({
         </div>
       </div>
 
+      {puedeRegistrar && (
       <button
         type="button"
         onClick={onAgregarRecepcion}
@@ -216,6 +225,7 @@ const FilterBar = ({
       >
         <Plus size={14} /> Agregar Recepción
       </button>
+      )}
     </div>
   );
 };
@@ -258,6 +268,8 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
 // 3.5 DatosGeneralesSection (con búsqueda de cotización y OT)
 const DatosGeneralesSection = ({
   // Valores del formulario
+  idCliente,
+  clienteNombre,
   solicitante,
   nombreQuienEntrega,
   cotizacionCodigo,
@@ -272,8 +284,19 @@ const DatosGeneralesSection = ({
   cotizaciones,
   ordenesTrabajo,
   // Función de actualización
+  isNew, // 🟢 Nueva propiedad
+  bloqueado = false,
+  nombreRecibeBloqueado = false,
   onUpdateGeneral,
-}: DatosGeneralesSectionProps) => {
+  onUpdateCliente,
+}: DatosGeneralesSectionProps & {
+  isNew: boolean;
+  nombreRecibeBloqueado?: boolean;
+  onUpdateCliente: (id: number | null) => void;
+}) => {
+  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
+  const camposRaizBloqueados = isNew || bloqueado;
+  const clienteBloqueado = bloqueado;
   // Listas para datalist
   const clientesList = useMemo(
     () => clientes.map((c) => c.razonSocial).filter(Boolean),
@@ -294,6 +317,31 @@ const DatosGeneralesSection = ({
         Datos Generales del Formato (Recepción)
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="md:col-span-2">
+          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
+            Cliente
+          </label>
+          {clienteBloqueado ? (
+            <input
+              value={clienteNombre || solicitante}
+              disabled
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-100 text-slate-400 text-xs cursor-not-allowed font-medium"
+            />
+          ) : (
+            <select
+              value={idCliente ?? ""}
+              onChange={(e) => onUpdateCliente(e.target.value ? Number(e.target.value) : null)}
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
+            >
+              <option value="">Seleccionar cliente...</option>
+              {clientes.map((c) => (
+                <option key={c.idCliente} value={c.idCliente}>
+                  {c.razonSocial} — {c.nitCedula}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
         <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Solicitante
@@ -326,11 +374,12 @@ const DatosGeneralesSection = ({
             Cotización (código)
           </label>
           <input
-            list="cotizaciones-datalist"
+            list={!camposRaizBloqueados ? "cotizaciones-datalist" : undefined}
             value={cotizacionCodigo}
+            placeholder="Automático"
+            disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("cotizacionCodigo", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            placeholder="Ej: COT-045"
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
           <datalist id="cotizaciones-datalist">
             {cotizacionesList.map((c) => (
@@ -339,16 +388,17 @@ const DatosGeneralesSection = ({
           </datalist>
         </div>
 
-        <div className="md:col-span-2">
+       <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Orden de Trabajo (código)
           </label>
           <input
-            list="ordenes-datalist"
+            list={!camposRaizBloqueados ? "ordenes-datalist" : undefined}
             value={ordenTrabajoCodigo}
+            placeholder="Automático"
+            disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            placeholder="Ej: OT-2026-090"
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
           <datalist id="ordenes-datalist">
             {ordenesList.map((o) => (
@@ -414,8 +464,13 @@ const DatosGeneralesSection = ({
           </label>
           <input
             value={nombreQuienRecibe}
+            disabled={nombreRecibeBloqueado}
             onChange={(e) => onUpdateGeneral("nombreQuienRecibe", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
+            className={`w-full px-3 py-1.5 rounded-xl border text-xs ${
+              nombreRecibeBloqueado
+                ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium"
+                : "bg-white border-slate-200"
+            }`}
           />
         </div>
         <div className="md:col-span-2">
@@ -437,10 +492,13 @@ const DatosGeneralesSection = ({
 const TablaInstrumentos = ({
   instrumentos,
   tarifasDisponibles,
+  tecnicosInstrumentos,
   onFilaChange,
   onAgregarFila,
   onEliminarFila,
 }: TablaInstrumentosProps) => {
+  const { can } = usePermissions();
+  const puedeRegistrar = can("recepcion_de_equipos", "registrar");
   // Función para sugerir instrumentos desde tarifas
   const sugerenciasTarifas = useMemo(() => {
     return tarifasDisponibles.map((t) => ({
@@ -459,6 +517,7 @@ const TablaInstrumentos = ({
         <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
           Estructura de Equipos Metrológicos
         </span>
+        {puedeRegistrar && (
         <button
           type="button"
           onClick={onAgregarFila}
@@ -466,14 +525,16 @@ const TablaInstrumentos = ({
         >
           <Plus size={12} /> Añadir Instrumento
         </button>
+        )}
       </div>
 
       <div className="overflow-auto max-h-[400px] w-full">
         <table className="w-full text-left border-collapse min-w-[1550px]">
           <thead>
             <tr className="bg-slate-900 text-[10px] font-bold uppercase tracking-wider text-white border-b border-slate-800 sticky top-0 z-10">
-              <th className="p-3 text-center w-10 bg-blue-600">V.</th>
-              <th className="p-3 w-48">Instrumento</th>
+          
+          <th className="p-3 w-48">Instrumento</th>
+          <th className="p-3 w-52">Técnico asignado</th>
               <th className="p-3 w-32">Marca</th>
               <th className="p-3 w-32">Modelo</th>
               <th className="p-3 w-32">Serie</th>
@@ -500,18 +561,7 @@ const TablaInstrumentos = ({
                   !inst.verificadoExcel ? "bg-red-50/20" : ""
                 }`}
               >
-                <td className="p-3 text-center bg-blue-50/10">
-                  <input
-                    type="checkbox"
-                    checked={inst.verificadoExcel}
-                    onChange={(e) => {
-                      onFilaChange(i, "verificadoExcel", e.target.checked);
-                      if (e.target.checked)
-                        onFilaChange(i, "observacionesSecretaria", "");
-                    }}
-                    className="w-4 h-4 rounded border-slate-300 text-blue-600"
-                  />
-                </td>
+             
 
                 <td className="p-3 font-bold text-slate-700">
                   <div className="relative">
@@ -526,7 +576,7 @@ const TablaInstrumentos = ({
                       {sugerenciasTarifas.map((sug) => (
                         <option
                           key={sug.id}
-                          value={sug.label}
+                          value={sug.instrumento}
                           data-id={sug.id}
                           data-magnitud={sug.magnitud}
                           data-tipo={sug.tipoServicio}
@@ -547,6 +597,15 @@ const TablaInstrumentos = ({
                       />
                     </div>
                   )}
+                </td>
+
+                <td className="p-3 text-slate-600">
+                  {tecnicosInstrumentos
+                    .filter((asignacion) => asignacion.item === (inst.item ?? i + 1))
+                    .map((asignacion) => asignacion.nombreTecnico.trim())
+                    .filter(Boolean)
+                    .filter((nombre, indice, nombres) => nombres.indexOf(nombre) === indice)
+                    .join(", ") || <span className="text-slate-400">Sin asignar</span>}
                 </td>
 
                 <td className="p-2">
@@ -604,22 +663,51 @@ const TablaInstrumentos = ({
                   />
                 </td>
 
-                <td className="p-2 bg-indigo-50/5 text-center">
-                  <div className="flex gap-1 justify-center">
-                    {(["ibcE", "ibcT", "ibcD", "ibcA"] as const).map((k) => (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => onFilaChange(i, k, !inst[k])}
-                        className={`w-6 h-6 rounded font-black border text-[9px] flex items-center justify-center transition-all cursor-pointer ${
-                          inst[k]
-                            ? "bg-blue-600 border-blue-600 text-white"
-                            : "bg-white border-slate-300 text-slate-300"
-                        }`}
-                      >
-                        {k.replace("ibc", "")}
-                      </button>
-                    ))}
+              <td className="p-2 bg-indigo-50/5 text-center">
+                  <div className="flex flex-col gap-1.5 items-center justify-center">
+                    {/* FILA 1: ENTRADA */}
+                    <div className="flex gap-1" title="Estado de Entrada">
+                      {(["E", "T", "D", "A"] as const).map((k) => {
+                        const key = `ibc${k}_in` as keyof FilaInstrumento;
+                        const val = inst[key] as boolean | null;
+                        
+                        // Lógica de ciclo: Null -> True(Verde) -> False(Rojo) -> Null
+                        const nextVal = val === null ? true : val === true ? false : null;
+                        const colorClass = val === true ? "bg-emerald-500 border-emerald-600 text-white shadow-inner" : val === false ? "bg-red-500 border-red-600 text-white shadow-inner" : "bg-slate-100 border-slate-300 text-slate-400";
+                        
+                        return (
+                          <button
+                            key={`in-${k}`}
+                            type="button"
+                            onClick={() => onFilaChange(i, key, nextVal)}
+                            className={`w-5 h-5 rounded-[4px] font-black border text-[9px] flex items-center justify-center transition-all cursor-pointer ${colorClass}`}
+                          >
+                            {k}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {/* FILA 2: SALIDA */}
+                    <div className="flex gap-1" title="Estado de Salida">
+                      {(["E", "T", "D", "A"] as const).map((k) => {
+                        const key = `ibc${k}_out` as keyof FilaInstrumento;
+                        const val = inst[key] as boolean | null;
+                        
+                        const nextVal = val === null ? true : val === true ? false : null;
+                        const colorClass = val === true ? "bg-emerald-500 border-emerald-600 text-white shadow-inner" : val === false ? "bg-red-500 border-red-600 text-white shadow-inner" : "bg-slate-100 border-slate-300 text-slate-400";
+                        
+                        return (
+                          <button
+                            key={`out-${k}`}
+                            type="button"
+                            onClick={() => onFilaChange(i, key, nextVal)}
+                            className={`w-5 h-5 rounded-[4px] font-black border text-[9px] flex items-center justify-center transition-all cursor-pointer ${colorClass}`}
+                          >
+                            {k}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </td>
 
@@ -642,6 +730,7 @@ const TablaInstrumentos = ({
                 </td>
 
                 <td className="p-2 text-center">
+                  {puedeRegistrar && (
                   <button
                     type="button"
                     onClick={() => onEliminarFila(i)}
@@ -649,6 +738,7 @@ const TablaInstrumentos = ({
                   >
                     <Trash2 size={13} />
                   </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -744,10 +834,11 @@ const InspeccionYFirmasSection = ({
           )}
           <input
             value={nombreQuienCalibra}
-            onChange={(e) => onUpdateGeneral("nombreQuienCalibra", e.target.value)}
+            readOnly
             className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white mt-1"
-            placeholder="Nombre quién calibra"
+            placeholder="Los nombres se toman de las asignaciones de la OT"
           />
+          <span className="text-[10px] text-slate-400">Técnicos asignados en la OT, separados por coma.</span>
         </div>
       </div>
 
@@ -773,7 +864,10 @@ const InspeccionYFirmasSection = ({
 const FormFooterActions = ({
   actaGuardada,
   onGenerarActa,
+  guardando = false,
 }: FormFooterActionsProps) => {
+  const { can } = usePermissions();
+  const puedeGenerarActa = can("recepcion_de_equipos", "generar_acta");
   return (
     <>
       <div className="flex items-center justify-between p-5 rounded-2xl border border-slate-100 bg-white shadow-sm flex-wrap gap-4">
@@ -785,12 +879,17 @@ const FormFooterActions = ({
             Almacenando cambios bajo auditoría del sistema.
           </div>
         </div>
+        {puedeGenerarActa && (
         <button
           onClick={onGenerarActa}
-          className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold bg-[#5680F9] text-white hover:bg-[#4069E2] cursor-pointer shadow-sm border-none"
+          disabled={guardando}
+          className={`flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold text-white shadow-sm border-none ${
+            guardando ? "bg-slate-400 cursor-not-allowed" : "bg-[#5680F9] hover:bg-[#4069E2] cursor-pointer"
+          }`}
         >
-          <FileText size={15} /> Guardar Formato R-CM010
+          <FileText size={15} /> {guardando ? "Guardando..." : "Guardar Formato R-CM010"}
         </button>
+        )}
       </div>
 
       {actaGuardada && (
@@ -808,7 +907,16 @@ const FormFooterActions = ({
 // ============================================================
 // 4. COMPONENTE PADRE PRINCIPAL
 // ============================================================
-import { getRecepcionesEnriquecidas,getInitialData } from "@/app/action_module/recepciones";
+import {
+  getRecepcionesEnriquecidas,
+  getInitialData,
+  crearRecepcion,
+  actualizarRecepcion,
+  eliminarInstrumentoRecepcionConMotivo,
+  eliminarRecepcion,
+  getHistorialRecepcion,
+  type HistorialCambioItem,
+} from "@/app/action_module/recepciones";
 export function MainRenderers() {
   // --- Estado global por tabla (solo se re-renderiza si esa tabla cambia) ---
   const recepcionesEquipo = useDbTable("recepciones_equipo");
@@ -816,11 +924,19 @@ export function MainRenderers() {
   const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
   const clientesStore = useDbTable("clientes");
   const tarifasStore = useDbTable("tarifas");
-  const { setDbState } = useDbActions();
+  const { mergeTable, setTableLoading } = useDbActions();
+  const loadingRecepciones = useDbLoading("recepciones_equipo");
+  const { data: session } = useSession();
+  const nombreUsuarioSesion = session?.user?.name ?? "";
+  const { can } = usePermissions();
+  const puedeRegistrar = can("recepcion_de_equipos", "registrar");
+  const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
   const [formulario, setFormulario] = useState<FormularioRecepcion>({
+    idCliente: null,
+    clienteNombre: "",
     solicitante: "",
     nombreQuienEntrega: "",
     cotizacionCodigo: "",
@@ -847,6 +963,85 @@ export function MainRenderers() {
   // Estado de guardado
   const [actaGuardada, setActaGuardada] = useState(false);
   const [toast, setToast] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  // Trazabilidad / edición
+  const [recepcionActual, setRecepcionActual] = useState<RecepcionEquipoModel | null>(null);
+  const [historialAbierto, setHistorialAbierto] = useState(false);
+  const [historialItems, setHistorialItems] = useState<HistorialCambioItem[]>([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
+
+  // Soft delete con versionado (reutiliza el VersionModal de Cotizaciones)
+  const [isDeleteVersionOpen, setDeleteVersionOpen] = useState(false);
+  const [deleteModalItems, setDeleteModalItems] = useState<QuoteItem[]>([]);
+  const [deleteInstrumento, setDeleteInstrumento] = useState<{ idInstrumento: number; index: number } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Soft delete de la recepción completa (modal de confirmación)
+  const [deleteRecepcionOpen, setDeleteRecepcionOpen] = useState(false);
+  const [deleteRecepcionMotivo, setDeleteRecepcionMotivo] = useState("");
+
+  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
+  const esEdicionAtada =
+    selectedRecepcionId !== null &&
+    selectedRecepcionId !== "NUEVA" &&
+    !!recepcionActual?.idOrdenTrabajo;
+  const tecnicosInstrumentos = recepcionActual?.ordenTrabajo?.tecnicosInstrumentos ?? [];
+  const nombresTecnicosAsignados = [...new Set(
+    tecnicosInstrumentos.map((asignacion) => asignacion.nombreTecnico.trim()).filter(Boolean)
+  )].join(", ");
+
+  // --- Helpers para el VersionModal (soft delete) ---
+  const tarifasOptions: TarifaOption[] = useMemo(() => {
+    return (tarifasStore ?? []).map((t) => {
+      const historial = t.historial || [];
+      const activo = historial.find((h) => !h.fechaFin) || historial[0];
+      const precio = activo ? Number(activo.precioU) : 0;
+      return {
+        tipoServicio: t.tipoServicio || "ACREDITADO",
+        magnitud: t.magnitud || "",
+        instrumento: t.Instrumento || "Genérico",
+        norma: t.Norma || "N/A",
+        precio,
+      };
+    });
+  }, [tarifasStore]);
+
+  const getMagnitudesByTipo = useCallback(
+    (tipo: string): string[] => {
+      const unique = new Set<string>();
+      tarifasOptions.forEach((t) => {
+        if (t.tipoServicio === tipo) unique.add(t.magnitud);
+      });
+      return Array.from(unique).filter(Boolean);
+    },
+    [tarifasOptions]
+  );
+
+  const getInstrumentosByMagnitudAndTipo = useCallback(
+    (magnitud: string, tipo: string): TarifaOption[] =>
+      tarifasOptions.filter((t) => t.magnitud === magnitud && t.tipoServicio === tipo),
+    [tarifasOptions]
+  );
+
+  const calculateTotal = useCallback(
+    (listaItems: QuoteItem[], desc: number, viat: number) => {
+      const subtotal = listaItems.reduce(
+        (acc, item) => acc + item.cantidad * item.valorUnitario,
+        0
+      );
+      return (subtotal + viat) * (1 - desc / 100);
+    },
+    []
+  );
+
+  const formatCurrency = (value: number) =>
+    value.toLocaleString("es-CO", {
+      style: "currency",
+      currency: "COP",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
 
   // --- Helpers ---
   const showToast = useCallback((msg: string) => {
@@ -858,19 +1053,20 @@ useEffect(() => {
   const fetchInitialData = async () => {
     // Si ya hay datos, evitamos recargar
     if (recepcionesEquipo.length > 0) return;
+    setTableLoading("recepciones_equipo", true);
     try {
       const data = await getInitialData();
-      // Actualizamos el contexto global
-      setDbState((prev) => ({
-        ...prev,
-        recepciones_equipo: data.recepciones as RecepcionEquipoModel[],
-        clientes: data.clientes as ClienteModel[],
-        cotizaciones: data.cotizaciones as CotizacionModel[],
-        ordenes_trabajo: data.ordenes as OrdenTrabajoModel[],
-        tarifas: data.tarifas as TarifaModel[],
-      }));
+      // Actualizamos el contexto global (fusionando con el estado actual para no
+      // pisar actualizaciones en tiempo real que hayan llegado durante el fetch)
+      mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+      mergeTable("clientes", data.clientes as ClienteModel[]);
+      mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+      mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+      mergeTable("tarifas", data.tarifas as TarifaModel[]);
     } catch (error) {
       console.error(error);
+    } finally {
+      setTableLoading("recepciones_equipo", false);
     }
   };
   fetchInitialData();
@@ -946,6 +1142,15 @@ useEffect(() => {
     }));
   }, []);
 
+  const handleUpdateCliente = useCallback((idCliente: number | null) => {
+    setFormulario((prev) => ({
+      ...prev,
+      idCliente,
+      clienteNombre:
+        clientesStore.find((c) => c.idCliente === idCliente)?.razonSocial ?? "",
+    }));
+  }, [clientesStore]);
+
   const handleFilaChange = useCallback(
     (index: number, propiedad: keyof FilaInstrumento, valor: FilaInstrumento[keyof FilaInstrumento]) => {
       setFormulario((prev) => {
@@ -967,6 +1172,29 @@ useEffect(() => {
 
   const eliminarFilaInstrumento = useCallback(
     (index: number) => {
+      const fila = formulario.instrumentos[index];
+
+      // Si el instrumento ya existe en BD, se abre el modal de versionado
+      // (el mismo de Cotizaciones) para capturar el motivo del soft delete.
+      if (fila?.idInstrumento && recepcionActual?.idRecepcion) {
+        const mapeados: QuoteItem[] = formulario.instrumentos
+          .filter((_, i) => i !== index)
+          .map((inst) => ({
+            id: Number(inst.idInstrumento ?? 0) || Math.floor(Math.random() * 1e9),
+            tipoServicio: "",
+            magnitud: "",
+            instrumento: inst.instrumento || "",
+            norma: "N/A",
+            cantidad: 1,
+            valorUnitario: 0,
+            lugarCalibracion: "Laboratorio",
+          }));
+        setDeleteModalItems(mapeados);
+        setDeleteInstrumento({ idInstrumento: fila.idInstrumento, index });
+        setDeleteVersionOpen(true);
+        return;
+      }
+
       setFormulario((prev) => {
         if (prev.instrumentos.length <= 1) {
           showToast("⚠️ El formato debe contener al menos un instrumento.");
@@ -976,7 +1204,103 @@ useEffect(() => {
         return { ...prev, instrumentos: filtrados };
       });
     },
-    [showToast]
+    [formulario.instrumentos, recepcionActual, showToast]
+  );
+
+  // --- Confirmación del soft delete (motivo capturado en el VersionModal) ---
+  const confirmarEliminarInstrumento = useCallback(
+    async (auditForm: cambiospayload) => {
+      if (!deleteInstrumento || !recepcionActual?.idRecepcion) return;
+      if (formulario.instrumentos.length <= 1) {
+        showToast("⚠️ No se puede eliminar el último instrumento activo de una recepción.");
+        return;
+      }
+
+      setIsDeleting(true);
+      try {
+        const res = await eliminarInstrumentoRecepcionConMotivo(
+          recepcionActual.idRecepcion,
+          deleteInstrumento.idInstrumento,
+          {
+            descripcion: auditForm.descripcion,
+            aprobo: auditForm.aprobo,
+            observaciones: auditForm.observaciones ?? null,
+          }
+        );
+        if (!res.ok) {
+          showToast(res.error || "No se pudo desactivar el instrumento.");
+          return;
+        }
+        showToast("🗑️ Instrumento desactivado (soft delete) y cotización versionada.");
+
+        setFormulario((prev) => {
+          if (prev.instrumentos.length <= 1) {
+            return prev;
+          }
+          const filtrados = prev.instrumentos.filter(
+            (_, idx) => idx !== deleteInstrumento.index
+          );
+          return { ...prev, instrumentos: filtrados };
+        });
+
+        // Refrescar datos de trazabilidad
+        setTableLoading("recepciones_equipo", true);
+        try {
+          const data = await getInitialData();
+          mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+          mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+          mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+        } finally {
+          setTableLoading("recepciones_equipo", false);
+        }
+      } finally {
+        setIsDeleting(false);
+        setDeleteVersionOpen(false);
+        setDeleteInstrumento(null);
+        setDeleteModalItems([]);
+      }
+    },
+    [deleteInstrumento, recepcionActual, formulario.instrumentos.length, showToast, mergeTable, setTableLoading]
+  );
+
+  // --- Operaciones de ítems dentro del VersionModal (solo contexto) ---
+  const agregarFilaModal = useCallback((_target: "create" | "modal") => {
+    setDeleteModalItems((prev) => [
+      ...prev,
+      {
+        id: Math.floor(Math.random() * 1e9),
+        tipoServicio: "",
+        magnitud: "",
+        instrumento: "",
+        norma: "N/A",
+        cantidad: 1,
+        valorUnitario: 0,
+        lugarCalibracion: "Laboratorio",
+      },
+    ]);
+  }, []);
+
+  const eliminarFilaModal = useCallback(
+    (idParaEliminar: number, _target: "create" | "modal") => {
+      setDeleteModalItems((prev) => prev.filter((f) => f.id !== idParaEliminar));
+    },
+    []
+  );
+
+  const manejarCambioModalFila = useCallback(
+    <K extends keyof QuoteItem>(
+      index: number,
+      propiedad: K,
+      valor: QuoteItem[K],
+      _target: "create" | "modal"
+    ) => {
+      setDeleteModalItems((prev) => {
+        const actualizados = [...prev];
+        actualizados[index] = { ...actualizados[index], [propiedad]: valor } as QuoteItem;
+        return actualizados;
+      });
+    },
+    []
   );
 
   // --- Cargar una recepción existente para editar ---
@@ -986,23 +1310,41 @@ useEffect(() => {
       // Mapear a formulario
       const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
       const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
+      const clienteVinculado =
+        recepcion.cotizacion?.cliente ?? recepcion.ordenTrabajo?.cliente ?? null;
       // Instrumentos
-      const instrumentos = (recepcion.instrumentos || []).map((det) => {
-        const estadoIBC = det.estadoIBC as Record<string, boolean> | null | undefined;
+     const instrumentos = (recepcion.instrumentos || []).map((det) => {
+        // Parseamos el JSON asumiendo que tiene la nueva estructura { entrada: {}, salida: {} }
+        // Se usa 'as any' o una interfaz específica si la tienes definida para det.estadoIBC
+        const estadoIBC = det.estadoIBC as {
+          entrada?: Record<string, boolean | null>;
+          salida?: Record<string, boolean | null>;
+        } | null;
+        
         return {
           id: generarIdUnico(),
+          idInstrumento: det.idInstrumento,
+          item: det.item ?? null,
           instrumento: det.instrumento || "",
           marca: det.marca || "",
           modelo: det.modelo || "",
           serie: det.serie || "",
           codigoInterno: det.codigoInventario || "",
           resolucion: det.resolucion || "",
-          ibcE: estadoIBC?.E || false,
-          ibcT: estadoIBC?.T || false,
-          ibcD: estadoIBC?.D || false,
-          ibcA: estadoIBC?.A || false,
-          sensorInt: false, // No existe en schema, se deja false por defecto
-          sensorExt: false,
+          
+          // 🟢 ASIGNACIÓN CORREGIDA: Mapeamos hacia _in y _out
+          ibcE_in: estadoIBC?.entrada?.E ?? null,
+          ibcT_in: estadoIBC?.entrada?.T ?? null,
+          ibcD_in: estadoIBC?.entrada?.D ?? null,
+          ibcA_in: estadoIBC?.entrada?.A ?? null,
+          
+          ibcE_out: estadoIBC?.salida?.E ?? null,
+          ibcT_out: estadoIBC?.salida?.T ?? null,
+          ibcD_out: estadoIBC?.salida?.D ?? null,
+          ibcA_out: estadoIBC?.salida?.A ?? null,
+          
+          sensorInt: det.sensorInt ?? false,
+          sensorExt: det.sensorExt ?? false,
           estampilla: det.estampilla || "",
           observaciones: det.observaciones || "",
           verificadoExcel: true,
@@ -1012,11 +1354,18 @@ useEffect(() => {
       });
 
       setFormulario({
+        idCliente: clienteVinculado?.idCliente ?? null,
+        clienteNombre: clienteVinculado?.razonSocial ?? "",
         solicitante: recepcion.solicitante || "",
         nombreQuienEntrega: recepcion.nombreEntrega || "",
         cotizacionCodigo,
         ordenTrabajoCodigo,
-        sitioCalibracion: recepcion.sitioCalibracion || "",
+        sitioCalibracion:
+          recepcion.sitioCalibracion === "CLIENTE"
+            ? "Instalaciones del cliente"
+            : recepcion.sitioCalibracion === "LABORATORIO"
+            ? "Laboratorio permanente"
+            : "",
         fechaRecepcion: recepcion.fechaRecepcion
           ? new Date(recepcion.fechaRecepcion).toISOString().split("T")[0]
           : "",
@@ -1033,6 +1382,7 @@ useEffect(() => {
         instrumentos: instrumentos.length > 0 ? instrumentos : [crearFilaInstrumentoVacia()],
       });
 
+      setRecepcionActual(recepcion);
       setActaGuardada(false);
     },
     []
@@ -1040,9 +1390,15 @@ useEffect(() => {
 
   // --- Inicializar nueva recepción ---
   const inicializarNuevaRecepcion = useCallback(() => {
+    if (!plantillasCompletas) {
+      showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      return;
+    }
     const hoy = new Date().toISOString().split("T")[0];
     setSelectedRecepcionId("NUEVA");
     setFormulario({
+      idCliente: null,
+      clienteNombre: "",
       solicitante: "",
       nombreQuienEntrega: "",
       cotizacionCodigo: "",
@@ -1059,14 +1415,17 @@ useEffect(() => {
       nombreQuienRecibeServicio: "",
       instrumentos: [crearFilaInstrumentoVacia()],
     });
+    setRecepcionActual(null);
     setActaGuardada(false);
     showToast("📋 Nueva recepción creada.");
-  }, [showToast]);
+  }, [showToast, plantillasCompletas]);
 
   // --- Volver a la lista ---
   const volverALista = useCallback(() => {
     setSelectedRecepcionId(null);
     setFormulario({
+      idCliente: null,
+      clienteNombre: "",
       solicitante: "",
       nombreQuienEntrega: "",
       cotizacionCodigo: "",
@@ -1083,14 +1442,46 @@ useEffect(() => {
       nombreQuienRecibeServicio: "",
       instrumentos: [crearFilaInstrumentoVacia()],
     });
+    setRecepcionActual(null);
     setActaGuardada(false);
   }, []);
 
   // --- Mutación: Guardar recepción ---
-  const handleGenerarActa = useCallback(async () => {
+const handleGenerarActa = useCallback(async () => {
+    if (!plantillasCompletas) {
+      showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      return;
+    }
+    // 🟢 1. EVALUACIÓN NO BLOQUEANTE (Soft Validation)
+    // Verificamos si la cabecera tiene lo mínimo
+    const cabeceraLista = !!(formulario.nombreQuienEntrega && formulario.fechaRecepcion);
+
+    // Verificamos si TODOS los instrumentos cumplen las reglas
+    const instrumentosValidos = formulario.instrumentos.length > 0 && formulario.instrumentos.every((inst) => {
+      const basicosLlenos = !!(inst.instrumento && inst.marca && inst.modelo && inst.serie && inst.codigoInterno && inst.resolucion);
+      const entradaDiligenciada = inst.ibcE_in !== null && inst.ibcT_in !== null && inst.ibcD_in !== null && inst.ibcA_in !== null;
+      
+      return basicosLlenos && entradaDiligenciada;
+    });
+
+    const cumpleRequisitosCompletos = cabeceraLista && instrumentosValidos;
+    const estadoCalculado = cumpleRequisitosCompletos ? "RECIBIDO" : "BORRADOR";
+
+    // Feedback visual para el usuario
+    if (cumpleRequisitosCompletos) {
+      showToast("✅ Requisitos completos. La recepción se procesará como definitiva.");
+    } else {
+      showToast("⚠️ Faltan datos (ETDA o básicos). Se guardará el avance como BORRADOR.");
+    }
+
     try {
-      // Construir payload
+      // 🟢 2. CONSTRUCCIÓN DEL PAYLOAD
       const payload = {
+        // Indicador dinámico para tu Backend
+        estado: estadoCalculado, 
+        isNueva: selectedRecepcionId === "NUEVA",
+        idCliente: formulario.idCliente,
+        
         // Cabecera
         solicitante: formulario.solicitante,
         nombreEntrega: formulario.nombreQuienEntrega || undefined,
@@ -1099,53 +1490,138 @@ useEffect(() => {
         sitioCalibracion: formulario.sitioCalibracion,
         fechaRecepcion: formulario.fechaRecepcion,
         fechaSalida: formulario.fechaSalida || undefined,
-        nombreRecibe: formulario.nombreQuienRecibe || undefined,
+        nombreRecibe: nombreUsuarioSesion || formulario.nombreQuienRecibe || undefined,
         nombreEmpaca: formulario.nombreQuienEmpaca || undefined,
         accesorios: formulario.accesorios || undefined,
         pruebasCompletas: formulario.pruebasCompletas,
         observacionesPruebas: formulario.observacionesPruebas || undefined,
-        nombreCalibra: formulario.nombreQuienCalibra || undefined,
+        nombreCalibra: nombresTecnicosAsignados || undefined,
         nombreRecibeServicio: formulario.nombreQuienRecibeServicio || undefined,
-        // Instrumentos
+        
+        // Instrumentos con mapeo exacto de Entrada y Salida
         instrumentos: formulario.instrumentos.map((inst) => ({
+          idLocal: inst.id,
+          idInstrumento: inst.idInstrumento,
           instrumento: inst.instrumento,
           marca: inst.marca || undefined,
           modelo: inst.modelo || undefined,
           serie: inst.serie || undefined,
           codigoInventario: inst.codigoInterno || undefined,
           resolucion: inst.resolucion || undefined,
-          observaciones: inst.observaciones || undefined,
+          sensorInt: inst.sensorInt ?? false,
+          sensorExt: inst.sensorExt ?? false,
           estampilla: inst.estampilla || undefined,
-          sensorInt: inst.sensorInt,
-          sensorExt: inst.sensorExt,
-          ibcE: inst.ibcE,
-          ibcT: inst.ibcT,
-          ibcD: inst.ibcD,
-          ibcA: inst.ibcA,
+          observaciones: inst.observaciones || undefined,
+          
+          // Estructura JSON para la columna ESTADO_IBC en tu BD
+          estadoIBC: {
+            entrada: {
+              E: inst.ibcE_in,
+              T: inst.ibcT_in,
+              D: inst.ibcD_in,
+              A: inst.ibcA_in
+            },
+            salida: {
+              E: inst.ibcE_out,
+              T: inst.ibcT_out,
+              D: inst.ibcD_out,
+              A: inst.ibcA_out
+            }
+          }
         })),
       };
 
-      // Llamada a la API (simulada)
-      // Reemplazar con fetch real cuando el backend esté listo
-      console.log("📤 Enviando mutación:", payload);
+      console.log("📤 Payload a enviar al backend:", payload);
+
+      // 🟢 3. LLAMADA AL SERVER ACTION (crear o actualizar según el modo)
+      setGuardando(true);
+      const esNueva = selectedRecepcionId === "NUEVA" || !recepcionActual;
+      const response = esNueva
+        ? await crearRecepcion(payload)
+        : await actualizarRecepcion(recepcionActual.idRecepcion, payload);
+
+      if (!response.ok) {
+        throw new Error(response.error || "Fallo al persistir en el servidor");
+      }
 
       setActaGuardada(true);
-      showToast(`✅ Recepción guardada correctamente.`);
+      showToast(response.message || "✅ Recepción guardada correctamente.");
 
-      // Opcional: si es nueva, actualizar la lista (el contexto se actualizará vía socket)
-      // Forzar recarga de la lista
-      if (selectedRecepcionId === "NUEVA") {
-        // En producción, el socket actualizará dbState automáticamente.
-        // Por ahora, solo volvemos a la lista después de unos segundos.
+      // Refrescar la tabla global de recepciones (fusionando, sin pisar tiempo real)
+      setTableLoading("recepciones_equipo", true);
+      try {
+        const data = await getInitialData();
+        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+        mergeTable("clientes", data.clientes as ClienteModel[]);
+        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+        mergeTable("tarifas", data.tarifas as TarifaModel[]);
+      } finally {
+        setTableLoading("recepciones_equipo", false);
+      }
+
+      // Si era nueva, lo sacamos a la lista después de guardar
+      if (esNueva) {
         setTimeout(() => {
           volverALista();
-        }, 2000);
+        }, 1500);
       }
     } catch (error) {
+      const mensaje = (error as Error)?.message;
       console.error("Error al guardar recepción:", error);
-      showToast("❌ Error al guardar la recepción.");
+      showToast(mensaje ? `❌ ${mensaje}` : "❌ Error al persistir los datos en el servidor.");
+    } finally {
+      setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, showToast, volverALista]);
+  }, [formulario, selectedRecepcionId, recepcionActual, nombresTecnicosAsignados, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion, plantillasCompletas]);
+
+  // --- Trazabilidad: cargar historial de cambios de la cotización ---
+  const abrirHistorial = useCallback(async () => {
+    if (!recepcionActual?.idRecepcion) {
+      showToast("⚠️ Guarda la recepción para consultar su trazabilidad.");
+      return;
+    }
+    setHistorialAbierto(true);
+    setCargandoHistorial(true);
+    try {
+      setHistorialItems(await getHistorialRecepcion(recepcionActual.idRecepcion));
+    } finally {
+      setCargandoHistorial(false);
+    }
+  }, [recepcionActual, showToast]);
+
+  // --- Soft delete de la recepción completa ---
+  const confirmarEliminarRecepcion = useCallback(async () => {
+    if (!recepcionActual?.idRecepcion || !deleteRecepcionMotivo.trim()) return;
+    setIsDeleting(true);
+    try {
+      const res = await eliminarRecepcion(recepcionActual.idRecepcion, {
+        descripcion: deleteRecepcionMotivo.trim(),
+        aprobo: nombreUsuarioSesion || "Sistema",
+        observaciones: null,
+      });
+      if (!res.ok) {
+        showToast(res.error || "No se pudo desactivar la recepción.");
+        return;
+      }
+      showToast("🗑️ Recepción desactivada (soft delete).");
+      setDeleteRecepcionOpen(false);
+      setDeleteRecepcionMotivo("");
+
+      setTableLoading("recepciones_equipo", true);
+      try {
+        const data = await getInitialData();
+        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
+        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
+        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+      } finally {
+        setTableLoading("recepciones_equipo", false);
+      }
+      volverALista();
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [recepcionActual, deleteRecepcionMotivo, nombreUsuarioSesion, showToast, mergeTable, setTableLoading, volverALista]);
 
   // ============================================================
   // RENDER
@@ -1154,6 +1630,32 @@ useEffect(() => {
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification message={toast} />
+      <PlantillasIncompletasBanner estado={estadoPlantillas} />
+
+      <VersionModal
+        usu_rol={nombreUsuarioSesion || "no hay"}
+        isOpen={isDeleteVersionOpen}
+        onClose={() => {
+          setDeleteVersionOpen(false);
+          setDeleteInstrumento(null);
+          setDeleteModalItems([]);
+        }}
+        modalItems={deleteModalItems}
+        modalDescuento={0}
+        setModalDescuento={() => {}}
+        modalViaticos={0}
+        setModalViaticos={() => {}}
+        agregarFila={agregarFilaModal}
+        eliminarFila={eliminarFilaModal}
+        manejarCambioFila={manejarCambioModalFila}
+        calculateTotal={calculateTotal}
+        formatCurrency={formatCurrency}
+        saveNewVersion={confirmarEliminarInstrumento}
+        isSaving={isDeleting}
+        tarifasOptions={tarifasOptions}
+        getMagnitudesByTipo={getMagnitudesByTipo}
+        getInstrumentosByMagnitudAndTipo={getInstrumentosByMagnitudAndTipo}
+      />
 
       <HeaderSection
         selectedRecepcionId={selectedRecepcionId}
@@ -1184,7 +1686,11 @@ useEffect(() => {
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {recepcionesFiltradas.length > 0 ? (
+            {loadingRecepciones ? (
+              [1, 2, 3].map((n) => (
+                <div key={n} className="h-40 rounded-2xl bg-slate-200 animate-pulse" />
+              ))
+            ) : recepcionesFiltradas.length > 0 ? (
               recepcionesFiltradas.map((r) => (
                 <RecepcionCard
                   key={r.idRecepcion}
@@ -1202,7 +1708,38 @@ useEffect(() => {
       ) : (
         // --- VISTA DE FORMULARIO ---
         <div className="flex flex-col gap-5">
+          {recepcionActual && (
+            <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-2.5">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                {esEdicionAtada
+                  ? "Edición atada a OT — campos raíz bloqueados"
+                  : `Editando recepción ${recepcionActual.codigo}`}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={abrirHistorial}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer border-none"
+                >
+                  <History size={14} /> Ver trazabilidad
+                </button>
+                {puedeRegistrar && (
+                <button
+                  onClick={() => { setDeleteRecepcionMotivo(""); setDeleteRecepcionOpen(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 cursor-pointer border-none"
+                >
+                  <Trash2 size={14} /> Eliminar
+                </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <DatosGeneralesSection
+             isNew={selectedRecepcionId === "NUEVA"}
+            bloqueado={esEdicionAtada}
+            nombreRecibeBloqueado
+            idCliente={formulario.idCliente}
+            clienteNombre={formulario.clienteNombre}
             solicitante={formulario.solicitante}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}
@@ -1210,17 +1747,19 @@ useEffect(() => {
             sitioCalibracion={formulario.sitioCalibracion}
             fechaRecepcion={formulario.fechaRecepcion}
             fechaSalida={formulario.fechaSalida}
-            nombreQuienRecibe={formulario.nombreQuienRecibe}
+            nombreQuienRecibe={nombreUsuarioSesion || formulario.nombreQuienRecibe}
             nombreQuienEmpaca={formulario.nombreQuienEmpaca}
             clientes={clientesStore || []}
             cotizaciones={cotizaciones}
             ordenesTrabajo={ordenesTrabajo}
             onUpdateGeneral={handleUpdateGeneral}
+            onUpdateCliente={handleUpdateCliente}
           />
 
           <TablaInstrumentos
             instrumentos={formulario.instrumentos}
             tarifasDisponibles={tarifasDisponibles}
+            tecnicosInstrumentos={tecnicosInstrumentos}
             onFilaChange={handleFilaChange}
             onAgregarFila={agregarFilaInstrumento}
             onEliminarFila={eliminarFilaInstrumento}
@@ -1230,7 +1769,7 @@ useEffect(() => {
             accesorios={formulario.accesorios}
             pruebasCompletas={formulario.pruebasCompletas}
             observacionesPruebas={formulario.observacionesPruebas}
-            nombreQuienCalibra={formulario.nombreQuienCalibra}
+            nombreQuienCalibra={nombresTecnicosAsignados}
             nombreQuienRecibeServicio={formulario.nombreQuienRecibeServicio}
             onUpdateGeneral={handleUpdateGeneral}
           />
@@ -1238,7 +1777,86 @@ useEffect(() => {
           <FormFooterActions
             actaGuardada={actaGuardada}
             onGenerarActa={handleGenerarActa}
+            guardando={guardando}
           />
+        </div>
+      )}
+
+      {historialAbierto && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl border border-slate-100 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                <History size={16} /> Trazabilidad de cambios
+              </div>
+              <button
+                onClick={() => setHistorialAbierto(false)}
+                className="text-slate-400 hover:text-slate-700 border-none bg-transparent cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-5">
+              {cargandoHistorial ? (
+                <div className="text-xs text-slate-400">Cargando historial...</div>
+              ) : historialItems.length === 0 ? (
+                <div className="text-xs text-slate-400">Sin cambios registrados.</div>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {historialItems.map((h) => (
+                    <li key={h.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-[#5680F9]">{h.numeroVersion}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(h.fechaCambio).toLocaleString("es-CO")}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-700 mt-1">{h.descripcion}</p>
+                      {h.observaciones && (
+                        <p className="text-[11px] text-slate-500 mt-1">Obs: {h.observaciones}</p>
+                      )}
+                      <p className="text-[10px] text-slate-400 mt-1">Aprobó: {h.aprobo}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteRecepcionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl border border-slate-100 p-6">
+            <div className="text-sm font-bold text-slate-700 mb-2">
+              Desactivar Recepción {recepcionActual?.codigo}
+            </div>
+            <p className="text-xs text-slate-500 mb-3">
+              Esta acción desactivará la recepción (soft delete). Es obligatorio indicar el motivo.
+            </p>
+            <textarea
+              value={deleteRecepcionMotivo}
+              onChange={(e) => setDeleteRecepcionMotivo(e.target.value)}
+              rows={3}
+              placeholder="Motivo del borrado..."
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-rose-400 resize-none"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setDeleteRecepcionOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarEliminarRecepcion}
+                disabled={isDeleting || !deleteRecepcionMotivo.trim()}
+                className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50"
+              >
+                {isDeleting ? "Desactivando..." : "Confirmar eliminación"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

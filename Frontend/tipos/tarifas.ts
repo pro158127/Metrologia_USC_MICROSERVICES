@@ -33,6 +33,7 @@ export interface CatalogHeaderControlsProps {
   magnitudesDisponibles: string[];
   tiposServicioDisponibles: string[];
   onOpenCreate: () => void;
+
 }
 
 export interface PriceHistoryModalProps {

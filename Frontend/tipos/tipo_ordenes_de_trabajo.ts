@@ -99,7 +99,7 @@ export type OrdenTrabajoDetalleBase = {
   unidad: string | null;
   intervaloRango: string | null;
   resolucion: string | null;
-  asignado: number;
+  asignado: number | null;
   declaracionConformidad: boolean;
   limiteControlEMC: string | null;
   docEspecificacion: string | null;
@@ -116,7 +116,7 @@ export type TarifaOptionBase = {
 // 3. TIPOS DEL MÓDULO ÓRDENES DE TRABAJO
 // ============================================================
 
-export type ViewMode = "kanban" | "list";
+export type ViewMode = "kanban" | "tree" | "list";
 
 export type WarningTipo =
   | "retraso"
@@ -147,6 +147,12 @@ export type OTBase = {
   retraso: boolean;
   equipos: number;
   warns: Warning[];
+  idOrdenTrabajoPadre?: number | null;
+  idOtRaiz?: number | null;
+  sitioCalibracion?: string | null;
+  tieneHijas?: boolean;
+  version?: number;
+  cotizacionCodigo?: string;
 };
 
 /** DTO del formulario R-CM05 (valores string para bindeo de inputs). */
@@ -250,16 +256,15 @@ export interface ComboboxInstrumentoProps {
   onChange: (value: string) => void;
   placeholder?: string;
 }
-
 export interface StaffAssignmentSectionProps {
   editingTechnician: boolean;
   setEditingTechnician: (val: boolean) => void;
+  instrumentosCot: OTasiignemet[];
   technicians: Tecnico[];
-  instrumentosCot:OTasiignemet[]
-  onAssignTechnician:( idUsuario: number,id_instrumento:number) => void;
-
+  estadoActual: EstadoOrden;
+  // 🟢 Actualizar la firma de la función aquí también
+  onAssignTechnician: (idUsuario: number, id_instrumento: string | number) => void;
 }
-
 export interface InstrumentosTableProps {
   instrumentDrafts: Instrument[];
   updateInstrumentDraft: <K extends keyof Instrument>(
@@ -344,11 +349,11 @@ export const kanbanColumns: { key: EstadoOrden; label: string; color: string }[]
   { key: "Certificado_enviado", label: "Certificado enviado", color: "#4C36D0" },
 ];
 
-export interface OTasiignemet{
-  id_instrumento:number;
-  asignado:number;
-  instrumento:string;
-
+export interface OTasiignemet {
+  asignado: number;
+  // 🟢 Permitir string (para los UUIDs) o number (para la BD)
+  id_instrumento: string | number; 
+  instrumento: string;
 }
 export interface Tecnico {
   idUsuario: number;

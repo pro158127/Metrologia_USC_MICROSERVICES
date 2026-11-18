@@ -3,22 +3,31 @@
 // 1. IMPORTS
 import React, { useCallback, useState } from "react";
 import { signOut } from "next-auth/react";
+import dynamic from "next/dynamic";
 import { Sidebar, ModuleKey } from "./components/sidebar";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { permisionMapping } from "@/app/lib/permissions/mapping";
 import { Header } from "./components/Header";
-import { Administracion } from "./module/Administracion";
-import ClientMainRenderer from "./module/gestion_clientes/page";
-import ClienteDetailPage from "./module/gestion_clientes/perfil/[id]/page";
-import Cotizaciones from "./module/cotizacion";
-import Dashboard from "./dashboard";
-import OrdenesTrabajo from "./module/ordenes_ot";
-import  { MainRenderers } from  "./module/recepciones";
-import SocketDebugger from "../componets/debugges_webscoekt ";
-import RevisionCertificados from "./module/Revison_certifados";
-import CalibracionInformesMockup from "./module/Calibracion_informes";
-import MainRendererenv from "./module/Envio_entrega";
-import MainRendererreport from "./module/reportes";
+import Perfil from "./components/Perfil";
+
+// Carga perezosa (code-splitting): evita que Next compile todos los módulos
+// pesados (xlsx, @univerjs, pdfjs, recharts, etc.) en el primer render del
+// dashboard tras el login. Cada módulo solo se compila cuando se navega a él.
+const Administracion = dynamic(() => import("./module/Administracion").then((m) => m.Administracion), { ssr: false });
+const ClientMainRenderer = dynamic(() => import("./module/gestion_clientes/page"), { ssr: false });
+const ClienteDetailPage = dynamic(() => import("./module/gestion_clientes/perfil/[id]/page"), { ssr: false });
+const Cotizaciones = dynamic(() => import("./module/cotizacion"), { ssr: false });
+const SeguimientoComercial = dynamic(() => import("./module/seguimiento"), { ssr: false });
+const Dashboard = dynamic(() => import("./dashboard"), { ssr: false });
+const OrdenesTrabajo = dynamic(() => import("./module/ordenes_ot"), { ssr: false });
+const MainRenderers = dynamic(() => import("./module/recepciones").then((m) => m.MainRenderers), { ssr: false });
+const SocketDebugger = dynamic(() => import("../componets/debugges_webscoekt "), { ssr: false });
+const RevisionCertificados = dynamic(() => import("./module/Revison_certifados"), { ssr: false });
+const CalibracionInformesMockup = dynamic(() => import("./module/Calibracion_informes"), { ssr: false });
+const MainRendererenv = dynamic(() => import("./module/Envio_entrega"), { ssr: false });
+const MainRendererreport = dynamic(() => import("./module/reportes"), { ssr: false });
+const MainRenderer2 = dynamic(() => import("./module/import_ot"), { ssr: false });
 // Tipado formal para las funciones de navegación
-import MainRenderer2 from "./module/import_ot";
 export interface Perfil {
   change_id_cliente: (n: number) => void;
   change_module: () => void;
@@ -30,6 +39,7 @@ const MODULE_TITLES: Record<ModuleKey, string> = {
   dashboard: "Director Técnico",
   clientes: "Gestión de Clientes",
   cotizaciones: "Cotizaciones",
+  seguimiento: "Seguimiento Comercial",
   ordenes: "Órdenes de Trabajo",
   importarOrden: "Importar OT",
   recepcion: "Recepción de Equipos",
@@ -66,6 +76,8 @@ interface ModuloActivoProps {
   onSelectCliente: (id: number) => void;   // ← navega a perfil
   onVolver: () => void;     
   onNavigarte: (modulo: ModuleKey) =>void;               // ← vuelve a lista
+  otToOpen: number | null;                 // ← OT a preseleccionar en Órdenes
+  onOpenOt: (id: number) => void;          // ← abre una OT desde importación
 }
 
 const ModuloActivo = ({
@@ -73,7 +85,9 @@ const ModuloActivo = ({
   clienteId, 
   onSelectCliente, 
   onVolver ,
-  onNavigarte
+  onNavigarte,
+  otToOpen,
+  onOpenOt,
 }: ModuloActivoProps)=> {
   switch (modulo) {
     case "administracion":
@@ -88,12 +102,15 @@ const ModuloActivo = ({
     case "cotizaciones":
       return <Cotizaciones />;
 
+    case "seguimiento":
+      return <SeguimientoComercial />;
+
     case "ordenes":
-      return <OrdenesTrabajo />;
+      return <OrdenesTrabajo otToOpen={otToOpen} />;
     case "recepcion":
       return <MainRenderers />;
     case "importarOrden":
-      return <MainRenderer2 />;
+      return <MainRenderer2 onOpenOt={onOpenOt} />;
     case "revision":
       return <RevisionCertificados/>
     case "dashboard":
@@ -101,7 +118,7 @@ const ModuloActivo = ({
     case "calibracion":
       return <CalibracionInformesMockup/>
     case "entrega":
-      return<MainRendererenv/>
+      return<MainRendererenv onOpenOt={onOpenOt} />
     case "reportes":
       return <MainRendererreport/>
     default:
@@ -114,11 +131,22 @@ const ModuloActivo = ({
 
 export const MainRenderer = () => {
 
-
+  const { hasModule } = usePermissions();
 
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
   const [cliente, setCliente] = useState<number | null>(null);
+  const [otToOpen, setOtToOpen] = useState<number | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
+
+  const puedeVer = useCallback((m: ModuleKey) => {
+    const key = permisionMapping[m];
+    return key === true || hasModule(key as string);
+  }, [hasModule]);
+
+  const navegarSeguro = useCallback((m: ModuleKey) => {
+    setActiveModule(puedeVer(m) ? m : "dashboard");
+  }, [puedeVer]);
 
 
   useEffect(() => {
@@ -141,6 +169,11 @@ const handleVolverClientes = useCallback(() => {
   setActiveModule("clientes");
 }, []);
 
+const handleOpenOt = useCallback((id: number) => {
+  setOtToOpen(id);
+  setActiveModule("ordenes");
+}, []);
+
   const handleLogout = () => {
     console.log("Cerrando sesión...");
     signOut();
@@ -157,7 +190,7 @@ const handleVolverClientes = useCallback(() => {
       {/* 2. Menú Lateral */}
       <Sidebar
         activeModule={activeModule}
-        onNavigate={(m) => setActiveModule(m)}
+        onNavigate={navegarSeguro}
         onLogout={handleLogout}
         isOpen={isSidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -169,15 +202,29 @@ const handleVolverClientes = useCallback(() => {
           moduleTitle={MODULE_TITLES[activeModule] || "Módulo"}
           isSidebarOpen={isSidebarOpen}
           setIsSidebarOpen={setSidebarOpen}
+          onOpenProfile={() => setShowProfile(true)}
         />
 
         <main className="flex-1 overflow-auto bg-[#eff5ff]">
-          <ModuloActivo modulo={activeModule}   clienteId={cliente}
-  onSelectCliente={handleSelectCliente}
-  onVolver={handleVolverClientes}  onNavigarte={(m:ModuleKey) => setActiveModule(m)} />
+          {puedeVer(activeModule) ? (
+            <ModuloActivo
+              modulo={activeModule}
+              clienteId={cliente}
+              onSelectCliente={handleSelectCliente}
+              onVolver={handleVolverClientes}
+              onNavigarte={navegarSeguro}
+              otToOpen={otToOpen}
+              onOpenOt={handleOpenOt}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-400">
+              No tienes permisos para acceder a este módulo.
+            </div>
+          )}
         </main>
       </div>
 
+      {showProfile && <Perfil onClose={() => setShowProfile(false)} />}
     </div>
   );
 };

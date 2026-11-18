@@ -1,0 +1,188 @@
+================================================================================
+ARQUITECTURA DEL SISTEMA + METODOLOGÍA PARA UNA SOLA PERSONA + CRONOGRAMA
+Laboratorio de Metrología USC — Documento técnico
+================================================================================
+
+--------------------------------------------------------------------------------
+1) ARQUITECTURA DE INFRAESTRUCTURA
+--------------------------------------------------------------------------------
+El sistema es un MONOREPO (pnpm workspace) con dos aplicaciones y servicios
+orquestados por docker-compose. Comunicación interna por red Docker; hacia el
+exterior solo se expone el puerto 80 a través de Nginx.
+
+Servicios (docker-compose.yml):
+  1. postgres_db      - PostgreSQL 16 + pgvector (datos y embeddings para IA).
+  2. redis_cache      - Redis 7 (cache + broker de colas BullMQ).
+  3. minio            - Almacenamiento de objetos S3-compatible (documentos,
+                        certificados, plantillas, sellos, respaldos).
+  4. backend          - Fastify 5 (REST :3001) + Socket.IO + listener Postgres.
+  5. worker_documentos- Worker pesado (PDF stamping, certificados, Python/LibreOffice).
+  6. worker_datos     - Worker de plantillas/Excels (plantillas.worker, límite 1GB).
+  7. worker_cron      - Tareas programadas (vencimientos, pagos, respaldo).
+  8. frontend         - Next.js 16 (:3000) + NextAuth v5 + Zustand.
+  9. nginx            - Proxy inverso (:80), enruta /api/*, /socket.io/*, MinIO.
+
+Diagrama lógico (texto):
+
+   Navegador
+      |
+      v
+   [ nginx :80 ] ---------------------------------------------------
+      |          |                 |                  |
+      v          v                 v                  v
+ [ frontend ] [ backend :3001 ] [ minio :9000 ] [ minio-ui :9001 ]
+      |             |                 ^
+      |             v                 |            (workers BullMQ)
+      +-------> [ postgres :5432 ]    |  <----------------------+
+                    |                 |                          |
+                    v                 v                          v
+              [ redis :6379 ]    [ almacenamiento ]   [ worker_documentos ]
+                 (colas)                              [ worker_datos ]
+                                                      [ worker_cron ]
+
+TIEMPO REAL (diseño actual, con doble listener):
+  - Un trigger PL/pgSQL (notify_cambio_tablas) hace pg_notify('cambio_tablas', ...)
+    tras INSERT/UPDATE/DELETE en cualquier tabla.
+  - BACKEND (postgrest-listener.ts) escucha LISTEN/NOTIFY y re-emite vía Socket.IO,
+    enrutando "notificaciones" a salas por usuario (user_room_<id>) y el resto global.
+  - FRONTEND (server.ts, custom server de dev) también escucha LISTEN/NOTIFY y
+    re-emite (listener DUPLICADO; en producción lo real es el backend).
+  - Los clientes se autentican en el handshake de Socket.IO con JWT (AUTH_SECRET).
+
+--------------------------------------------------------------------------------
+2) ARQUITECTURA DE SOFTWARE
+--------------------------------------------------------------------------------
+BACKEND (Backend/, Fastify 5 + TypeScript):
+  - Entrada: src/server.ts registra plugins y rutas.
+  - Plugins (fastify-plugin / fp): prisma, auth (@fastify/jwt + guard authenticate),
+    socket (Socket.IO), postgrest-listener, error-handler, cors, multipart.
+  - Rutas: una por dominio (clientes, cotizaciones, ordenes, recepciones,
+    calibraciones, certificados, envios, sellos, tarifas, reportes, usuarios,
+    parametros_sistema, perfil, auth, etc.) con validación Zod
+    (fastify-type-provider-zod) y esquemas en *.schemas.ts.
+  - Servicios: password (argon2), ot-fsm (máquina de estados de OT),
+    cotizacion-aprobacion, certificate-pdf, excel-generator, notificacion,
+    bitacora, recovery (OTP por Redis), consecutivo, etc.
+  - Colas/Workers (BullMQ sobre Redis): email, snapshot, stamp-pdf,
+    certificate-pdf, tarifas, generation-excel, cron, import-OT.
+  - Persistencia: Prisma (schema.prisma usa nombres de columna crudos de BD).
+  - Seguridad: Argon2id, JWT HS256 (AUTH_SECRET), RBAC por PERMISOS_JSON,
+    soft-delete, auditoría (audit_logs), bloqueo de cuenta por intentos.
+
+FRONTEND (Frontend/, Next.js 16 + React 19 + TypeScript):
+  - App Router (app/) con layout raíz, Login y dashboard por módulos.
+  - Autenticación: NextAuth v5 (Credentials + JWT de 30 min), tokens backend vía jose.
+  - Estado: Zustand (app/stores/dbstore.ts) + Context (DbProvider) para real-time.
+  - Server Actions (app/action_module/*) como capa de acceso al backend.
+  - API cliente: app/lib/api/fastifyClient.ts genera token backend y llama a Fastify.
+  - Real-time: socket.io-client con token en el handshake.
+  - UI: Tailwind CSS v4, lucide-react, recharts, Univer (hojas de cálculo).
+
+MODELO DE DATOS (entidades clave y su ciclo):
+  clientes -> cotizaciones -> ordenes_trabajo -> recepciones_equipo
+           -> calibraciones -> certificados -> (firma/sellado) -> envio
+  + tarifas, historial de estados, version_documentos, audit_logs, notificaciones,
+    parametros_sistema, document_chunks (pgvector, IA).
+
+MÁQUINAS DE ESTADO (reglas de negocio):
+  - Cotización: BORRADOR -> ENVIADA -> APROBADA -> EN_SEGUIMIENTO
+                (ENVIADA -> RECHAZADA; aprobación solo por enlace externo).
+  - OT: Creada -> En_recepción -> Asignada -> En_calibración ->
+        Certificado_en_revisión -> Certificado_aprobado -> Certificado_enviado.
+  - Certificado: PENDIENTE_REVISION -> APROBADO | RECHAZADO.
+  - Pago: PENDINDE -> PAGADO | VENCIDA (vencimiento por cron).
+
+--------------------------------------------------------------------------------
+3) METODOLOGÍA DE DESARROLLO PARA UNA SOLA PERSONA
+--------------------------------------------------------------------------------
+Recomendación: "SCRUM SOLO + KANBAN PERSONAL" (un híbrido ligero), porque el
+SCRUM clásico (ceremonias con equipo) pierde sentido sin equipo. Principios:
+
+  - Backlog único priorizado (product backlog) ordenado por valor/riesgo.
+  - Sprints/quincenas fijas con metas medibles (timebox de 1-2 semanas).
+  - Tablero Kanban simple con WIP limitado: Por hacer | En curso (máx 2) | Hecho.
+  - Timeboxing diario: bloques de foco (deep work), revisión al final del día.
+  - Definición de Hecho (DoD): compila, lint limpio, probado manualmente, commit.
+  - Priorización MoSCoW: Must / Should / Could / Won't.
+  - Registro de trabajo (log de horas/commits) para autogestión.
+  - Deuda técnica explícita: apartar 10-15% por sprint para refactor/tests.
+  - Entregas incrementales: cada sprint termina con algo desplegable/verificable.
+
+Por qué sirve para una sola persona:
+  - Menos ceremonia, más ejecución (no hay dependencias entre roles).
+  - El Kanban + WIP evita hacer varias cosas a medias (foco en una tarea compleja).
+  - El timeboxing protege tareas largas (mapeo de plantillas, importación Excel).
+  - El DoD garantiza calidad sin un QA dedicado.
+
+Herramientas sugeridas (una persona):
+  - Gestión: un solo tablero (GitHub Projects / Trello / Notion).
+  - Código: Git con ramas por feature cortas y commits atómicos.
+  - CI mínimo: lint + build en cada push (si existe runner) o script local.
+
+--------------------------------------------------------------------------------
+4) CRONOGRAMA FICTICIO (1 junio 2026 -> 30 septiembre 2026)
+--------------------------------------------------------------------------------
+Supuestos: 1 desarrollador, dedicación completa, pila ya definida (Fastify+Next+
+Prisma+Postgres+Redis+MinIO). Estimación por SDLC con sprints quincenales.
+
+FASE 1 — ANÁLISIS (Sprint 1, 1-12 jun)
+  - Levantamiento de requerimientos por módulo y reglas de negocio (FSMs).
+  - Definición de entidades, roles/permisos y documentos (R-CM005/R-CM010).
+  - Priorización MoSCoW del backlog.
+
+FASE 2 — DISEÑO (Sprint 2, 15-26 jun)
+  - Diseño de arquitectura (monorepo, capas, colas, real-time).
+  - Modelo de datos ER + esquema Prisma + enums de estados.
+  - Diseño de autenticación/autorización (NextAuth + JWT + RBAC).
+
+FASE 3 — NÚCLEO (Sprint 3, 29 jun - 10 jul)
+  - Login, sesión, bloqueo, roles, usuarios y clientes.
+  - Catálogo de tarifas. Base del dashboard.
+
+FASE 4 — FLUJO COMERCIAL (Sprint 4, 13-24 jul)
+  - Cotizaciones (crear/enviar/aprobar por enlace/versionar).
+  - Órdenes de Trabajo (FSM, asignación de técnico, consolidación R-CM05).
+
+FASE 5 — FLUJO TÉCNICO (Sprint 5, 27 jul - 7 ago)
+  - Recepción de equipos (R-CM010), calibración e informes.
+  - Revisión de certificados, firma/sellado, entrega y envío.
+
+FASE 6 — MAPEO DE PLANTILLAS (Sprint 6, 10-21 ago)  [TAREA COMPLEJA]
+  - Editor de mapeo de variables (plantilla Excel <-> datos).
+  - Generación XLSX/PDF desde plantillas, versionado y sellos.
+  - Justificación: casuística de celdas/rangos, tipos de dato, plantillas con
+    anexos dinámicos, retro-compatibilidad con plantillas existentes.
+
+FASE 7 — IMPORTACIÓN OT Y EXPORTACIONES EXCEL (Sprint 7, 24 ago - 4 sep)  [TAREA COMPLEJA]
+  - Importar OT desde .xlsx (flujos Estándar e Inverso), parseo robusto y
+    detección de cotización asociada.
+  - Exportaciones a Excel/PDF (reportes, catálogos, bitácora).
+  - Justificación: variabilidad del archivo de entrada, validaciones, manejo de
+    errores/filas, mapeo inverso y generación de consecutivos.
+
+FASE 8 — INTEGRACIÓN Y QA (Sprint 8, 7-18 sep)  [INCONCLUSA - PENDIENTE]
+  - Pruebas integrales de flujo punta a punta, correcciones, rendimiento.
+  - Pruebas de real-time (Socket.IO + NOTIFY) y de respaldos.
+  - Estado: NO iniciada / pendiente de ejecución al corte del cronograma.
+
+FASE 9 — DESPLIEGUE Y CIERRE (Sprint 9, 21-30 sep)  [INCONCLUSA - PENDIENTE]
+  - Configuración de producción (env, secretos, Nginx, SSL).
+  - Respaldo/restauración, monitoreo, documentación y capacitación.
+  - Estado: NO iniciada / pendiente de ejecución al corte del cronograma.
+
+RESUMEN DE JUSTIFICACIÓN DEL TIEMPO (SDLC):
+  - El análisis y diseño consumen ~4 semanas para fijar reglas de negocio (FSMs)
+    y el modelo de datos antes de codificar.
+  - El núcleo y los flujos consumen ~6 semanas porque abarcan 10+ módulos.
+  - El mapeo de plantillas y la importación/exportación Excel concentran ~4
+    semanas porque son las partes con mayor variabilidad, validación y casos
+    borde (son las "que se complican").
+  - QA + despliegue ~4 semanas para garantizar calidad sin equipo de QA.
+
+ESTADO DEL CRONOGRAMA AL CORTE (30 septiembre 2026):
+  - Fases 1 a 7: COMPLETAS.
+  - Fases 8 y 9 (Integración/QA y Despliegue/Cierre): INCONCLUSAS / PENDIENTES.
+
+--------------------------------------------------------------------------------
+FIN DEL DOCUMENTO
+--------------------------------------------------------------------------------

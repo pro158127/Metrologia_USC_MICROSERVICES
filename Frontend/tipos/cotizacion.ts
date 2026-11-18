@@ -20,10 +20,11 @@ export interface DetalleInput {
   normaTecnica?: string;
   cantidad: number;
   valorUnitario: number;
+  sitio?: "LABORATORIO" | "CLIENTE";
 }
 
 export interface CrearCotizacionInput {
-  codigo: string;
+  codigo?: string;
   idCliente: number;
   viaticos?: number;
   descuento?: number;
@@ -47,7 +48,8 @@ export interface ObtenerCotizacionesParams {
 /** Transiciones de estado permitidas (única fuente: server actions). */
 export const transicionesValidas: Record<Estados, Estados[]> = {
   BORRADOR: [Estados.ENVIADA],
-  ENVIADA: [Estados.APROBADA, Estados.RECHAZADA],
+  // La aprobación solo se realiza mediante el enlace externo enviado por correo.
+  ENVIADA: [Estados.RECHAZADA],
   APROBADA: [Estados.EN_SEGUIMIENTO],
   RECHAZADA: [],
   EN_SEGUIMIENTO: [],
@@ -81,7 +83,6 @@ export type ViewCotizacion = "list" | "create" | "catalog";
 export interface cambiospayload {
   descripcion: string;
   aprobo: string;
-  requiereValidacionHoja: boolean;
   observaciones?: string | null;
 }
 
@@ -89,7 +90,8 @@ export interface HistorialItem {
   id: number;
   estadoAnterior: string | null;
   estadoNuevo: string;
-  idUsuario: number;
+  idUsuario: number | null;
+  motivo?: string | null;
   createdAt: Date | string;
   usuario?: {
     nombreCompleto: string;
@@ -120,6 +122,7 @@ export type CotizacionVista = {
   updatedAt: Date | string | null;
   viaticos: number;
   descuento: number;
+  motivoRechazo: string | null;
   detalles: CotizacionDetalleVista[];
   cliente: {
     idCliente: number | null;
@@ -143,6 +146,7 @@ export interface HeaderBarProps {
   setView: (v: ViewCotizacion) => void;
   setStep: (s: number) => void;
   onNewQuote?: () => void;
+  plantillasCompletas?: boolean;
 }
 
 export interface ItemsTableProps {
@@ -204,12 +208,14 @@ export interface QuotationListTableProps {
 export interface QuotationDetailViewProps {
   selectedQuotation: CotizacionVista;
   openVersionModal: () => void;
-  showToast: (msg: string) => void;
   setSelectedQuotation: (q: CotizacionVista | null) => void;
   historialitems: HistorialItem[];
   formatCurrency: (v: number) => string;
   loadingHistorial: boolean;
   onopentable:() => void;
+  enviosCorreo: import("@/app/action_module/cotizacion").EnvioCorreoCotizacion[];
+  cargandoEnviosCorreo: boolean;
+  onReintentarCorreo: (idEnvio: number, correo: string) => Promise<void>;
   
 }
 
@@ -248,7 +254,7 @@ export interface HistorialCambioItem {
   numeroVersion: string;
   fechaCambio: string | Date;
   descripcion: string;
-  requiereValidacionHoja: boolean;
+
   observaciones?: string | null;
   aprobo: string;
   idCotizacion: number;

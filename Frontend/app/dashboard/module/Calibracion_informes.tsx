@@ -1,10 +1,12 @@
 // 1. Imports
 "use client";
 
-import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Upload, FileText, AlertTriangle, RefreshCw, ChevronDown, CheckCircle2, Clock, XCircle, Layers } from "lucide-react";
-import { useSession } from "next-auth/react";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { getMisInstrumentos, subirCertificadoCalibracion } from "@/app/action_module/calibraciones";
+import { validarArchivo } from "@/app/lib/upload";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { useSellosOperativos } from "@/app/lib/useSellosOperativos";
 import type {
   InstrumentoAsignado,
   EstadoInstrumento,
@@ -191,7 +193,11 @@ const UploadDock: React.FC<UploadDockProps> = ({
   onFileChange,
   onUpload,
 }) => {
+  const { can } = usePermissions();
+  const puedeAdjuntar = can("calibracion_e_informes", "adjuntar_pdf");
   const isDevuelto = selectedInstrumento.status === "Devuelto";
+  const bloqueadoPorEstado =
+    selectedInstrumento.status === "En revisión" || selectedInstrumento.status === "Firmado";
 
   return (
     <section className="mb-6 animate-in fade-in duration-200">
@@ -217,13 +223,20 @@ const UploadDock: React.FC<UploadDockProps> = ({
             {selectedInstrumento.equipment}
           </h3>
 
-          {isDevuelto && selectedInstrumento.motivoDevolucion && (
-            <div className="bg-rose-50/80 border border-rose-200 text-rose-900 rounded-xl p-3 text-xs flex gap-2">
-              <AlertTriangle size={16} className="text-rose-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-extrabold block">Observación del Director Técnico:</span>
-                <p className="mt-0.5 text-rose-800 italic leading-snug">{selectedInstrumento.motivoDevolucion}</p>
-              </div>
+          {isDevuelto && (selectedInstrumento.historialDevoluciones?.length ?? 0) > 0 && (
+            <div className="bg-rose-50/80 border border-rose-200 text-rose-900 rounded-xl p-3 text-xs space-y-2">
+              <span className="font-extrabold flex items-center gap-1 text-[10px]">
+                <AlertTriangle size={12} className="text-rose-600 shrink-0" /> Historial de devoluciones:
+              </span>
+              {selectedInstrumento.historialDevoluciones!.map((h) => (
+                <div key={h.id} className="border-b border-rose-100 pb-1.5 last:border-0 last:pb-0">
+                  <p className="text-rose-800 italic leading-snug">{h.motivo}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {new Date(h.fecha).toLocaleDateString("es-CO")}
+                    {h.revisor ? ` · ${h.revisor}` : ""}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
 
@@ -246,7 +259,15 @@ const UploadDock: React.FC<UploadDockProps> = ({
         </div>
 
         <div className="flex flex-col items-center justify-center border border-slate-200/80 bg-slate-50/50 p-4 rounded-xl min-h-[150px]">
-          {selectedFile ? (
+          {!puedeAdjuntar ? (
+            <span className="text-xs text-slate-400 font-bold">Sin permisos para adjuntar certificados.</span>
+          ) : bloqueadoPorEstado ? (
+            <span className="text-xs text-amber-600 font-bold text-center px-4">
+              {selectedInstrumento.status === "Firmado"
+                ? "Certificado aprobado: no se permite modificar."
+                : "Certificado en revisión: esperando respuesta."}
+            </span>
+          ) : selectedFile ? (
             <div className="text-center w-full space-y-3">
               <div className="inline-flex p-2 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200/60">
                 <FileText size={20} />
@@ -366,64 +387,30 @@ const InstrumentCard: React.FC<InstrumentCardProps> = ({
 // -----------------------------------------------------------------------------
 
 export const CalibracionInformes: React.FC = () => {
-  const { data: session } = useSession();
-  const idTecnico = Number(session?.user?.id_user);
-
-  const calibraciones = useDbTable("calibraciones");
-  const recepcionDetalles = useDbTable("recepcion_equipo_detalles");
-  const ordenes = useDbTable("ordenes_trabajo");
-  const clientes = useDbTable("clientes");
-  const certificados = useDbTable("certificados");
-  const { loadTable } = useDbActions();
-
-  useEffect(() => {
-    loadTable("certificados");
-    loadTable("ordenes_trabajo");
-    loadTable("clientes");
-    loadTable("recepcion_equipo_detalles")
-    loadTable("calibraciones")
-  }, [loadTable]);
-console.log(calibraciones,"calibracion list")
-  // ==========================================
-  // DATOS DERIVADOS DEL STORE (sin mocks)
-  // ==========================================
-  const instrumentosBase: InstrumentoAsignado[] = useMemo(() => {
-    console.log(idTecnico)
-    if (!idTecnico || Number.isNaN(idTecnico)) return [];
-    return [...calibraciones].filter((cal) => cal.idTecnico === idTecnico)
-      .map((cal) => {
-        const detalle = [...recepcionDetalles].find((r) => r.idInstrumento === cal.idInstrumento);
-        const orden = ordenes.find((o) =>
-          (o.instrumentos ?? []).some((i) => i.idDetalle === cal.idInstrumento)
-        );
-        const cliente = orden
-          ? clientes.find((c) => c.idCliente === orden.idCliente)
-          : undefined;
-        const certExiste = certificados.some((c) => c.idCalibracion === cal.idCalibracion);
-        return {
-          id: String(cal.idInstrumento),
-          estampilla: detalle?.estampilla ?? "—",
-          workOrder: orden?.codigo ?? "—",
-          equipment: detalle?.instrumento ?? "—",
-          client: cliente?.razonSocial ?? "—",
-          status: certExiste ? ("En revisión" as EstadoInstrumento) : ("Pendiente" as EstadoInstrumento),
-        };
-      });
-  }, [calibraciones, recepcionDetalles, ordenes, clientes, certificados, idTecnico]);
-
   const [instrumentos, setInstrumentos] = useState<InstrumentoAsignado[]>([]);
-  const syncedRef = useRef(false);
+  const [cargando, setCargando] = useState(true);
+  const { estado: estadoSellos, todasCompletas: sellosCompletas } = useSellosOperativos();
 
   useEffect(() => {
-    if (!syncedRef.current && instrumentosBase.length > 0) {
-      setInstrumentos(instrumentosBase);
-      syncedRef.current = true;
-    }
-  }, [instrumentosBase]);
+    let activo = true;
+    getMisInstrumentos()
+      .then((data) => {
+        if (!activo) return;
+        setInstrumentos(data);
+        setCargando(false);
+      })
+      .catch(() => {
+        if (activo) setCargando(false);
+      });
+    return () => {
+      activo = false;
+    };
+  }, []);
 
   const [selectedInstrumento, setSelectedInstrumento] = useState<InstrumentoAsignado | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [toast, setToast] = useState("");
+  const [subiendo, setSubiendo] = useState(false);
 
   const [filterWorkOrder, setFilterWorkOrder] = useState("");
   const [filterClient, setFilterClient] = useState("");
@@ -460,18 +447,56 @@ console.log(calibraciones,"calibracion list")
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setSelectedFile(e.target.files[0]);
+      const archivo = e.target.files[0];
+      const error = validarArchivo(archivo, { extensionesPermitidas: ["pdf"] });
+      if (error) {
+        showToast(`❌ ${error}`);
+        return;
+      }
+      setSelectedFile(archivo);
     }
-  }, []);
+  }, [showToast]);
 
-  const ejecutarSubidaCertificado = useCallback(() => {
+  const ejecutarSubidaCertificado = useCallback(async () => {
     if (!selectedInstrumento || !selectedFile) return;
+
+    if (
+      selectedInstrumento.status === "En revisión" ||
+      selectedInstrumento.status === "Firmado"
+    ) {
+      showToast("⚠️ No se puede subir: el certificado ya fue enviado o está aprobado.");
+      return;
+    }
+
+    if (!sellosCompletas) {
+      showToast("⚠️ Las plantillas de sello no están completas. Configúrelas en Administración → Sellos.");
+      return;
+    }
+
+    // El endpoint espera el ID de detalle de recepción (ID_INSTRUMENTO).
+    const idInstrumento = selectedInstrumento.idInstrumento;
+    if (!idInstrumento || Number.isNaN(idInstrumento)) {
+      showToast("❌ No se pudo identificar el instrumento de recepción asignado.");
+      return;
+    }
+
+    const estampillaMostrada = selectedInstrumento.estampilla;
+
+    setSubiendo(true);
+    const res = await subirCertificadoCalibracion(idInstrumento, selectedFile);
+    setSubiendo(false);
+
+    if (!res.ok) {
+      showToast(`❌ ${res.error ?? "No se pudo subir el certificado."}`);
+      return;
+    }
 
     setInstrumentos((prev) =>
       prev.map((ins) =>
-        ins.estampilla === selectedInstrumento.estampilla
+        ins.id === selectedInstrumento.id
           ? {
               ...ins,
+              idCertificado: res.idCertificado ?? ins.idCertificado,
               status: "En revisión" as EstadoInstrumento,
               fileName: selectedFile.name,
               uploadDate: new Date().toISOString().split("T")[0],
@@ -481,10 +506,10 @@ console.log(calibraciones,"calibracion list")
       )
     );
 
-    showToast(`✅ Certificado vinculado a la estampilla ${selectedInstrumento.estampilla}`);
+    showToast(`✅ PDF vinculado al instrumento ${estampillaMostrada}`);
     setSelectedFile(null);
     setSelectedInstrumento(null);
-  }, [selectedInstrumento, selectedFile, showToast]);
+  }, [selectedInstrumento, selectedFile, showToast, sellosCompletas]);
 
   const obtenerBadgeEstado = useCallback((status: EstadoInstrumento) => {
     const config: Record<EstadoInstrumento, string> = {
@@ -501,6 +526,26 @@ console.log(calibraciones,"calibracion list")
     <div className="p-6 bg-slate-50 min-h-screen font-sans text-slate-800 antialiased">
       <ToastNotification toast={toast} />
 
+      {estadoSellos && !sellosCompletas && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
+          <div className="text-xs leading-snug">
+            <p className="font-bold">Plantillas de sello incompletas</p>
+            <p className="mt-1">
+              Para subir certificados, todas las plantillas de sello deben tener su PDF (MinIO) y su
+              mapeo de caja. Ve a <span className="font-semibold">Administración → Sellos</span>.
+            </p>
+            <ul className="mt-1 list-inside list-disc text-[11px] text-amber-800">
+              {estadoSellos.detalle.filter((d) => !d.completa).map((s) => (
+                <li key={s.id}>
+                  {s.nombre}: {s.faltantes.length > 0 ? s.faltantes.join(', ') : 'incompleta'}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       <HeaderKPIs instrumentos={instrumentos} />
 
       <FilterBar
@@ -515,6 +560,12 @@ console.log(calibraciones,"calibracion list")
         setShowCDropdown={setShowCDropdown}
         sugerenciasCliente={sugerenciasCliente}
       />
+
+      {subiendo && (
+        <div className="fixed bottom-4 left-4 z-50 px-4 py-2 rounded-xl bg-[#5680F9] text-white text-xs font-bold shadow-lg">
+          Subiendo certificado...
+        </div>
+      )}
 
       {selectedInstrumento && (
         <UploadDock
@@ -541,7 +592,11 @@ console.log(calibraciones,"calibracion list")
           </span>
         </div>
 
-        {instrumentosFiltrados.length === 0 ? (
+        {cargando ? (
+          <div className="bg-white rounded-xl border border-dashed border-slate-200 p-8 text-center text-xs text-slate-400">
+            Cargando instrumentos asignados...
+          </div>
+        ) : instrumentosFiltrados.length === 0 ? (
           <div className="bg-white rounded-xl border border-dashed border-slate-200 p-8 text-center text-xs text-slate-400">
             No se encontraron instrumentos que coincidan con los filtros aplicados.
           </div>
@@ -552,7 +607,10 @@ console.log(calibraciones,"calibracion list")
                 key={ins.id}
                 instrumento={ins}
                 isSelected={selectedInstrumento?.id === ins.id}
-                onSelect={setSelectedInstrumento}
+                onSelect={(ins) => {
+                  setSelectedInstrumento(ins);
+                  setSelectedFile(null);
+                }}
                 obtenerBadgeEstado={obtenerBadgeEstado}
               />
             ))}

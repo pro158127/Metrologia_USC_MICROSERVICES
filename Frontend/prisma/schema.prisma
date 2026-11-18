@@ -1,5 +1,6 @@
 generator client {
   provider        = "prisma-client-js"
+  output          = "../generated/prisma"
   previewFeatures = ["postgresqlExtensions"]
 }
 
@@ -28,6 +29,8 @@ model Usuario {
   plantilla_version VersionPlantilla[]
   historial_estados HistorialEstadoCotizacion[]
   instrumentos_asignados OrdenTrabajoDetalle[]
+  seguimientos      SeguimientoComercial[]
+  historialDevoluciones HistorialDevolucionInforme[]
 
   @@map("usuarios")
 }
@@ -47,14 +50,40 @@ model AuditLog {
   action    String
   tableName String
   recordId  String
-  userId    Int      @map("USER_ID")
+  userId    Int?     @map("USER_ID")
   createdAt DateTime @default(now())
   details   Json
   ip        String
   id        Int      @id @default(autoincrement()) @map("ID_AUDIT")
-  user      Usuario  @relation(fields: [userId], references: [idUsuario])
+  user      Usuario? @relation(fields: [userId], references: [idUsuario])
 
   @@map("audit_logs")
+}
+
+model EmailDelivery {
+  idEnvioCorreo  Int      @id @default(autoincrement()) @map("ID_ENVIO_CORREO")
+  idCotizacion   Int?     @map("ID_COTIZACION_FK")
+  idRegistro     Int      @map("ID_REGISTRO")
+  modulo         String   @map("MODULO")
+  tipo           String   @map("TIPO")
+  destinatario   String   @map("DESTINATARIO")
+  asunto         String   @map("ASUNTO")
+  templateType   String   @map("TEMPLATE_TYPE")
+  contexto       Json     @map("CONTEXTO")
+  minioLinks     Json     @default("[]") @map("MINIO_LINKS")
+  estado         String   @default("PENDIENTE") @map("ESTADO")
+  idJob          String?  @map("ID_JOB")
+  ultimoError    String?  @map("ULTIMO_ERROR")
+  intentos       Int      @default(0) @map("INTENTOS")
+  solicitadoPor  Int?     @map("SOLICITADO_POR")
+  createdAt      DateTime @default(now()) @map("CREATED_AT")
+  updatedAt      DateTime @updatedAt @map("UPDATED_AT")
+  enviadoAt      DateTime? @map("ENVIADO_AT")
+
+  @@index([idCotizacion, createdAt])
+  @@index([idCotizacion, estado])
+  @@index([idRegistro, modulo])
+  @@map("correo_envios")
 }
 
 model Notificacion {
@@ -79,6 +108,7 @@ model Tarifa {
   historial        HistorialTarifa[]
   Norma            String     @default("n/a")
 
+  @@unique([magnitud, Instrumento, Norma, tipoServicio], name: "UQ_tarifa_identidad")
   @@map("tarifas")
 }
 
@@ -91,6 +121,7 @@ model HistorialTarifa {
   tarifa      Tarifa    @relation(fields: [idTarifa], references: [idTarifa], onDelete: Cascade)
 
   @@index([idTarifa, fechaInicio, fechaFin])
+  @@unique([idTarifa, fechaInicio], name: "UQ_tarifa_fecha_inicio")
   @@map("historial_tarifas")
 }
 
@@ -156,6 +187,7 @@ model Cotizacion {
   updatedAt    DateTime?           @updatedAt @map("UPDATED_AT")
   viaticos     Decimal?            @default(0) @db.Decimal(12, 2)
   estado       Estados             @default(BORRADOR) @map("ESTADO")
+  motivoRechazo String?            @map("MOTIVO_RECHAZO")
   enviar       Boolean        @default(false)
   descuento    Int?                @default(0)
   detalles     CotizacionDetalle[]
@@ -165,6 +197,7 @@ model Cotizacion {
   recepciones  RecepcionEquipo[]
   Historiacambios HistorialCambios[]
   historialEstados HistorialEstadoCotizacion[]
+  seguimientos SeguimientoComercial[]
 
   @@index([createdAt])
   @@map("cotizaciones")
@@ -188,12 +221,30 @@ model HistorialCambios {
   @@map("historial_cambios")
 }
 
+model HistorialDevolucionInforme {
+  idHistorialDevolucion Int          @id @default(autoincrement()) @map("ID_HISTORIAL_DEVOLUCION")
+  idCertificado         Int          @map("ID_CERTIFICADO_FK")
+  idCalibracion         Int          @map("ID_CALIBRACION_FK")
+  idUsuario             Int          @map("ID_USUARIO_FK")
+  motivo                String       @map("MOTIVO")
+  fechaDevolucion       DateTime     @default(now()) @map("FECHA_DEVOLUCION")
+
+  certificado           Certificado  @relation(fields: [idCertificado], references: [idCertificado])
+  calibracion           Calibracion  @relation(fields: [idCalibracion], references: [idCalibracion])
+  usuario               Usuario      @relation(fields: [idUsuario], references: [idUsuario])
+
+  @@index([idCertificado])
+  @@index([idCalibracion])
+  @@map("historial_devoluciones_informes")
+}
+
 model HistorialEstadoCotizacion {
   id             Int        @id @default(autoincrement()) @map("ID_HISTORIAL")
   idCotizacion   Int        @map("ID_COTIZACION_FK")
   estadoAnterior Estados?   @map("ESTADO_ANTERIOR")
   estadoNuevo    Estados    @map("ESTADO_NUEVO") @default(APROBADA)
-  idUsuario      Int        @map("ID_USUARIO_FK") 
+  idUsuario      Int?       @map("ID_USUARIO_FK")
+  motivo         String?    @map("MOTIVO")
   createdAt      DateTime   @default(now()) @map("CREATED_AT")
 
   cotizacion     Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
@@ -201,6 +252,24 @@ model HistorialEstadoCotizacion {
 
   @@index([idCotizacion])
   @@map("historial_estado_cotizacion")
+}
+
+model SeguimientoComercial {
+  idSeguimiento  Int        @id @default(autoincrement()) @map("ID_SEGUIMIENTO")
+  idCotizacion   Int        @map("ID_COTIZACION_FK")
+  tipo           String     @map("TIPO")
+  descripcion    String     @map("DESCRIPCION")
+  fechaGestion   DateTime   @default(now()) @map("FECHA_GESTION")
+  proximaGestion DateTime?  @map("PROXIMA_GESTION")
+  resultado      String?    @map("RESULTADO")
+  idUsuario      Int?       @map("ID_USUARIO_FK")
+  createdAt      DateTime   @default(now()) @map("CREATED_AT")
+
+  cotizacion     Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
+  usuario        Usuario?   @relation(fields: [idUsuario], references: [idUsuario])
+
+  @@index([idCotizacion])
+  @@map("seguimientos_comerciales")
 }
 
 
@@ -216,7 +285,7 @@ model CotizacionDetalle {
   valorUnitario     Decimal    @map("VALOR_UNITARIO") @db.Decimal(12, 2)
   valorTotal        Decimal    @map("VALOR_TOTAL") @db.Decimal(12, 2)
   cotizacion        Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
-  sitio             String?
+  sitio             sitio_calibracion? @default(LABORATORIO)
 
   @@map("cotizacion_detalles")
 }
@@ -233,6 +302,10 @@ model OrdenTrabajo {
   codigo                 String                @unique @map("CODIGO_OT")
   idCotizacion           Int?                  @map("ID_COTIZACION_FK")
   idCliente              Int?                  @map("ID_CLIENTE_FK")
+  idOrdenTrabajoPadre    Int?                  @map("ID_OT_PADRE_FK")
+  idOtRaiz               Int?                  @map("ID_OT_RAIZ")
+  version                Int                   @default(1) @map("VERSION")
+  vigente                Boolean               @default(true) @map("VIGENTE")
   correoCertificado      String?               @map("CORREO_CERTIFICADO")
   correoFactura          String?               @map("CORREO_FACTURA")
   fechaLimiteFacturacion DateTime?             @map("FECHA_LIMITE_FACTURACION")
@@ -248,6 +321,7 @@ model OrdenTrabajo {
   esInternoUSC           Boolean ?              @default(false) @map("ES_INTERNO_USC")
   esEnSitio              Boolean  ?             @default(false) @map("ES_EN_SITIO")
   esLabPermanente        Boolean  ?             @default(true) @map("ES_LAB_PERMANENTE")
+  sitioCalibracion       sitio_calibracion?     @default(LABORATORIO) @map("SITIO_CALIBRACION")
   personaContacto        String?               @map("PERSONA_CONTACTO")
   telefonoContacto       String?               @map("TELEFONO_CONTACTO")
   fechaCalibracion       DateTime?             @map("FECHA_CALIBRACION")
@@ -280,7 +354,7 @@ telefonoContacto_solcitante       String?               @map("TELEFONO_CONTACTO_
   estadoRevision         String?                @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
   motivoRechazo          String?               @map("MOTIVO_RECHAZO")
   createdAt              DateTime?             @default(now()) @map("CREATED_AT")
-  estado_pago            estadopay?             @default(PAGADO)
+  estado_pago            estadopay?             @default(PENDINDE)
   alertamessag           String?               @default("sin novedades")
   
   documentos     Documento[] @relation("OrdenDocumentos")
@@ -288,6 +362,8 @@ telefonoContacto_solcitante       String?               @map("TELEFONO_CONTACTO_
  
   cliente                Cliente?              @relation(fields: [idCliente], references: [idCliente])
   cotizacion             Cotizacion?           @relation(fields: [idCotizacion], references: [idCotizacion])
+  ordenTrabajoPadre      OrdenTrabajo?         @relation("OTPadre", fields: [idOrdenTrabajoPadre], references: [idOrdenTrabajo])
+  ordenTrabajoHijas      OrdenTrabajo[]        @relation("OTPadre")
   recepciones            RecepcionEquipo[]
   facturas               Factura[]
 
@@ -301,15 +377,18 @@ model Factura {
   numero         String        @unique @map("NUMERO_FACTURA")
   idOrdenTrabajo Int?          @map("ID_ORDEN_TRABAJO_FK")
   idCliente      Int?          @map("ID_CLIENTE_FK")
+  idDocumento    Int?          @unique @map("ID_DOCUMENTO_FK")
   fecha          DateTime      @default(now()) @map("FECHA")
   valor          Decimal       @map("VALOR") @db.Decimal(12, 2)
   estado         String        @default("EMITIDA") @map("ESTADO")
   observacion    String?       @map("OBSERVACION")
   ordenTrabajo   OrdenTrabajo? @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo])
   cliente        Cliente?      @relation(fields: [idCliente], references: [idCliente])
+  documento      Documento?    @relation(fields: [idDocumento], references: [idDocumento])
 
   @@index([idOrdenTrabajo])
   @@index([idCliente])
+  @@index([idDocumento])
   @@map("facturas")
 }
 
@@ -328,13 +407,14 @@ model OrdenTrabajoDetalle {
   unidad                 String?      @map("UNIDAD")
   intervaloRango         String?      @map("INTERVALO_RANGO")
   resolucion             String?      @map("RESOLUCION")
-  asignado                Int       
+  asignado                Int?       
   // NUEVO CAMPO AGREGADO
   declaracionConformidad Boolean      @default(false) @map("DECLARACION_CONFORMIDAD")
   asginados              Usuario?      @relation(fields: [asignado],references:[idUsuario],onDelete:Cascade)
   limiteControlEMC       String?      @map("LIMITE_CONTROL_EMC")
   docEspecificacion      String?      @map("DOC_ESPECIFICACION")
   reglaDecision          String?      @map("REGLA_DECISION")
+  sitioCalibracion       sitio_calibracion? @default(LABORATORIO) @map("sitio_calibracion")
   ordenTrabajo           OrdenTrabajo @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo], onDelete:Cascade)
 
 
@@ -346,9 +426,12 @@ model RecepcionEquipo {
   codigo               String                   @unique @map("CODIGO_RECEPCION")
   idCotizacion         Int?                     @map("ID_COTIZACION_FK")
   idOrdenTrabajo       Int?                     @map("ID_ORDEN_TRABAJO_FK")
+  idRecepcionRaiz      Int?                     @map("ID_RECEPCION_RAIZ")
+  version              Int                      @default(1) @map("VERSION")
+  vigente              Boolean                  @default(true) @map("VIGENTE")
   solicitante          String                   @map("SOLICITANTE")
   nombreEntrega        String?                  @map("NOMBRE_ENTREGA")
-  sitioCalibracion     String                   @map("SITIO_CALIBRACION")
+  sitioCalibracion     sitio_calibracion       @default(LABORATORIO) @map("SITIO_CALIBRACION")
   fechaRecepcion       DateTime                 @default(now()) @map("FECHA_RECEPCION")
   fechaSalida          DateTime?                @map("FECHA_SALIDA")
   nombreRecibe         String?                  @map("NOMBRE_RECIBE")
@@ -372,6 +455,7 @@ model RecepcionEquipo {
 model RecepcionEquipoDetalle {
   idInstrumento    Int             @id @default(autoincrement()) @map("ID_INSTRUMENTO")
   idRecepcion      Int             @map("ID_RECEPCION_FK")
+  item             Int?            @map("ITEM")
   instrumento      String          @map("INSTRUMENTO")
   marca            String?         @map("MARCA")
   modelo           String?         @map("MODELO")
@@ -398,6 +482,7 @@ model Calibracion {
   instrumento   RecepcionEquipoDetalle @relation(fields: [idInstrumento], references: [idInstrumento])
   tecnico       Usuario                @relation(fields: [idTecnico], references: [idUsuario])
   certificado   Certificado?
+  historialDevoluciones HistorialDevolucionInforme[]
 
   @@map("calibraciones")
 }
@@ -407,9 +492,15 @@ model Certificado {
   codigo        String             @unique @map("CODIGO_CERTIFICADO")
   idCalibracion Int                @unique @map("ID_CALIBRACION_FK")
   idDocumento   Int                @map("ID_DOCUMENTO_FK")
+  estadoRevision   String    @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
+  motivoRechazo    String?   @map("MOTIVO_RECHAZO")
+  idRevisor        Int?      @map("ID_REVISOR_FK")
+  revisadoAt       DateTime? @map("REVISADO_AT")
+  idPlantillaSello Int?      @map("ID_PLANTILLA_SELLO_FK")
   sellos        CertificadoSello[]
   calibracion   Calibracion        @relation(fields: [idCalibracion], references: [idCalibracion])
   documento     Documento          @relation(fields: [idDocumento], references: [idDocumento])
+  historialDevoluciones HistorialDevolucionInforme[]
 
   @@map("certificados")
 }
@@ -433,6 +524,7 @@ model Documento {
   cotizacion      Cotizacion?             @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
   orden          OrdenTrabajo? @relation("OrdenDocumentos", fields: [idOrdenTrabajo], references: [idOrdenTrabajo])
   recepcion       RecepcionEquipo?        @relation(fields: [idRecepcion], references: [idRecepcion], onDelete: Cascade)
+  factura         Factura?
   sellos          Sello[]
   versiones       VersionDocumento[]
   platillaVersion VersionPlantilla[]
@@ -449,6 +541,12 @@ model VersionPlantilla {
   idPlantilla        Int        @map("ID_PLANTILLA_FK")
   version            Int        @default(1) @map("VERSION")
   mapeoExcelJson     Json?      @map("MAPEO_EXCEL_JSON")
+  inputSchema        Json?      @map("INPUT_SCHEMA")
+  mappingConfig      Json?      @map("MAPPING_CONFIG")
+  mapeoConfig        Json?      @map("MAPEO_CONFIG")
+  estado             String     @default("PENDIENTE") @map("ESTADO")
+  procesadoEn        DateTime?  @map("PROCESADO_EN")
+  errorLog           String?    @map("ERROR_LOG")
   idUsuarioCreador   Int        @map("ID_USUARIO_CREADOR_FK")
   createdAt          DateTime   @default(now()) @map("CREATED_AT")
   iddocumentos       Int?       @map("ID_DOCUMENTOS_FK")
@@ -504,6 +602,19 @@ model CertificadoSello {
   @@map("certificado_sellos")
 }
 
+model PlantillaSello {
+  idPlantillaSello Int      @id @default(autoincrement()) @map("ID_PLANTILLA_SELLO")
+  nombre           String   @map("NOMBRE")
+  descripcion      String?  @map("DESCRIPCION")
+  templatePdfKey   String?  @map("TEMPLATE_PDF_KEY")
+  documentArea     Json?    @map("DOCUMENT_AREA")
+  watermarkAreas   Json?    @map("WATERMARK_AREAS")
+  createdAt        DateTime @default(now()) @map("CREATED_AT")
+  updatedAt        DateTime @updatedAt @map("UPDATED_AT")
+
+  @@map("plantillas_sellos")
+}
+
 enum FrecuenciaEjecucion {
   UNA_VEZ
   DIARIA
@@ -542,4 +653,9 @@ enum ProveedorAlmacenamiento {
   LOCAL
   AWS_S3
   GOOGLE_DRIVE
+}
+
+enum sitio_calibracion {
+  LABORATORIO
+  CLIENTE
 }

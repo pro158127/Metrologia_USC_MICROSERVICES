@@ -1,21 +1,47 @@
-import { S3Client } from '@aws-sdk/client-s3';
+import { S3Client,HeadBucketCommand,CreateBucketCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 
+// 1. CLIENTE INTERNO (Workers/Backend -> MinIO dentro de la red de Docker)
 export const s3Client = new S3Client({
   endpoint: process.env.MINIO_ENDPOINT || 'http://minio-storage:9000',
   region: process.env.MINIO_REGION || 'us-east-1',
   credentials: {
-    accessKeyId: process.env.MINIO_ACCESS_KEY || 'minioadmin',
-    secretAccessKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
+    accessKeyId: process.env.MINIO_ACCESS_KEY || 'admin_metrologia',
+    secretAccessKey: process.env.MINIO_SECRET_KEY || 'PasswordSegura123',
   },
   forcePathStyle: true,
 });
 
-export const BUCKET_NAME = 'documentos-metrologia';
+// 2. CLIENTE PÚBLICO (Exclusivo para presigned URLs de descarga hacia el navegador)
+export const s3ClientPublic = new S3Client({
+  endpoint: process.env.MINIO_PUBLIC_ENDPOINT || 'http://localhost:3000',
+  region: process.env.MINIO_REGION || 'us-east-1',
+  credentials: {
+    accessKeyId: process.env.MINIO_ACCESS_KEY || 'admin_metrologia',
+    secretAccessKey: process.env.MINIO_SECRET_KEY || 'PasswordSegura123',
+  },
+  forcePathStyle: true, // ✅ Obligatorio en MinIO para rutas tipo /bucket/archivo
+});
 
-/**
- * Serializa un Body de AWS S3 / MinIO a Buffer
- */
+async function asegurarBucketExiste(s3ClientParam: S3Client = s3Client, bucketName:string = "documentos-metrologia") {
+  try {
+    await s3ClientParam.send(new HeadBucketCommand({ Bucket: bucketName }));
+  } catch (error: any) {
+    const status = error?.$metadata?.httpStatusCode;
+    const nombre = error?.name;
+    const code = error?.Code;
+    if (status === 404 || nombre === "NotFound" || nombre === "NoSuchBucket" || code === "NoSuchBucket") {
+      console.log(`El bucket ${bucketName} no existe. Creándolo automáticamente...`);
+      await s3ClientParam.send(new CreateBucketCommand({ Bucket: bucketName }));
+      console.log("¡Bucket creado con éxito!");
+    } else {
+      throw error;
+    }
+  }
+}
+export { asegurarBucketExiste };
+export const BUCKET_NAME = process.env.MINIO_BUCKET_NAME || 'documentos-metrologia';
+
 export async function streamToBuffer(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {

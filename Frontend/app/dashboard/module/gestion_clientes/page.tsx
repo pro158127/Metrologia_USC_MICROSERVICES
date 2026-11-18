@@ -19,6 +19,9 @@ import type {
   ClientesModuloProps,
 } from "@/tipos/clientes";
 import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada, crearDocumento, actualizarCliente, cambiarEstadoCliente } from "@/app/action_module/modulo_cliente";
+import { subirArchivoDocumento } from "@/app/action_module/archivos";
+import { validarArchivo } from "@/app/lib/upload";
+import { toast } from "sonner";
 
 const CIUDADES_COLOMBIA = [
   "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena", 
@@ -127,7 +130,13 @@ export const ClientFormModal = ({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+      const archivo = e.target.files[0];
+      const error = validarArchivo(archivo, { extensionesPermitidas: ["pdf", "png", "jpg", "jpeg"] });
+      if (error) {
+        toast.error(error);
+        return;
+      }
+      setSelectedFile(archivo);
     }
   };
 
@@ -163,6 +172,7 @@ export const ClientFormModal = ({
               <label className="block text-slate-400 font-bold mb-1">NIT / Cédula *</label>
               <input
                 type="text"
+                inputMode="numeric"
                 value={formData.nitCedula || ""}
                 onChange={(e) => setFormData({ ...formData, nitCedula: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white outline-none focus:border-[#5680F9]"
@@ -191,7 +201,7 @@ export const ClientFormModal = ({
             <div>
               <label className="block text-slate-400 font-bold mb-1">Teléfono</label>
               <input
-                type="text"
+                type="tel"
                 value={formData.telefono || ""}
                 onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-white outline-none focus:border-[#5680F9]"
@@ -418,6 +428,7 @@ const ClientControls = ({
 export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps) {
   const clientes = useDbTable("clientes") as unknown as ClienteVista[];
   const {loadTable}=useDbActions()
+  const loadingClientes = useDbLoading("clientes");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("Todos");
   const { data: session } = useSession();
@@ -436,30 +447,15 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
   }, []);
 
   const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit") => {
-    const formData = new FormData();
     let url_ar = "";
     if (mode === "create") {
       if (data.rutFile) {
-        formData.append("file", data.rutFile as Blob);
-      }
-
-      try {
-        const response = await fetch("/api/v1/documentos/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Error HTTP: ${response.status}`);
+        const up = await subirArchivoDocumento(data.rutFile as File);
+        if (!up.ok || !up.rutaUrl) {
+          console.error("Error al subir el archivo:", up.error);
+          return;
         }
-
-        const result = await response.json();
-        console.log("Archivo subido con éxito:", result);
-
-        url_ar = result.rutaUrl || result.url || result.data?.rutaUrl || "";
-      } catch (error) {
-        console.error("Error al subir el archivo:", error);
-        return;
+        url_ar = up.rutaUrl;
       }
 
       console.log("Crear cliente con datos:", data, "Ruta URL:", url_ar);
@@ -567,7 +563,7 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
         permisos={permisos}
       />
 
-      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
@@ -579,16 +575,26 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filtered.map((c) => (
-              <CustomerTableRow
-                key={c.idCliente}
-                c={c}
-                permisos={permisos}
-                handleEdit={handleEdit}
-                handleToggleStatus={handleToggleStatus}
-                onSelectCliente={onSelectCliente}
-              />
-            ))}
+            {loadingClientes ? (
+              [1, 2, 3, 4, 5].map((n) => (
+                <tr key={n}>
+                  <td colSpan={8} className="px-4 py-3.5">
+                    <div className="h-4 rounded bg-slate-200 animate-pulse" />
+                  </td>
+                </tr>
+              ))
+            ) : (
+              filtered.map((c) => (
+                <CustomerTableRow
+                  key={c.idCliente}
+                  c={c}
+                  permisos={permisos}
+                  handleEdit={handleEdit}
+                  handleToggleStatus={handleToggleStatus}
+                  onSelectCliente={onSelectCliente}
+                />
+              ))
+            )}
           </tbody>
         </table>
       </div>

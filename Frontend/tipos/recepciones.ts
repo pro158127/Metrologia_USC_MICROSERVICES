@@ -22,16 +22,16 @@ export type {
 // Fila de instrumento del formulario (mapeada a RecepcionEquipoDetalle)
 export interface FilaInstrumento {
   id: string;
+  idInstrumento?: number;
+  item?: number | null;
   instrumento: string;
   marca: string;
   modelo: string;
   serie: string;
   codigoInterno: string;
   resolucion: string;
-  ibcE: boolean;
-  ibcT: boolean;
-  ibcD: boolean;
-  ibcA: boolean;
+  ibcE_in: boolean | null, ibcT_in: boolean | null, ibcD_in: boolean | null, ibcA_in: boolean | null,
+  ibcE_out: boolean | null, ibcT_out: boolean | null, ibcD_out: boolean | null, ibcA_out: boolean | null,
   sensorInt: boolean;
   sensorExt: boolean;
   estampilla: string;
@@ -43,6 +43,8 @@ export interface FilaInstrumento {
 
 // Estado completo del formulario de recepción
 export interface FormularioRecepcion {
+  idCliente: number | null;
+  clienteNombre: string;
   solicitante: string;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
@@ -92,6 +94,8 @@ export interface RecepcionCardProps {
 }
 
 export interface DatosGeneralesSectionProps {
+  idCliente: number | null;
+  clienteNombre: string;
   solicitante: string;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
@@ -105,11 +109,13 @@ export interface DatosGeneralesSectionProps {
   cotizaciones: CotizacionModel[];
   ordenesTrabajo: OrdenTrabajoModel[];
   onUpdateGeneral: (field: string, value: string) => void;
+  bloqueado?: boolean;
 }
 
 export interface TablaInstrumentosProps {
   instrumentos: FilaInstrumento[];
   tarifasDisponibles: TarifaModel[];
+  tecnicosInstrumentos: Array<{ item: number; instrumento: string; nombreTecnico: string }>;
   onFilaChange: (
     index: number,
     propiedad: keyof FilaInstrumento,
@@ -131,4 +137,5 @@ export interface InspeccionYFirmasSectionProps {
 export interface FormFooterActionsProps {
   actaGuardada: boolean;
   onGenerarActa: () => void;
+  guardando?: boolean;
 }

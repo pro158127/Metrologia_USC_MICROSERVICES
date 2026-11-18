@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback, useMemo, useEffectEvent } from "react
 import { Plus, Shield, X, Check, Search, FileSpreadsheet, User } from "lucide-react";
 
 import { actualizarUsuarioGenerico, crearUsuarioGenerico, restablecerContrasenaGenerico, obtenerBitacoraPorPermiso, eliminarUsuario, restaurarUsuario } from "@/app/action_module/administration";
+import { actualizarParametrosSistema } from "@/app/action_module/parametros_sistema";
 
 import type {
   AdminTab,
@@ -50,8 +51,8 @@ function RenderToast({ message }: ToastProps) {
 
 function RenderModalUsuario({ editingUser, form, setForm, onClose, onSave, rolColors }: ModalUsuarioProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.45)" }}>
-      <div className="rounded-xl p-6 w-full max-w-md" style={{ background: "#FFFFFF", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }}>
+      <div className="rounded-xl p-6 w-full max-w-md max-h-[90dvh] overflow-y-auto" style={{ background: "#FFFFFF", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
         <div className="flex items-center justify-between mb-5">
           <span style={{ color: "#1F2A44", fontSize: 16, fontWeight: 600 }}>
             {editingUser ? "Editar usuario" : "Nuevo usuario"}
@@ -186,6 +187,8 @@ function RenderTabUsuarios({
   showToast,
   rolColors,
 }: TabUsuariosProps) {
+  const { can } = usePermissions();
+  const puedeGestionarUsuarios = can("administracion", "gestionar_usuarios_roles");
   const [loadingResetId,setLoadingResetId] =
 useState<number | null>(null);
 const [showDeleted, setShowDeleted] = useState(false);
@@ -225,6 +228,7 @@ console.log(userdelted,"esto es  ")
           <span style={{ color: "#475569", fontSize: 13, fontWeight: 500 }}>
             {filteredUsers.length} usuarios
           </span>
+          {puedeGestionarUsuarios && (
           <button
             onClick={openCreate}
             className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg transition-all"
@@ -239,6 +243,7 @@ console.log(userdelted,"esto es  ")
           >
             <Plus size={15} /> Nuevo usuario
           </button>
+          )}
         </div>
       </div>
 
@@ -415,6 +420,7 @@ console.log(userdelted,"esto es  ")
 
         <td className="px-6 py-4">
 
+        {puedeGestionarUsuarios ? (
         <button
         onClick={()=>toggleEstado(
           u.idUsuario,
@@ -469,6 +475,9 @@ console.log(userdelted,"esto es  ")
 
 
         </button>
+        ) : (
+          <span className="text-xs font-semibold">{u.estado ? "Activo" : "Inactivo"}</span>
+        )}
 
         </td>
 
@@ -503,6 +512,7 @@ console.log(userdelted,"esto es  ")
 
         {/* editar */}
 
+        {puedeGestionarUsuarios && (
         <button
         onClick={()=>openEdit(u)}
         className="
@@ -530,11 +540,13 @@ console.log(userdelted,"esto es  ")
         Editar
 
         </button>
+        )}
 
 
 
         {/* reset password */}
 
+        {puedeGestionarUsuarios && (
         <button
         disabled={
           loadingResetId===u.idUsuario
@@ -624,12 +636,14 @@ console.log(userdelted,"esto es  ")
 
 
         </button>
+        )}
 
 
 
 
         {/* eliminar */}
 
+        {puedeGestionarUsuarios && (
         <button
         disabled={
           elemianarloading==u.idUsuario
@@ -717,6 +731,7 @@ console.log(userdelted,"esto es  ")
         
 
         </button>
+        )}
 
 
         </div>
@@ -853,6 +868,7 @@ console.log(userdelted,"esto es  ")
 
     <td className="px-6 py-4">
 
+        {puedeGestionarUsuarios && (
         <button
         
             className="px-3 py-2 rounded-xl cursor-pointer"
@@ -881,8 +897,9 @@ console.log(userdelted,"esto es  ")
           {loadingrestaurar===u.idUsuario ? <p>restaurando....</p>:<p>restaurar</p>}
            
 
-            
+             
         </button>
+        )}
 
     </td>
 
@@ -1401,11 +1418,14 @@ const SettingsIcon = ({ className }: { className?: string }) => (
 );
 
 export default function RenderTabConfiguracion({ configSection, setConfigSection }: TabConfiguracionProps) {
+  const { can } = usePermissions();
   const menuItems = [
-    { key: "plantillas", label: "Plantillas de documentos", icon: DocumentIcon },
-    { key: "sello", label: "Sello y marca de agua", icon: StampIcon },
-    { key: "parametros", label: "Parámetros del sistema", icon: SettingsIcon },
+    { key: "plantillas", label: "Plantillas de documentos", icon: DocumentIcon, permitido: can("administracion", "configurar_plantillas_documentos") },
+    { key: "sello", label: "Sello y marca de agua", icon: StampIcon, permitido: can("firma_sello_y_certificacion", "configurar_sello_logo_plantilla") },
+    { key: "parametros", label: "Parámetros del sistema", icon: SettingsIcon, permitido: can("administracion", "configurar_catalogo_parametros") },
   ] as const;
+
+  const itemsVisibles = menuItems.filter((item) => item.permitido);
 
   return (
     <div className="flex flex-col gap-6 w-full">
@@ -1414,7 +1434,7 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
         aria-label="Pestañas de configuración"
         className="flex items-center p-1 gap-1 w-full overflow-x-auto rounded-xl bg-slate-100/80 border border-slate-200/60 backdrop-blur-sm scrollbar-none"
       >
-        {menuItems.map((item) => {
+        {itemsVisibles.map((item) => {
           const isActive = configSection === item.key;
           const Icon = item.icon;
 
@@ -1446,9 +1466,9 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
       {/* Área de contenido */}
       <div className="flex-1 w-full min-w-0 transition-opacity duration-300 ease-in-out">
         <div key={configSection} className="animate-fade-in-up">
-          {configSection === "plantillas" && <RenderConfigPlantillas />}
-          {configSection === "sello" && <RenderConfigSello />}
-          {configSection === "parametros" && <RenderConfigParametros />}
+          {configSection === "plantillas" && can("administracion", "configurar_plantillas_documentos") && <RenderConfigPlantillas />}
+          {configSection === "sello" && can("firma_sello_y_certificacion", "configurar_sello_logo_plantilla") && <RenderConfigSello />}
+          {configSection === "parametros" && can("administracion", "configurar_catalogo_parametros") && <RenderConfigParametros />}
         </div>
       </div>
     </div>
@@ -1471,56 +1491,167 @@ function RenderConfigSello() {
 
 function RenderConfigParametros() {
   const parametros = useDbTable("parametros_sistema");
+  const { loadTable } = useDbActions();
+
   const parametrosPorClave = useMemo(() => {
     const mapa = new Map<string, ParametroSistemaModel>();
     parametros?.forEach((parametro) => mapa.set(parametro.clave, parametro));
     return mapa;
   }, [parametros]);
 
-  const valorScript = (clave: string, porDefecto: string) =>
-    parametrosPorClave.get(clave)?.codigoScript ?? porDefecto;
+  if (!parametros || parametros.length === 0) {
+    return <div className="text-sm text-slate-500">Cargando parámetros...</div>;
+  }
 
-  const secciones = [
-    {
-      title: "Alertas y notificaciones",
-      items: [
-        { label: "Días para alerta de retraso de OT", type: "number", val: valorScript("DIAS_ALERTA_RETRASO_OT", "0") },
-        { label: "Días para alerta de vencimiento de plantilla", type: "number", val: valorScript("DIAS_ALERTA_VENCIMIENTO_PLANTILLA", "0") },
-        { label: "Remitente de correos institucionales", type: "email", val: valorScript("REMITENTE_CORREOS_INSTITUCIONALES", "") },
-      ],
-    },
-    {
-      title: "Respaldo de datos",
-      items: [
-        { label: "Frecuencia de respaldo automático", type: "select", val: parametrosPorClave.get("FRECUENCIA_RESPALDO")?.frecuencia ?? "UNA_VEZ" },
-      ],
-    },
-  ];
+  return <FormParametros parametrosPorClave={parametrosPorClave} onGuardado={() => loadTable("parametros_sistema")} />;
+}
+
+function FormParametros({
+  parametrosPorClave,
+  onGuardado,
+}: {
+  parametrosPorClave: Map<string, ParametroSistemaModel>;
+  onGuardado: () => void;
+}) {
+  const [diasRechazo, setDiasRechazo] = useState(
+    parametrosPorClave.get("DIAS_RECHAZAR_COTIZACION")?.codigoScript ?? "15"
+  );
+  const [diasSeguimiento, setDiasSeguimiento] = useState(
+    parametrosPorClave.get("DIAS_SEGUIMIENTO_COTIZACION")?.codigoScript ?? "30"
+  );
+  const [frecuenciaRespaldo, setFrecuenciaRespaldo] = useState(
+    parametrosPorClave.get("FRECUENCIA_RESPALDO")?.frecuencia ?? "DIARIA"
+  );
+  const [expresionCron, setExpresionCron] = useState(
+    parametrosPorClave.get("FRECUENCIA_RESPALDO")?.expresionCron ?? ""
+  );
+  const [retencionBackups, setRetencionBackups] = useState(
+    parametrosPorClave.get("RETENCION_BACKUPS")?.codigoScript ?? "30"
+  );
+  const [mensaje, setMensaje] = useState("");
+  const [guardando, setGuardando] = useState(false);
+
+  const guardar = async () => {
+    setGuardando(true);
+    setMensaje("");
+    const res = await actualizarParametrosSistema([
+      { clave: "DIAS_RECHAZAR_COTIZACION", codigoScript: String(diasRechazo) },
+      { clave: "DIAS_SEGUIMIENTO_COTIZACION", codigoScript: String(diasSeguimiento) },
+      {
+        clave: "FRECUENCIA_RESPALDO",
+        frecuencia: frecuenciaRespaldo,
+        expresionCron: frecuenciaRespaldo === "PROGRAMADA_CRON" ? expresionCron : null,
+      },
+      { clave: "RETENCION_BACKUPS", codigoScript: String(retencionBackups) },
+    ]);
+    setGuardando(false);
+    if (res.success) {
+      setMensaje("Parámetros guardados correctamente.");
+      onGuardado();
+    } else {
+      setMensaje(res.error ?? "No se pudieron guardar los parámetros.");
+    }
+  };
 
   return (
     <div className="flex flex-col gap-5">
-      {secciones.map((section) => (
-        <div key={section.title} className="rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
-          <div style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{section.title}</div>
-          <div className="flex flex-col gap-4">
-            {section.items.map((item) => (
-              <div key={item.label}>
-                <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>{item.label}</label>
-                {item.type === "select" ? (
-                  <select defaultValue={item.val} className="px-3 py-2.5 rounded-lg" style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF" }}>
-                    {OPCIONES_FRECUENCIA.map((o) => <option key={o}>{o}</option>)}
-                  </select>
-                ) : (
-                  <input type={item.type} defaultValue={item.val} className="px-3 py-2.5 rounded-lg" style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }} />
-                )}
-              </div>
-            ))}
+      <div className="rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
+        <div style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Vencimiento de cotizaciones</div>
+        <div className="flex flex-col gap-4">
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Días para rechazar una cotización sin aprobar
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={diasRechazo}
+              onChange={(e) => setDiasRechazo(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+            />
+          </div>
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Días para pasar una cotización rechazada a seguimiento
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={diasSeguimiento}
+              onChange={(e) => setDiasSeguimiento(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+            />
           </div>
         </div>
-      ))}
+      </div>
+
+      <div className="rounded-xl p-5" style={{ background: "#FFFFFF", boxShadow: "0 2px 8px rgba(0,0,0,0.07)", border: "1px solid #F1F5F9" }}>
+        <div style={{ color: "#1F2A44", fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Respaldo de datos</div>
+        <div className="flex flex-col gap-4">
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Frecuencia de respaldo automático
+            </label>
+            <select
+              value={frecuenciaRespaldo}
+              onChange={(e) => setFrecuenciaRespaldo(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF" }}
+            >
+              {OPCIONES_FRECUENCIA.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </div>
+          {frecuenciaRespaldo === "PROGRAMADA_CRON" && (
+            <div>
+              <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+                Expresión cron
+              </label>
+              <input
+                type="text"
+                value={expresionCron}
+                onChange={(e) => setExpresionCron(e.target.value)}
+                placeholder="0 2 * * *"
+                className="px-3 py-2.5 rounded-lg"
+                style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+              />
+            </div>
+          )}
+          <div>
+            <label style={{ color: "#374151", fontSize: 13, fontWeight: 500, display: "block", marginBottom: 5 }}>
+              Retención de respaldos (días)
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={retencionBackups}
+              onChange={(e) => setRetencionBackups(e.target.value)}
+              className="px-3 py-2.5 rounded-lg"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", minWidth: 240 }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {mensaje && (
+        <div className="rounded-xl px-4 py-3 text-sm" style={{ background: mensaje.includes("guardados") ? "#ECFDF5" : "#FEF2F2", color: mensaje.includes("guardados") ? "#047857" : "#B91C1C" }}>
+          {mensaje}
+        </div>
+      )}
+
       <div className="flex justify-end">
-        <button className="px-6 py-3 rounded-xl" style={{ background: "#5680F9", color: "#FFFFFF", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>
-          Guardar parámetros
+        <button
+          onClick={guardar}
+          disabled={guardando}
+          className="px-6 py-3 rounded-xl"
+          style={{ background: "#5680F9", color: "#FFFFFF", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer", opacity: guardando ? 0.6 : 1 }}
+        >
+          {guardando ? "Guardando..." : "Guardar parámetros"}
         </button>
       </div>
     </div>
@@ -1532,11 +1663,11 @@ function RenderConfigParametros() {
 // 4. COMPONENTE PRINCIPAL
 // ==========================================
 
-import { module_permission } from "@/app/server_component/controlle_permission";
 import { useSession } from "next-auth/react";
 import { generarTokenBackend } from "@/app/lib/auth-token";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 // 🔄 Reemplazar useDbRealtime por los nuevos hooks
-import { UsuarioModel, useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { UsuarioModel, useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import { warn } from "console";
 
 // ==========================================
@@ -1555,14 +1686,13 @@ export function Administracion() {
   const [tokenPromise, setTokenPromise] = useState("");
 
   const { data: session } = useSession();
+  const { can, canAny } = usePermissions();
 
   // Store Subscriptions
   const usuarios = useDbTable("usuarios");
   const roles = useDbTable("roles");
   const { loadAllData, loadTable } = useDbActions();
-
-  const permisos = session?.user?.permissions;
-  const permission = useMemo(() => module_permission(permisos), [permisos]);
+  const loadingUsuarios = useDbLoading("usuarios");
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -1579,13 +1709,14 @@ export function Administracion() {
   // 2. Permisos memorizados para evitar re-calculo y loops en useEffect
   const tab_permission = useMemo(() => {
     return {
-      usuarios: !!permission?.administracion?.gestionar_usuarios_roles,
-      bitacora: !!permission?.administracion?.consultar_bitacora_auditoria,
-      config:
-        !!permission?.administracion?.configurar_catalogo_parametros ||
-        !!permission?.administracion?.configurar_plantillas_documentos,
+      usuarios: can("administracion", "gestionar_usuarios_roles"),
+      bitacora: can("administracion", "consultar_bitacora_auditoria"),
+      config: canAny("administracion", [
+        "configurar_catalogo_parametros",
+        "configurar_plantillas_documentos",
+      ]),
     };
-  }, [permission]);
+  }, [can, canAny]);
 
   // 3. Creación de Token de Sesión
   useEffect(() => {
@@ -1598,7 +1729,7 @@ export function Administracion() {
       user: {
         id: session?.user?.id_user ?? "",
         email: session?.user?.email ?? "",
-        permissions: { permisos: { administracion: { consultar_bitacora_auditoria: true } } },
+        permissions: session?.user?.permissions ?? {},
       },
     }).then((t) => {
       if (isMounted && t) setTokenPromise(t);
@@ -1790,16 +1921,24 @@ console.log("LONGITUD FILTRADOS:", filteredUsers.length);
 
       {/* Vistas */}
       {tab === "usuarios" && (
-        <RenderTabUsuarios
-          search={search}
-          setSearch={setSearch}
-          filteredUsers={filteredUsers}
-          openCreate={openCreate}
-          openEdit={openEdit}
-          toggleEstado={toggleEstado}
-          showToast={showToast}
-          rolColors={rolColors}
-        />
+        loadingUsuarios ? (
+          <div className="space-y-2 animate-pulse">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div key={n} className="h-12 rounded-lg bg-slate-200" />
+            ))}
+          </div>
+        ) : (
+          <RenderTabUsuarios
+            search={search}
+            setSearch={setSearch}
+            filteredUsers={filteredUsers}
+            openCreate={openCreate}
+            openEdit={openEdit}
+            toggleEstado={toggleEstado}
+            showToast={showToast}
+            rolColors={rolColors}
+          />
+        )
       )}
 
       {tab === "bitacora" && (

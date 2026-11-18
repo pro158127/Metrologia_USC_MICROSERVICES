@@ -23,4 +23,20 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  overscroll-behavior: contain;
+}
+
+/* Área táctil mínima recomendada (44x44px) para botones/iconos de acción. */
+.touch-target {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Oculta la barra de scroll manteniendo el desplazamiento (usada en sidebar/drawers). */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

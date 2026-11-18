@@ -5,32 +5,41 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
-  Folder,
   ArrowLeft,
   Search,
-  File,
   FileSpreadsheet,
   Eye,
   Filter,
-  Calendar,
   Building2,
   Mail,
   Phone,
   User,
   MapPin,
   X,
+  Download,
+  Folder,
+  FolderOpen,
+  ClipboardList,
+  Wrench,
+  CheckCircle2,
+  History,
 } from "lucide-react";
 import Link from "next/link";
 import type { Estados } from "@/tipos/enums";
 import type {
-  FileNode,
-  FileTreeNodeProps,
   DocumentConfig,
   CotizacionCardProps,
   TrazabilidadCliente,
   TrazabilidadCotizacionCard,
   ClienteDetailPageProps,
 } from "@/tipos/clientes";
+import {
+  obtenerDocumentosCotizacion,
+  type DocumentoItem,
+  type DocumentoCertificadoItem,
+  type DocumentosCotizacionCategorias,
+} from "@/app/action_module/modulo_cliente";
+import { generarUrlArchivo } from "@/app/action_module/archivos";
 
 // ========== ESTADOS DE FILTRO ==========
 const estadoOptions = [
@@ -56,43 +65,153 @@ export const createDocumentConfig = (
   ...overrides,
 });
 
-// ========== COMPONENTE RECURSIVO DE ARCHIVOS ==========
-const FileTreeNode = ({ node }: FileTreeNodeProps) => {
-  const [isOpen, setIsOpen] = useState(false);
+// ========== CATEGORÍAS DE DOCUMENTOS (CARPETAS / ACORDEÓN) ==========
+type CategoriaKey = keyof DocumentosCotizacionCategorias["categorias"];
 
-  if (node.type === "file") {
-    const isExcel = node.name.endsWith(".xlsx") || node.name.endsWith(".xls");
-    const Icon = isExcel ? FileSpreadsheet : FileText;
-    return (
-      <div className="flex items-center gap-2 py-1.5 px-2 rounded-md text-xs text-slate-600 hover:bg-slate-100/80 transition-colors cursor-pointer group">
-        <Icon size={14} className={isExcel ? "text-emerald-600" : "text-rose-500"} />
-        <span className="truncate group-hover:text-slate-900 font-medium">{node.name}</span>
-      </div>
-    );
-  }
+const CARPETA_FOLDERS: { key: CategoriaKey; label: string }[] = [
+  { key: "cotizacion", label: "Cotización" },
+  { key: "ordenTrabajo", label: "Órdenes de trabajo" },
+  { key: "recepcion", label: "Recepciones" },
+  { key: "certificados", label: "Certificados" },
+  { key: "comprobantes", label: "Comprobantes de pago" },
+];
+
+const esExcel = (nombre: string, mimeType?: string | null, rutaUrl?: string | null) =>
+  /\.(xlsx|xls)$/i.test(nombre) ||
+  /spreadsheet|excel/i.test(mimeType ?? "") ||
+  /\.(xlsx|xls)(\?|$)/i.test(rutaUrl ?? "");
+
+const esPdf = (nombre: string, mimeType?: string | null, rutaUrl?: string | null) =>
+  /\.pdf$/i.test(nombre) ||
+  (mimeType ?? "") === "application/pdf" ||
+  /\.pdf(\?|$)/i.test(rutaUrl ?? "");
+
+// ========== LÍNEA DE TIEMPO DE TRAZABILIDAD DE CERTIFICADO ==========
+const TimelineCertificado = ({
+  item,
+  onVerArchivo,
+}: {
+  item: DocumentoCertificadoItem;
+  onVerArchivo: (rutaUrl: string, nombre: string, mimeType?: string | null) => void;
+}) => {
+  const t = item.trazabilidad;
+  const fmt = (d: string | null) =>
+    d
+      ? new Date(d).toLocaleDateString("es-CO", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        })
+      : "—";
+
+  const pasos = [
+    {
+      titulo: "Recepción",
+      icono: <ClipboardList size={12} />,
+      detalle: [
+        t.instrumento ? `Instrumento: ${t.instrumento}` : null,
+        t.serie ? `Serie: ${t.serie}` : null,
+      ],
+    },
+    {
+      titulo: "Calibración",
+      icono: <Wrench size={12} />,
+      detalle: [
+        `Fecha: ${fmt(t.fechaCalibracion)}`,
+        t.tecnico ? `Técnico: ${t.tecnico}` : null,
+      ],
+    },
+    {
+      titulo: "Revisión",
+      icono: <CheckCircle2 size={12} />,
+      detalle: [
+        `Estado: ${t.estadoRevision}`,
+        `Fecha: ${fmt(t.revisadoAt)}`,
+        t.revisor ? `Revisor: ${t.revisor}` : null,
+        t.motivoRechazo ? `Motivo de rechazo: ${t.motivoRechazo}` : null,
+      ],
+    },
+  ];
 
   return (
-    <div className="pl-1">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 py-1.5 px-2 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-md transition-colors w-full text-left"
-      >
-        {isOpen ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
-        <Folder size={14} className="text-amber-500 fill-amber-500/20" />
-        <span className="truncate">{node.name}</span>
-        {node.children && (
-          <span className="ml-auto text-[10px] bg-slate-200/60 text-slate-600 px-1.5 py-0.2 rounded-full font-semibold">
-            {node.children.length}
-          </span>
-        )}
-      </button>
-      {isOpen && node.children && (
-        <div className="border-l border-slate-200 ml-3.5 pl-1.5 space-y-0.5 mt-0.5">
-          {node.children.map((child, idx) => (
-            <FileTreeNode key={idx} node={child} />
+    <div className="space-y-4 overflow-y-auto max-h-[65vh] pr-1">
+      {/* Recepción -> Calibración -> Revisión */}
+      <div className="relative pl-6">
+        <div className="absolute left-2 top-1 bottom-1 w-px bg-slate-200" />
+        <div className="space-y-4">
+          {pasos.map((p) => (
+            <div key={p.titulo} className="relative">
+              <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center">
+                {p.icono}
+              </div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-700">
+                {p.titulo}
+              </p>
+              <div className="mt-1 space-y-0.5">
+                {p.detalle.filter(Boolean).map((d, i) => (
+                  <p key={i} className="text-[11px] text-slate-500">
+                    {d}
+                  </p>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
-      )}
+      </div>
+
+      {/* Versiones */}
+      <div className="border-t border-slate-100 pt-3">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-2">
+          Versiones
+        </p>
+        {t.versiones.length === 0 ? (
+          <p className="text-[11px] text-slate-400">Sin versiones registradas.</p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {t.versiones.map((v) => (
+              <div
+                key={v.idVersion}
+                className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md bg-slate-50 border border-slate-100"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
+                    v{v.version}
+                  </span>
+                  <span className="text-[11px] text-slate-600 truncate">{v.usuario ?? "—"}</span>
+                  <span className="text-[10px] text-slate-400 shrink-0">{fmt(v.createdAt)}</span>
+                </div>
+                <button
+                  onClick={() => onVerArchivo(v.rutaUrl, `${item.codigoCertificado} (v${v.version})`, item.mimeType)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
+                >
+                  <Eye size={12} /> Ver
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Sellos */}
+      <div className="border-t border-slate-100 pt-3">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-2">
+          Sellos
+        </p>
+        {t.sellos.length === 0 ? (
+          <p className="text-[11px] text-slate-400">Sin sellos asociados.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {t.sellos.map((s) => (
+              <span
+                key={s}
+                className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full"
+              >
+                {s}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -100,6 +219,14 @@ const FileTreeNode = ({ node }: FileTreeNodeProps) => {
 // ========== CARD DE COTIZACIÓN ==========
 const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
   const [showFiles, setShowFiles] = useState(false);
+  const [docs, setDocs] = useState<DocumentosCotizacionCategorias["categorias"] | null>(null);
+  const [cargando, setCargando] = useState(false);
+  const [openFolder, setOpenFolder] = useState<CategoriaKey | null>(null);
+  const [viewer, setViewer] = useState<{ url: string | null; nombre: string; cargando: boolean } | null>(
+    null
+  );
+  const [descargando, setDescargando] = useState<string | null>(null);
+  const [timeline, setTimeline] = useState<DocumentoCertificadoItem | null>(null);
 
   const statusMap: Record<Estados, { label: string; style: string }> = {
     BORRADOR: { label: "Borrador", style: "bg-slate-100 text-slate-700 border-slate-200" },
@@ -109,61 +236,256 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
     EN_SEGUIMIENTO: { label: "En seguimiento", style: "bg-amber-50 text-amber-700 border-amber-200" },
   };
 
-  const archivos = useMemo<FileNode[]>(() => {
-    return (cotizacion.documentos ?? []).map((d) => ({
-      name: d.nombre,
-      type: "file" as const,
-    }));
-  }, [cotizacion.documentos]);
+  const cargarDocumentos = useCallback(async () => {
+    setCargando(true);
+    const data = await obtenerDocumentosCotizacion(cotizacion.idCotizacion);
+    setDocs(data?.categorias ?? null);
+    setCargando(false);
+  }, [cotizacion.idCotizacion]);
+
+  const toggleFiles = useCallback(() => {
+    const next = !showFiles;
+    setShowFiles(next);
+    if (next && !docs && !cargando) cargarDocumentos();
+  }, [showFiles, docs, cargando, cargarDocumentos]);
+
+  const abrirPdf = useCallback(async (rutaUrl: string, nombre: string) => {
+    setViewer({ url: null, nombre, cargando: true });
+    const url = await generarUrlArchivo(rutaUrl);
+    setViewer({ url, nombre, cargando: false });
+  }, []);
+
+  const descargarArchivo = useCallback(async (rutaUrl: string, nombre: string) => {
+    setDescargando(rutaUrl);
+    const url = await generarUrlArchivo(rutaUrl);
+    setDescargando(null);
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nombre;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, []);
+
+  const verArchivo = useCallback(
+    (rutaUrl: string, nombre: string, mimeType?: string | null) => {
+      if (esExcel(nombre, mimeType, rutaUrl)) {
+        descargarArchivo(rutaUrl, nombre);
+      } else if (esPdf(nombre, mimeType, rutaUrl)) {
+        abrirPdf(rutaUrl, nombre);
+      } else {
+        descargarArchivo(rutaUrl, nombre);
+      }
+    },
+    [descargarArchivo, abrirPdf]
+  );
 
   const status = statusMap[cotizacion.estado];
+  const totalDocs = docs
+    ? CARPETA_FOLDERS.reduce((acc, t) => acc + docs[t.key].length, 0)
+    : (cotizacion.documentos?.length ?? 0);
 
   return (
-    <div className="group rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all duration-200 flex flex-col justify-between">
-      <div>
-        {/* Header con código y estado */}
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <span className="text-[11px] font-semibold tracking-wider font-mono text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-md">
-            {cotizacion.codigo}
-          </span>
-          <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold border ${status.style}`}>
-            {status.label}
-          </span>
-        </div>
-
-        {/* Título */}
-        <h3 className="font-semibold text-sm text-slate-800 group-hover:text-blue-600 transition-colors leading-snug mb-3">
-          {cotizacion.titulo}
-        </h3>
-
-        {/* Fecha */}
-        <div className="text-xs text-slate-500 font-medium flex items-center gap-1.5 mb-4">
-          <Calendar size={13} className="text-slate-400" />
-          <span>Finaliza: <strong className="text-slate-700 font-semibold">{cotizacion.fechaFin}</strong></span>
-        </div>
-      </div>
-
-      {/* Adjuntos */}
-      <div className="border-t border-slate-100 pt-3 mt-2">
-        <button
-          onClick={() => setShowFiles(!showFiles)}
-          className="flex items-center justify-between w-full text-xs font-semibold text-slate-600 hover:text-blue-600 transition-colors"
-        >
-          <span className="flex items-center gap-1.5">
-            <File size={14} className="text-slate-400" />
-            Archivos Adjuntos ({archivos.length})
-          </span>
+    <div className="rounded-xl border border-slate-200/80 bg-white overflow-hidden">
+      <button
+        onClick={toggleFiles}
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 transition-colors text-left cursor-pointer"
+      >
+        <span className="text-slate-400 shrink-0">
           {showFiles ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </button>
-
-        {showFiles && (
-          <div className="mt-3 p-2 bg-slate-50/80 rounded-xl border border-slate-100 max-h-56 overflow-y-auto">
-            {archivos.map((file, idx) => (
-              <FileTreeNode key={idx} node={file} />
-            ))}
-          </div>
+        </span>
+        {showFiles ? (
+          <FolderOpen size={15} className="text-blue-500 shrink-0" />
+        ) : (
+          <Folder size={15} className="text-slate-400 shrink-0" />
         )}
-      </div>
+        <span className="text-[11px] font-semibold tracking-wide font-mono text-blue-600 shrink-0">
+          {cotizacion.codigo}
+        </span>
+        <span className="text-xs text-slate-700 truncate flex-1 min-w-0 font-medium">
+          {cotizacion.titulo}
+        </span>
+        <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold border shrink-0 ${status.style}`}>
+          {status.label}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0 hidden sm:inline">
+          {cotizacion.fechaFin}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0">
+          {totalDocs} docs
+        </span>
+      </button>
+
+      {showFiles && (
+        <div className="p-2 bg-slate-50/60 border-t border-slate-100">
+          {cargando ? (
+            <div className="text-[11px] text-slate-400 py-4 text-center">Cargando documentos...</div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {CARPETA_FOLDERS.map((f) => {
+                const items = docs ? docs[f.key] : [];
+                const abierto = openFolder === f.key;
+                return (
+                  <div key={f.key} className="rounded-lg border border-slate-100 bg-white">
+                    <button
+                      onClick={() => setOpenFolder(abierto ? null : f.key)}
+                      className="flex items-center justify-between w-full px-2.5 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {abierto ? (
+                          <FolderOpen size={14} className="text-blue-500 shrink-0" />
+                        ) : (
+                          <Folder size={14} className="text-slate-400 shrink-0" />
+                        )}
+                        {f.label}
+                        {docs ? ` (${items.length})` : ""}
+                      </span>
+                      {abierto ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    </button>
+
+                    {abierto &&
+                      (items.length === 0 ? (
+                        <div className="text-[11px] text-slate-400 py-3 text-center">
+                          No hay documentos en esta carpeta.
+                        </div>
+                      ) : f.key === "certificados" ? (
+                        <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
+                          {(items as DocumentoCertificadoItem[]).map((cert) => (
+                            <div
+                              key={cert.idCertificado}
+                              className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md hover:bg-slate-50"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileText size={14} className="text-rose-500 shrink-0" />
+                                <span className="truncate text-xs text-slate-700 font-medium">
+                                  {cert.nombre}
+                                </span>
+                                <span className="text-[10px] text-slate-400 shrink-0">
+                                  {cert.versiones[0] ? `v${cert.versiones[0].version}` : ""}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => setTimeline(cert)}
+                                className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
+                              >
+                                <History size={12} /> Trazabilidad
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
+                          {(items as DocumentoItem[]).map((doc) => {
+                            const excel = esExcel(doc.nombre, doc.mimeType, doc.rutaUrl);
+                            const pdf = esPdf(doc.nombre, doc.mimeType, doc.rutaUrl);
+                            return (
+                              <div
+                                key={doc.idDocumento}
+                                className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md hover:bg-slate-50"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  {excel ? (
+                                    <FileSpreadsheet size={14} className="text-emerald-600 shrink-0" />
+                                  ) : (
+                                    <FileText size={14} className="text-rose-500 shrink-0" />
+                                  )}
+                                  <span className="truncate text-xs text-slate-700 font-medium">
+                                    {doc.nombre}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 shrink-0">
+                                    v{doc.versionActual}
+                                  </span>
+                                </div>
+
+                                {excel ? (
+                                  <button
+                                    onClick={() => descargarArchivo(doc.rutaUrl, doc.nombre)}
+                                    disabled={descargando === doc.rutaUrl}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-emerald-700 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 disabled:opacity-50 shrink-0"
+                                  >
+                                    <Download size={12} />
+                                    {descargando === doc.rutaUrl ? "..." : "Descargar"}
+                                  </button>
+                                ) : pdf ? (
+                                  <button
+                                    onClick={() => abrirPdf(doc.rutaUrl, doc.nombre)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
+                                  >
+                                    <Eye size={12} /> Ver
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 shrink-0">
+                                    No previsualizable
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Visor de PDF (mismo componente FileViewer que el RUT) */}
+      {viewer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 md:p-8">
+          <div className="relative w-full max-w-5xl h-dvh sm:h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+              <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider truncate">
+                {viewer.nombre}
+              </h3>
+              <button
+                onClick={() => setViewer(null)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all text-xs font-bold border border-rose-200 cursor-pointer"
+              >
+                <X size={18} className="text-rose-600 shrink-0" /> Cerrar
+              </button>
+            </div>
+            <div className="flex-1 w-full h-full overflow-hidden bg-slate-100 p-2">
+              {viewer.cargando || !viewer.url ? (
+                <div className="h-full w-full flex items-center justify-center text-xs text-slate-500">
+                  {viewer.cargando ? "Generando visor..." : "No se pudo cargar el documento."}
+                </div>
+              ) : (
+                <FileViewer kind="pdf" fileUrl={viewer.url} height="100%" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de trazabilidad del certificado */}
+      {timeline && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 md:p-8">
+          <div className="relative w-full max-w-lg max-h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider truncate">
+                  Trazabilidad del Certificado
+                </h3>
+                <p className="text-[11px] font-mono text-blue-600 truncate mt-0.5">
+                  {timeline.codigoCertificado}
+                </p>
+              </div>
+              <button
+                onClick={() => setTimeline(null)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all text-xs font-bold border border-rose-200 cursor-pointer shrink-0"
+              >
+                <X size={18} className="text-rose-600 shrink-0" /> Cerrar
+              </button>
+            </div>
+            <div className="flex-1 w-full h-full overflow-hidden bg-slate-100 p-4">
+              <TimelineCertificado item={timeline} onVerArchivo={verArchivo} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -201,27 +523,39 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
   const filteredCotizaciones = useMemo<TrazabilidadCotizacionCard[]>(() => {
     if (!trazabilidad?.cotizaciones) return [];
 
-    return trazabilidad.cotizaciones.filter((cot) => {
-      const matchCodigo = cot?.codigo
-        ?.toLowerCase()
-        .includes(searchCodigo.toLowerCase());
-      const matchEstado =
-        filterEstado === "TODOS" || cot?.estado === filterEstado;
-      return matchCodigo && matchEstado;
-    });
+    return trazabilidad.cotizaciones
+      .filter((cot) => {
+        const matchCodigo = cot?.codigo
+          ?.toLowerCase()
+          .includes(searchCodigo.toLowerCase());
+        const matchEstado =
+          filterEstado === "TODOS" || cot?.estado === filterEstado;
+        return matchCodigo && matchEstado;
+      })
+      .map((cot) => {
+        const detalles = cot.detalles ?? [];
+        const primero = detalles[0]?.equipoDescripcion || "Servicio de calibración";
+        const titulo =
+          detalles.length > 1 ? `${primero} (+${detalles.length - 1})` : primero;
+        const fecha = cot.updatedAt ?? cot.createdAt;
+        const fechaFin = fecha ? new Date(fecha).toLocaleDateString("es-CO") : "—";
+        return { ...cot, titulo, fechaFin };
+      });
   }, [searchCodigo, filterEstado, trazabilidad]);
 
-  const handleViewRut = useCallback((trazabilidad: TrazabilidadCliente | null) => {
-    console.log("Abrir visor de RUT para cliente:", trazabilidad?.razonSocial, trazabilidad?.rutDocumento?.rutaUrl);
-
-    setConfig(createDocumentConfig({
-      apiBaseUrl: '/api/v1/pdf/ver/',
-      fileId: trazabilidad?.rutDocumento?.rutaUrl || '',
-      kind: "pdf",
-    }));
-    console.log("Configuración del visor de RUT:", config);
+  const handleViewRut = useCallback(async (t: TrazabilidadCliente | null) => {
+    const key = t?.rutDocumento?.rutaUrl;
+    const url = key ? await generarUrlArchivo(key) : null;
+    setConfig(
+      createDocumentConfig({
+        apiBaseUrl: '/api/v1',
+        fileId: '',
+        fileUrl: url ?? undefined,
+        kind: 'pdf',
+      })
+    );
     setIsOpenDocumento(true);
-  }, [config]);
+  }, []);
 
   return (
     <div className="w-full max-w-7xl mx-auto p-6 space-y-6 bg-slate-50/50 min-h-screen">
@@ -355,21 +689,21 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
             No se encontraron cotizaciones con los criterios seleccionados.
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="flex flex-col gap-2">
             {filteredCotizaciones?.map((cot) => (
               <CotizacionCard key={cot.idCotizacion} cotizacion={cot} />
             ))}
           </div>
         )}
       </div>
-      
+
       {/* visor del documento*/}
 {is_open_documento && (
   // 1. Overlay oscuro de fondo que cubre toda la pantalla
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 md:p-8">
     
    
-    <div className="relative w-full max-w-5xl h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div className="relative w-full max-w-5xl h-dvh sm:h-[85vh] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
       
 
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
@@ -393,12 +727,14 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
           kind={config.kind}  
           apiBaseUrl={config.apiBaseUrl}  
           fileId={config.fileId}  
+          fileUrl={config.fileUrl}
         />
       </div>
 
     </div>
   </div>
 )}
+
     </div>
     
   );
