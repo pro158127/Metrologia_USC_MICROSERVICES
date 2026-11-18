@@ -159,16 +159,16 @@ const TimelineCertificado = ({
         </div>
       </div>
 
-      {/* Versiones */}
+      {/* Versiones anteriores; la versión vigente se abre desde la categoría. */}
       <div className="border-t border-slate-100 pt-3">
         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-2">
-          Versiones
+          Trazabilidad · versiones anteriores
         </p>
-        {t.versiones.length === 0 ? (
+        {t.versiones.filter((v) => v.version !== item.versiones[0]?.version).length === 0 ? (
           <p className="text-[11px] text-slate-400">Sin versiones registradas.</p>
         ) : (
           <div className="flex flex-col gap-1">
-            {t.versiones.map((v) => (
+            {t.versiones.filter((v) => v.version !== item.versiones[0]?.version).map((v) => (
               <div
                 key={v.idVersion}
                 className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md bg-slate-50 border border-slate-100"
@@ -222,6 +222,7 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
   const [docs, setDocs] = useState<DocumentosCotizacionCategorias["categorias"] | null>(null);
   const [cargando, setCargando] = useState(false);
   const [openFolder, setOpenFolder] = useState<CategoriaKey | null>(null);
+  const [openHistoryFolder, setOpenHistoryFolder] = useState<CategoriaKey | null>(null);
   const [viewer, setViewer] = useState<{ url: string | null; nombre: string; cargando: boolean } | null>(
     null
   );
@@ -365,6 +366,15 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                                   {cert.versiones[0] ? `v${cert.versiones[0].version}` : ""}
                                 </span>
                               </div>
+                              {cert.rutaUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => abrirPdf(cert.rutaUrl!, cert.nombre)}
+                                  className="flex shrink-0 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-600 hover:bg-slate-100 cursor-pointer"
+                                >
+                                  <Eye size={12} /> Ver vigente
+                                </button>
+                              )}
                               <button
                                 onClick={() => setTimeline(cert)}
                                 className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
@@ -375,8 +385,9 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                           ))}
                         </div>
                       ) : (
-                        <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
-                          {(items as DocumentoItem[]).map((doc) => {
+                        <>
+                          <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
+                            {(items as DocumentoItem[]).map((doc) => {
                             const excel = esExcel(doc.nombre, doc.mimeType, doc.rutaUrl);
                             const pdf = esPdf(doc.nombre, doc.mimeType, doc.rutaUrl);
                             return (
@@ -422,7 +433,55 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                               </div>
                             );
                           })}
-                        </div>
+                          </div>
+                          {(() => {
+                            const historicos = (items as DocumentoItem[]).flatMap((doc) =>
+                              doc.versiones
+                                .filter((version) => version.version !== doc.versionActual)
+                                .map((version) => ({ doc, version }))
+                            );
+                            const historialAbierto = openHistoryFolder === f.key;
+                            return (
+                              <div className="mx-2 mb-2 rounded-md border border-slate-100 bg-slate-50">
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenHistoryFolder(historialAbierto ? null : f.key)}
+                                  className="flex w-full items-center gap-1.5 px-2.5 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500 hover:text-blue-600 cursor-pointer"
+                                >
+                                  {historialAbierto ? <FolderOpen size={13} /> : <Folder size={13} />}
+                                  Trazabilidad
+                                  <span className="font-medium normal-case tracking-normal">({historicos.length} versiones anteriores)</span>
+                                  {historialAbierto ? <ChevronDown size={12} className="ml-auto" /> : <ChevronRight size={12} className="ml-auto" />}
+                                </button>
+                                {historialAbierto && (
+                                  historicos.length === 0 ? (
+                                    <p className="px-3 pb-2 text-[10px] text-slate-400">No hay versiones anteriores.</p>
+                                  ) : (
+                                    <div className="flex max-h-48 flex-col gap-1 overflow-y-auto px-2 pb-2">
+                                      {historicos.map(({ doc, version }) => (
+                                        <div key={`${doc.idDocumento}-${version.idVersion}`} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5">
+                                          <div className="flex min-w-0 items-center gap-2">
+                                            <History size={12} className="shrink-0 text-slate-400" />
+                                            <span className="truncate text-[10px] text-slate-600">{doc.nombre}</span>
+                                            <span className="shrink-0 text-[10px] font-bold text-slate-500">v{version.version}</span>
+                                            <span className="shrink-0 text-[10px] text-slate-400">{version.usuario ?? "—"} · {new Date(version.createdAt).toLocaleDateString("es-CO")}</span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => verArchivo(version.rutaUrl, `${doc.nombre} (v${version.version})`, doc.mimeType)}
+                                            className="shrink-0 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-slate-100 cursor-pointer"
+                                          >
+                                            Ver
+                                          </button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </>
                       ))}
                   </div>
                 );
