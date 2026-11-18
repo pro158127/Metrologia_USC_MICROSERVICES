@@ -211,19 +211,10 @@ export async function reimportarFamiliaOTVersionada(
 
   // 3. Versionar las hijas por cada sitio presente en los instrumentos entrantes.
   const sitios = [...new Set(input.instrumentosResueltos.map((i) => i.sitio))];
-  const hijasVersionadas = new Set<number>();
   for (const sitio of sitios) {
     const instrumentosSitio = input.instrumentosResueltos.filter((i) => i.sitio === sitio);
     const esSitio = sitio === 'CLIENTE';
-    // Mantener el código base de una OT existente cuando el sitio de servicio
-    // cambia. Si solo se busca por sitio, el mismo trabajo recibe un número
-    // consecutivo nuevo (p. ej. ...0002A) en vez de su versión (...0001B).
-    const hija = familia.find(
-      (o) => o.SITIO_CALIBRACION === sitio && !hijasVersionadas.has(o.ID_ORDEN_TRABAJO),
-    ) ?? familia.find(
-      (o) => o.SITIO_CALIBRACION != null && !hijasVersionadas.has(o.ID_ORDEN_TRABAJO),
-    );
-    if (hija) hijasVersionadas.add(hija.ID_ORDEN_TRABAJO);
+    const hija = familia.find((o) => o.SITIO_CALIBRACION === sitio);
 
     const nuevoCodigo = hija
       ? await generarConsecutivo(tx, 'OT', hija.CODIGO_OT)
