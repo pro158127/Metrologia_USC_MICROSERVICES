@@ -269,7 +269,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const body = request.body;
-      const instrumentosConId = body.instrumentos.map((instrumento) => ({ ...instrumento, idUnidad: randomUUID() }));
+      let instrumentosConId: InstrumentoInput[] = body.instrumentos.map((instrumento) => ({ ...instrumento, idUnidad: randomUUID() }));
       if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
         throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
       }
@@ -327,6 +327,54 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               },
             },
           });
+        }
+
+        // Una recepción nueva puede apuntar a una OT que ya existe (por ejemplo,
+        // la OT creada al aprobar una cotización). En ese caso también hay que
+        // sincronizar sus instrumentos: crear solo la recepción dejaba la OT sin
+        // detalles y la FSM no podía avanzar a En_recepción.
+        const detallesOT = await tx.orden_trabajo_detalles.findMany({
+          where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO },
+          orderBy: [{ ITEM: 'asc' }, { ID_DETALLE: 'asc' }],
+        });
+        const detallesOTActivos = detallesOT.filter((detalle) => detalle.activacion !== false);
+        const detallesUsados = new Set<number>();
+        const detalleAsignadoPorIndice = new Map<number, (typeof detallesOTActivos)[number]>();
+
+        instrumentosConId = instrumentosConId.map((instrumento, index) => {
+          const existente =
+            detallesOTActivos.find((detalle) => detalle.ITEM === index + 1 && !detallesUsados.has(detalle.ID_DETALLE)) ??
+            detallesOTActivos.find((detalle) => detalle.INSTRUMENTO === instrumento.instrumento && !detallesUsados.has(detalle.ID_DETALLE));
+          if (existente) {
+            detallesUsados.add(existente.ID_DETALLE);
+            detalleAsignadoPorIndice.set(index, existente);
+            return { ...instrumento, idUnidad: existente.ID_UNIDAD_FK ?? instrumento.idUnidad };
+          }
+          return instrumento;
+        });
+
+        for (let index = 0; index < instrumentosConId.length; index++) {
+          const instrumento = instrumentosConId[index];
+          const existente = detalleAsignadoPorIndice.get(index);
+          const data = {
+            ITEM: index + 1,
+            INSTRUMENTO: instrumento.instrumento,
+            TIPO_SERVICIO: 'Calibración',
+            FABRICANTE: instrumento.marca ?? null,
+            MODELO: instrumento.modelo ?? null,
+            SERIE: instrumento.serie ?? null,
+            CODIGO_INVENTARIO: instrumento.codigoInventario ?? null,
+            ID_UNIDAD_FK: instrumento.idUnidad,
+            activacion: true,
+          };
+          // Si ya existía, se conserva intacto y solo se comparte su ID de unidad
+          // con la recepción. Así la recepción no reescribe datos de una OT
+          // vigente (incluidos instrumentos que puedan tener certificados).
+          if (!existente) {
+            await tx.orden_trabajo_detalles.create({
+              data: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO, ...data, asignado: null },
+            });
+          }
         }
 
         // 3. Crear la Recepción enlazada
