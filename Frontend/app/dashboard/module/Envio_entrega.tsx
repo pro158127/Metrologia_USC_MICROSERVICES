@@ -409,8 +409,8 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
   const loadingEnvio = useDbLoading("ordenes_trabajo");
 
   useEffect(() => {
-    loadTable("ordenes_trabajo");
-    loadTable("clientes");
+    void loadTable("ordenes_trabajo", true);
+    void loadTable("clientes", true);
   }, [loadTable]);
 
   const [busqueda, setBusqueda] = useState<string>("");
@@ -467,6 +467,15 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
         );
       });
   }, [ordenes, clientes, busqueda]);
+
+  const ordenesHijasVigentes = useMemo(
+    () => ordenes.filter((ot) => ot.sitioCalibracion != null && ot.vigente !== false),
+    [ordenes]
+  );
+  const ordenesPendientesAprobacion = useMemo(
+    () => ordenesHijasVigentes.filter((ot) => ot.estado !== "Certificado_aprobado"),
+    [ordenesHijasVigentes]
+  );
 
   return (
     <div className="module-page" style={{ position: "relative" }}>
@@ -525,7 +534,18 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
             ) : grupos.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
-                  No hay cotizaciones listas para entrega.
+                  {busqueda.trim()
+                    ? "No hay cotizaciones que coincidan con la búsqueda."
+                    : ordenesHijasVigentes.length === 0
+                    ? "No hay órdenes de trabajo hijas vigentes para enviar."
+                    : ordenesPendientesAprobacion.length === 0
+                    ? "No se encontraron cotizaciones listas. Actualiza la lista o valida que sus OT estén vigentes y asociadas a una cotización."
+                    : `${ordenesPendientesAprobacion.length} de ${ordenesHijasVigentes.length} órdenes aún no tienen todos sus certificados aprobados.`}
+                  {!busqueda.trim() && ordenesPendientesAprobacion.length > 0 && (
+                    <div className="mt-2 text-[10px] font-mono text-slate-400">
+                      {ordenesPendientesAprobacion.slice(0, 5).map((ot) => `${ot.codigo}: ${ot.estado ?? "sin estado"}`).join(" · ")}
+                    </div>
+                  )}
                 </td>
               </tr>
             ) : (

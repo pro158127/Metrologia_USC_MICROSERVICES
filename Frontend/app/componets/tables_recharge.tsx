@@ -24,6 +24,8 @@ const RELACIONES_A_PRESERVAR: Record<string, string[]> = {
 };
 
 const RECARGAS_RELACIONADAS: Partial<Record<string, (keyof RealtimeTablesState)[]>> = {
+  ordenes_trabajo: ["recepciones_equipo"],
+  recepciones_equipo: ["ordenes_trabajo"],
   cotizacion_detalles: ["cotizaciones"],
   orden_trabajo_detalles: ["ordenes_trabajo"],
   recepcion_equipo_detalles: ["recepciones_equipo", "ordenes_trabajo", "certificados"],

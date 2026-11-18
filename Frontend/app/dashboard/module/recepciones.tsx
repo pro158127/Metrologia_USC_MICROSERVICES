@@ -1082,17 +1082,18 @@ useEffect(() => {
 
   useEffect(() => {
     let activo = true;
-    getRecepcionesEnriquecidas()
-      .then((data) => {
-        if (activo) setRecepcionesEnriquecidas(data);
-      })
-      .catch((error) => {
-        console.error(error);
-      });
+    const temporizador = window.setTimeout(() => {
+      getRecepcionesEnriquecidas()
+        .then((data) => {
+          if (activo) setRecepcionesEnriquecidas(data);
+        })
+        .catch((error) => console.error("Error actualizando recepciones:", error));
+    }, 120);
     return () => {
       activo = false;
+      window.clearTimeout(temporizador);
     };
-  }, []);
+  }, [recepcionesEquipo, ordenesTrabajoStore]);
 
   // Años disponibles para el filtro (derivados de recepcionesEquipo)
   const aniosDisponibles = useMemo(() => {

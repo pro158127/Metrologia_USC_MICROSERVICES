@@ -1685,7 +1685,10 @@ const saveOrderEdits = async () => {
       };
       
       setSelectedOT(updatedOT);
-      await loadTable("ordenes_trabajo", true);
+      await Promise.all([
+        loadTable("ordenes_trabajo", true),
+        loadTable("recepciones_equipo", true),
+      ]);
       setEditingOrder(false);
       showToast(`✅ Orden R-CM05 Consolidada. Job documental en curso (${response.id_job})`);
 
