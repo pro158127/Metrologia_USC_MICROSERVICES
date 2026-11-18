@@ -331,6 +331,7 @@ export interface DocumentoVersionItem {
   createdAt: string;
   usuario: string | null;
   codigoRecepcion?: string;
+  codigoOT?: string;
 }
 
 export interface DocumentoItem {
