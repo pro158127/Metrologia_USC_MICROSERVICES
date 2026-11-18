@@ -25,6 +25,7 @@ import { generarOrdenesTrabajoAprobacion } from '../services/cotizacion-aprobaci
 import { ajustarIdsUnidades, crearIdsUnidades, obtenerIdsUnidadesCertificadas } from '../services/instrument-identity.service.js';
 import { calcularMontoTotalCotizacion, calcularValorDetalle, normalizarDinero } from '../services/cotizacion-money.service.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
+import { cotizacionListaParaSeguimiento } from '../services/seguimiento-cierre.service.js';
 import { firmarTokenAprobacion, verificarTokenAprobacion } from '../lib/approval-token.js';
 const transicionesValidas: Record<Estados, Estados[]> = {
   BORRADOR: [Estados.ENVIADA],
@@ -774,6 +775,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             updated_at: new Date()
           }
         });
+
       }
 
       await registrarBitacora(tx, {
@@ -898,6 +900,11 @@ const trackingJobs: Record<string, string[]> = {};
           );
         }
 
+        if (nuevoEstado === Estados.EN_SEGUIMIENTO && actual.ESTADO === Estados.APROBADA &&
+            !(await cotizacionListaParaSeguimiento(tx, idCotizacion))) {
+          throw new AppError(409, 'La cotización solo pasa a seguimiento cuando todas las OT están pagadas, los certificados enviados y las recepciones entregadas.');
+        }
+
         // 2. Actualizar estado
         const cotizacionActualizada = await tx.cotizaciones.update({
           where: { ID_COTIZACION: idCotizacion },
@@ -918,6 +925,18 @@ const trackingJobs: Record<string, string[]> = {};
             MOTIVO: nuevoEstado === Estados.RECHAZADA ? motivoRechazo?.trim() ?? null : null,
           }
         });
+
+        if (nuevoEstado === Estados.EN_SEGUIMIENTO && actual.ESTADO === Estados.APROBADA) {
+          await tx.seguimientos_comerciales.create({
+            data: {
+              ID_COTIZACION_FK: idCotizacion,
+              TIPO: 'OTRO',
+              DESCRIPCION: `Cierre de entrega completado para la cotización ${cotizacionActualizada.CODIGO_COTIZACION}.`,
+              RESULTADO: 'ENTREGA_COMPLETA',
+              ID_USUARIO_FK: idUsuario || null,
+            },
+          });
+        }
 
         const dataOTs: any[] = [];
         const dataRecs: any[] = [];

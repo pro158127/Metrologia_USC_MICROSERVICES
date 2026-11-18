@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type RealtimeTablesState from '@/tipos/store';
 import { obtenerLlavePrimaria } from '@/app/lib/realtime/normalize';
+import { obtenerRevisionRealtime } from '@/app/lib/realtime/revision';
 
 // Importa tus Server Actions
 import { obtenerUsuariosPorPermiso,obtenerRolesAction } from '@/app/action_module/administration';
@@ -122,14 +123,17 @@ updateTable: (table, updater) =>
   loadTable: async (table, force = false) => {
     const state = get();
     if (state[table].length > 0 && table !== 'usuarios' && !force) return;
+    const revisionAlIniciar = obtenerRevisionRealtime(String(table));
 
     set((s) => ({ loading: { ...s.loading, [table]: true } }));
     try {
       let data: any[] = [];
+      let snapshotValido = false;
       switch (table) {
         case 'usuarios': {
           const res = await obtenerUsuariosPorPermiso();
           if (res?.success && Array.isArray(res.data)) {
+            snapshotValido = true;
             data = res.data.map((u: any) => ({
               ...u,
               rolnombre: u.rol?.nombreRol || 'Sin rol',
@@ -139,57 +143,58 @@ updateTable: (table, updater) =>
         }
         case 'cotizaciones': {
           const res = await obtenerTodasLasCotizaciones();
-          if (res.ok && Array.isArray(res.data)) data = res.data;
+          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'tarifas': {
           const res = await obtenerTodasLasTarifas();
-          if (res.ok && Array.isArray(res.data)) data = res.data;
+          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'clientes': {
           const res = await obtenerClientes();
-          if (res.success && Array.isArray(res.data)) data = res.data;
+          if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'recepciones_equipo': {
           const res = await getRecepcionesData();
-          if (res && Array.isArray(res.recepciones)) data = res.recepciones;
+          if (res && Array.isArray(res.recepciones)) { data = res.recepciones; snapshotValido = true; }
           break;
         }
         case 'ordenes_trabajo': {
           const res = await getOrdenesData();
-          if (res && Array.isArray(res.ordenes)) data = res.ordenes;
+          if (res && Array.isArray(res.ordenes)) { data = res.ordenes; snapshotValido = true; }
           break;
         }
         case 'roles':{
              const res = await obtenerRolesAction();
-          if (res && Array.isArray(res.data)) data = res.data;
+          if (res && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'facturas': {
           const res = await obtenerFacturas();
-          if (res.ok && Array.isArray(res.data)) data = res.data;
+          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'seguimientos_comerciales': {
           const res = await obtenerSeguimientos();
-          if (res.ok && Array.isArray(res.data)) data = res.data;
+          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'sellos': {
           const res = await obtenerSellos();
-          if (res.success && Array.isArray(res.data)) data = res.data;
+          if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'parametros_sistema': {
           const res = await obtenerParametrosSistema();
-          if (res.success && Array.isArray(res.data)) data = res.data;
+          if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
           break;
         }
         case 'certificados': {
           const res = await obtenerCertificadosConContexto();
           if (res.success && res.data) {
+            snapshotValido = true;
             data = res.data.certificados;
             get().mergeTable('calibraciones', res.data.calibraciones);
             get().mergeTable('recepcion_equipo_detalles', res.data.instrumentos);
@@ -202,10 +207,20 @@ updateTable: (table, updater) =>
           console.warn(`⚠️ loadTable: Tabla "${table}" sin acción definida.`);
           data = [];
       }
-      get().mergeTable(table, data);
-      set((s) => ({
-        loading: { ...s.loading, [table]: false },
-      }));
+      const cambioDuranteLaCarga = revisionAlIniciar !== obtenerRevisionRealtime(String(table));
+      if (force && snapshotValido && !cambioDuranteLaCarga) {
+        set((s) => ({
+          ...s,
+          [table]: data,
+          loading: { ...s.loading, [table]: false },
+        }));
+      } else {
+        get().mergeTable(table, data);
+        set((s) => ({ loading: { ...s.loading, [table]: false } }));
+        if (force && snapshotValido && cambioDuranteLaCarga) {
+          setTimeout(() => { void get().loadTable(table, true); }, 0);
+        }
+      }
     } catch (error) {
       console.error(`❌ Error al cargar tabla "${table}":`, error);
       set((s) => ({

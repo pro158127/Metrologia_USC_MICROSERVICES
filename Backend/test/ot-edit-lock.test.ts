@@ -3,13 +3,13 @@ import test from 'node:test';
 import { EstadoOT, Prisma } from '@prisma/client';
 import { validarIdentidadInstrumentosRecepcion } from '../src/services/ot-edit-lock.service.js';
 
-function fakeTx(estado: EstadoOT, tieneCertificado = false): Prisma.TransactionClient {
+function fakeTx(estado: EstadoOT, tieneCalibracion = false): Prisma.TransactionClient {
   return {
     ordenes_trabajo: {
       findUnique: async () => ({ CODIGO_OT: 'OT-TEST', estado }),
     },
     calibraciones: {
-      findMany: async () => tieneCertificado ? [{ ID_INSTRUMENTO_FK: 10 }] : [],
+      findMany: async () => tieneCalibracion ? [{ ID_INSTRUMENTO_FK: 10 }] : [],
     },
   } as unknown as Prisma.TransactionClient;
 }
@@ -44,20 +44,22 @@ const inputBase = {
   observaciones: null,
 };
 
-test('permite cambiar unidades sin certificado aunque la OT esté en calibración', async () => {
+test('permite editar instrumentos que aún no tienen una calibración iniciada', async () => {
   await assert.doesNotReject(() => validarIdentidadInstrumentosRecepcion(
     fakeTx(EstadoOT.En_calibración), 1, [instrumentoBase], [],
   ));
 });
 
-test('protege solo el instrumento con certificado creado, aunque siga pendiente de revisión', async () => {
+test('bloquea identidad, estampilla e IBC de entrada al iniciar calibración, y deja editar los demás campos', async () => {
   const tx = fakeTx(EstadoOT.Certificado_en_revisión, true);
   await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], []));
-  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], [{ ...inputBase, serie: 'CAMBIADA' }]));
+  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], [{ ...inputBase, instrumento: 'Unidad cambiada' }]));
+  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], [{ ...inputBase, estampilla: 'E-2' }]));
+  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], [{ ...inputBase, estadoIBC: { entrada: { limpio: false }, salida: {} } }]));
   await assert.doesNotReject(() => validarIdentidadInstrumentosRecepcion(
     tx,
     1,
     [instrumentoBase],
-    [inputBase, { ...inputBase, idInstrumento: undefined, instrumento: 'Unidad nueva', serie: 'S2' }],
+    [{ ...inputBase, marca: 'Otra marca', modelo: 'M2', serie: 'S2', codigoInventario: 'INV-2', resolucion: '0.2', sensorInt: true, observaciones: 'Nota', estadoIBC: { entrada: { limpio: true }, salida: { entregado: true } } }, { ...inputBase, idInstrumento: undefined, instrumento: 'Unidad nueva', serie: 'S2' }],
   ));
 });

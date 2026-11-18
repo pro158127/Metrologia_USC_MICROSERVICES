@@ -67,6 +67,16 @@ const tipoServicioADB = (v?: string | null): string => {
   return s.includes("NO") ? "NO ACREDITADO" : "ACREDITADO";
 };
 
+// La fecha límite es inclusiva durante todo el día indicado.
+const estaVencidaLaFechaLimite = (valor?: string | Date | null): boolean => {
+  if (!valor) return false;
+  const fecha = valor instanceof Date ? valor : new Date(valor);
+  if (Number.isNaN(fecha.getTime())) return false;
+  const dia = new Date(fecha.getUTCFullYear(), fecha.getUTCMonth(), fecha.getUTCDate());
+  dia.setHours(23, 59, 59, 999);
+  return Date.now() > dia.getTime();
+};
+
 // Limpia los placeholders de BD ("sin nit", "sin ciudad", "sin dirreccion",
 // "sin razon_social", ...) para poder caer al fallback del cliente.
 const limpiarPlaceholder = (v?: string | null): string => {
@@ -1386,7 +1396,7 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   const clientes = useDbTable("clientes");
   const documentos = useDbTable("documentos");
   const tarifas = useDbTable("tarifas");
-  const { mergeTable, setTableLoading } = useDbActions();
+  const { mergeTable, setTableLoading, loadTable } = useDbActions();
   const loadingOrdenes = useDbLoading("ordenes_trabajo");
 
   // Vista actual (kanban, lista o detalle de OT)
@@ -1520,6 +1530,7 @@ const instrumentos_cot = useMemo(() => {
       fecha: otCompleta.fechaCalibracion?.toString() || "",
       estado: (otCompleta.estado ?? "Creada") as EstadoOrden,
       retraso: otPreview.retraso || false,
+      certificadosPendientesRevision: otCompleta.certificadosPendientesRevision ?? false,
       equipos: instrumentosMapeados.length,
       tipo: "Acreditado",
       razonSocialCert: limpiarPlaceholder(otCompleta.Razon_social) || clienteData?.razonSocial || "",
@@ -1615,18 +1626,21 @@ const saveOrderEdits = async () => {
     if (!selectedOT || !orderDraft) return;
 
     // 🟢 1. Validaciones
-    if (!orderDraft.responsableUsc) {
-      showToast("⚠️ Debes seleccionar un Responsable USC para la orden.");
-      return;
-    }
-
     try {
       showToast("⏳ Consolidando orden y generando documento...");
 
       // 🟢 2. Estructuración del Payload
       const payload = {
-        responsableUsc: orderDraft.responsableUsc,
+        responsableUsc: orderDraft.responsableUsc || null,
         fechaDiligenciamiento: orderDraft.fechaDiligenciamiento,
+        fechaCalibracion: orderDraft.lugarCalibracion === "En sitio" && orderDraft.fechaCalibracion
+          ? orderDraft.fechaCalibracion.slice(0, 10)
+          : null,
+        horaCalibracion: orderDraft.lugarCalibracion === "En sitio" && orderDraft.horaCalibracion
+          ? orderDraft.horaCalibracion.match(/\d{2}:\d{2}/)?.[0] ?? null
+          : null,
+        personaContactar: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.personaContactar || null : null,
+        telefonoCalibracion: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.telefonoCalibracion || null : null,
         requiereAnexo: orderDraft.requiereAnexo,
         observacionesGenerales: orderDraft.observacionesGenerales,
         lugarCalibracion: orderDraft.lugarCalibracion,
@@ -1671,6 +1685,7 @@ const saveOrderEdits = async () => {
       };
       
       setSelectedOT(updatedOT);
+      await loadTable("ordenes_trabajo", true);
       setEditingOrder(false);
       showToast(`✅ Orden R-CM05 Consolidada. Job documental en curso (${response.id_job})`);
 
@@ -1767,11 +1782,11 @@ const saveOrderEdits = async () => {
     if (selectedOT.retraso) warns.push({ tipo: "retraso", mensaje: "Vencida" });
     if (!selectedOT.tecnico || selectedOT.tecnico === "Sin asignar")
       warns.push({ tipo: "sin_responsable", mensaje: "Sin responsable" });
-    if (!selectedOT.fechaCalibracion)
+    if (selectedOT.lugarCalibracion === "En sitio" && !selectedOT.fechaCalibracion)
       warns.push({ tipo: "sin_fecha", mensaje: "Sin fecha calibración" });
     if (selectedOT.instrumentos && selectedOT.instrumentos.length > 10)
       warns.push({ tipo: "exceso_instrumentos", mensaje: ">10 instrumentos" });
-    if (selectedOT.estado_revision === "PENDIENTE_REVISION")
+    if (selectedOT.certificadosPendientesRevision)
       warns.push({ tipo: "pendiente_revision", mensaje: "Pendiente revisión" });
     return warns;
   }, [selectedOT]);
@@ -1789,17 +1804,13 @@ const saveOrderEdits = async () => {
       const cliente = clientes.find((c) => c.idCliente === orden.idCliente);
       const ordenWarnings: Warning[] = [];
 
-      const ahora = new Date();
-      const fechaLimite = orden.fechaLimiteFacturacion
-        ? new Date(orden.fechaLimiteFacturacion)
-        : new Date();
-      const estaVencida = ahora >= fechaLimite;
+      const estaVencida = estaVencidaLaFechaLimite(orden.fechaLimiteFacturacion);
       if (estaVencida) ordenWarnings.push({ tipo: "retraso", mensaje: "Vencida" });
       if (!orden.responsable || orden.responsable === "Sin asignar")
         ordenWarnings.push({ tipo: "sin_responsable", mensaje: "Sin responsable" });
-      if (!orden.fechaCalibracion)
+      if ((orden.esEnSitio || orden.sitioCalibracion === "CLIENTE") && !orden.fechaCalibracion)
         ordenWarnings.push({ tipo: "sin_fecha", mensaje: "Sin fecha calibración" });
-      if (orden.estadoRevision === "PENDIENTE_REVISION")
+      if (orden.certificadosPendientesRevision)
         ordenWarnings.push({ tipo: "pendiente_revision", mensaje: "Pendiente revisión" });
 
       return {
@@ -1811,6 +1822,7 @@ const saveOrderEdits = async () => {
         estado: (orden.estado ?? "Creada") as EstadoOrden,
         codigo: orden.codigo,
         retraso: estaVencida,
+        certificadosPendientesRevision: orden.certificadosPendientesRevision ?? false,
         warns: ordenWarnings,
         idOrdenTrabajoPadre: orden.idOrdenTrabajoPadre,
         idOtRaiz: orden.idOtRaiz,

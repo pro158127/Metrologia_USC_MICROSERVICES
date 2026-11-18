@@ -8,6 +8,7 @@ import { useShallow } from 'zustand/react/shallow'; // ✅ Importar useShallow
 import type RealtimeTablesState from '@/tipos/store';
 import { toast } from 'sonner';
 import { obtenerLlavePrimaria, normalizarPayload } from '@/app/lib/realtime/normalize';
+import { marcarCambioRealtime } from '@/app/lib/realtime/revision';
 import { obtenerTokenSocket } from '@/app/lib/socket/token';
 
 // Relaciones/arrays que el snapshot HTTP sí trae pero que la fila del NOTIFY
@@ -20,6 +21,19 @@ const RELACIONES_A_PRESERVAR: Record<string, string[]> = {
   facturas: ["ordenTrabajo", "cliente"],
   documentos: ["versiones"],
   certificados: ["sellos"],
+};
+
+const RECARGAS_RELACIONADAS: Partial<Record<string, (keyof RealtimeTablesState)[]>> = {
+  cotizacion_detalles: ["cotizaciones"],
+  orden_trabajo_detalles: ["ordenes_trabajo"],
+  recepcion_equipo_detalles: ["recepciones_equipo", "ordenes_trabajo", "certificados"],
+  calibraciones: ["certificados", "recepciones_equipo", "ordenes_trabajo"],
+  certificados: ["ordenes_trabajo", "recepciones_equipo"],
+  certificado_sellos: ["certificados"],
+  documentos: ["certificados"],
+  historial_estado_cotizacion: ["cotizaciones"],
+  historial_tarifas: ["tarifas"],
+  roles: ["roles"],
 };
 
 // ==========================================
@@ -71,7 +85,7 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const userIdValido = session?.user?.id_user ?? session?.user?.id;
-  const TABLAS_PLANTILLAS = ["plantillas"];
+  const TABLAS_PLANTILLAS = ["plantillas", "version_plantillas"];
 
   const { updateTable, setDbState } = useDbStore(
     useShallow((state) => ({
@@ -103,10 +117,6 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       });
       socketRef.current = nuevoSocket;
 
-      // Secuencia monótona para deduplicar y detectar huecos (eventos perdidos).
-      let lastSeq = 0;
-      let primeraSecuencia = true;
-
       // Re-sincroniza salas y estado pendiente tras (re)conexión.
       const sincronizarRealtime = () => {
         nuevoSocket.emit("join_room", userIdValido);
@@ -115,13 +125,17 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         // si se perdieron eventos durante la desconexión/suspensión.
         const tablasClave: (keyof RealtimeTablesState)[] = [
           "usuarios",
+          "roles",
           "cotizaciones",
           "clientes",
+          "tarifas",
           "ordenes_trabajo",
           "recepciones_equipo",
           "facturas",
           "seguimientos_comerciales",
           "certificados",
+          "parametros_sistema",
+          "sellos",
         ];
         tablasClave.forEach((t) => store.loadTable(t, true));
       };
@@ -149,28 +163,21 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       });
 
       nuevoSocket.on("cambio_realtime", (payload) => {
-        const { tabla, operacion, data: rawData, seq, truncado } = payload;
+        const { tabla, operacion, data: rawData, truncado } = payload;
         const { updateTable, setDbState, loadTable } = useDbStore.getState();
-
-        // Deduplicación y detección de huecos por secuencia monótona global.
-        if (typeof seq === "number" && !Number.isNaN(seq)) {
-          if (!primeraSecuencia && lastSeq > 0) {
-            if (seq <= lastSeq) return; // duplicado o fuera de orden
-            if (seq > lastSeq + 1) {
-              // Se perdieron eventos (micro-corte): re-sincronizar y descartar este.
-              sincronizarRealtime();
-              lastSeq = seq;
-              return;
-            }
-          }
-          lastSeq = seq;
-          primeraSecuencia = false;
+        for (const tablaAfectada of [tabla, ...(RECARGAS_RELACIONADAS[tabla] ?? [])]) {
+          marcarCambioRealtime(tablaAfectada);
         }
 
         // Si el payload fue truncado en la BD (muy grande), la fila no es fiable:
         // re-consultar la tabla de forma autoritativa.
         if (truncado) {
-          loadTable(tabla as keyof RealtimeTablesState, true);
+          const recargas = RECARGAS_RELACIONADAS[tabla];
+          if (recargas?.length) {
+            recargas.forEach((tablaRelacionada) => void loadTable(tablaRelacionada, true));
+          } else {
+            loadTable(tabla as keyof RealtimeTablesState, true);
+          }
           return;
         }
 
@@ -192,10 +199,22 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         }
 
         updateTable(tabla as keyof RealtimeTablesState, (listaActual) => {
-          let listaActualizada = [...(listaActual as any[])];
+          let listaActualizada = [...(listaActual as unknown as Record<string, unknown>[])];
           const existe = listaActualizada.some((item) => Number(item[nombreLlave]) === idValor);
-          if (operacion === "INSERT" && !existe) {
-            listaActualizada = [dataMapeada, ...listaActualizada];
+          if (operacion === "INSERT") {
+            if (!existe) {
+              listaActualizada = [dataMapeada, ...listaActualizada];
+            } else {
+              const claves = RELACIONES_A_PRESERVAR[tabla] ?? [];
+              listaActualizada = listaActualizada.map((item) => {
+                if (Number(item[nombreLlave]) !== idValor) return item;
+                const preservados: Record<string, unknown> = {};
+                for (const k of claves) {
+                  if (item[k] !== undefined && item[k] !== null) preservados[k] = item[k];
+                }
+                return { ...item, ...dataMapeada, ...preservados };
+              });
+            }
           } else if (operacion === "UPDATE") {
             if (existe) {
               // Fusionar campos escalares SIN sobrescribir relaciones/arrays que
@@ -217,8 +236,15 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
               (item) => Number(item[nombreLlave]) !== idValor
             );
           }
-          return listaActualizada;
+          return listaActualizada as unknown as typeof listaActual;
         });
+
+        // Los snapshots HTTP contienen relaciones anidadas; los eventos de fila
+        // solo traen la tabla cambiada. Reconsultar padres para que módulos que
+        // consumen detalles embebidos no se queden con una copia vieja.
+        for (const tablaRelacionada of RECARGAS_RELACIONADAS[tabla] ?? []) {
+          void loadTable(tablaRelacionada, true);
+        }
       });
 
       nuevoSocket.on("disconnect", () => console.warn("🔌 Desconectado"));

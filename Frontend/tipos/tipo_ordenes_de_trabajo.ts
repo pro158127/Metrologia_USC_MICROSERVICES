@@ -147,6 +147,7 @@ export type OTBase = {
   retraso: boolean;
   equipos: number;
   warns: Warning[];
+  certificadosPendientesRevision?: boolean;
   idOrdenTrabajoPadre?: number | null;
   idOtRaiz?: number | null;
   sitioCalibracion?: string | null;
@@ -201,6 +202,7 @@ export type OTType = Partial<EditableOrderFields> & {
   codigo?: string;
   tipo?: string;
   warns?: Warning[];
+  certificadosPendientesRevision?: boolean;
   maquinas?: string[];
   tecnicos?: string[];
   asignaciones?: MachineAssignmentsMap;

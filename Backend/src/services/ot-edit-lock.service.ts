@@ -3,7 +3,7 @@ import { AppError } from '../lib/errors.js';
 
 type Tx = Prisma.TransactionClient;
 
-/** Lock only units that already have a certificate record, regardless of review state. */
+/** After calibration starts, protect only the instrument identity, stamp and IBC entry. */
 export async function validarIdentidadInstrumentosRecepcion(
   tx: Tx,
   idOT: number,
@@ -43,11 +43,11 @@ export async function validarIdentidadInstrumentosRecepcion(
   if (!ot) return;
 
   const ids = existentes.map((item) => item.ID_INSTRUMENTO);
-  const certificados = ids.length ? await tx.calibraciones.findMany({
-    where: { ID_INSTRUMENTO_FK: { in: ids }, certificados: { isNot: null } },
+  const calibraciones = ids.length ? await tx.calibraciones.findMany({
+    where: { ID_INSTRUMENTO_FK: { in: ids } },
     select: { ID_INSTRUMENTO_FK: true },
   }) : [];
-  const idsProtegidos = new Set(certificados.map((certificado) => certificado.ID_INSTRUMENTO_FK));
+  const idsProtegidos = new Set(calibraciones.map((calibracion) => calibracion.ID_INSTRUMENTO_FK));
   const recibidosConId = recibidos.filter((item) => item.idInstrumento != null);
   const normalizar = (valor: unknown) => String(valor ?? '').trim();
   const estable = (valor: unknown): string => {
@@ -64,27 +64,25 @@ export async function validarIdentidadInstrumentosRecepcion(
     if (!recibido) {
       throw new AppError(409, `No se puede eliminar el instrumento "${actual.INSTRUMENTO}": ya tiene un certificado creado.`);
     }
+    const entradaIBC = (valor: unknown): unknown => {
+      if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return valor ?? {};
+      const objeto = valor as Record<string, unknown>;
+      return objeto.entrada ?? objeto;
+    };
+    const estadoIbcActual = actual.ESTADO_IBC as unknown;
     const cambio = normalizar(recibido.instrumento) !== normalizar(actual.INSTRUMENTO) ||
-      normalizar(recibido.marca) !== normalizar(actual.MARCA) ||
-      normalizar(recibido.modelo) !== normalizar(actual.MODELO) ||
-      normalizar(recibido.serie) !== normalizar(actual.SERIE) ||
-      normalizar(recibido.codigoInventario) !== normalizar(actual.CODIGO_INVENTARIO) ||
-      normalizar(recibido.resolucion) !== normalizar(actual.RESOLUCION) ||
-      Boolean(recibido.sensorInt) !== Boolean(actual.TIPO_SENSOR_TEMP_init) ||
-      Boolean(recibido.sensorExt) !== Boolean(actual.TIPO_SENSOR_TEMP_ext) ||
-      estable(recibido.estadoIBC ?? {}) !== estable(actual.ESTADO_IBC ?? {}) ||
-      normalizar(recibido.estampilla) !== normalizar(actual.ESTAMPILLA) ||
-      normalizar(recibido.observaciones) !== normalizar(actual.OBSERVACIONES);
+      estable(entradaIBC(recibido.estadoIBC)) !== estable(entradaIBC(estadoIbcActual)) ||
+      normalizar(recibido.estampilla) !== normalizar(actual.ESTAMPILLA);
     if (cambio) {
-      throw new AppError(409, `No se pueden cambiar las características de "${actual.INSTRUMENTO}": ya tiene un certificado creado.`);
+      throw new AppError(409, `No se puede cambiar el instrumento, la estampilla ni el IBC de entrada de "${actual.INSTRUMENTO}": la calibración ya inició.`);
     }
   }
 }
 
 export async function validarInstrumentoSinCertificado(tx: Tx, idInstrumento: number): Promise<void> {
-  const certificado = await tx.certificados.findFirst({
-    where: { calibraciones: { ID_INSTRUMENTO_FK: idInstrumento } },
-    select: { CODIGO_CERTIFICADO: true },
+  const calibracion = await tx.calibraciones.findUnique({
+    where: { ID_INSTRUMENTO_FK: idInstrumento },
+    select: { ID_INSTRUMENTO_FK: true },
   });
-  if (certificado) throw new AppError(409, 'No se puede eliminar este instrumento porque ya tiene un certificado creado.');
+  if (calibracion) throw new AppError(409, 'No se puede eliminar este instrumento porque su calibración ya inició.');
 }

@@ -568,6 +568,7 @@ const TablaInstrumentos = ({
                     <input
                       list={`instrumentos-${i}`}
                       value={inst.instrumento}
+                      disabled={inst.calibracionIniciada}
                       onChange={(e) => onFilaChange(i, "instrumento", e.target.value)}
                       placeholder="Escriba o seleccione"
                       className="w-full p-1 border border-slate-200 rounded font-medium"
@@ -680,7 +681,8 @@ const TablaInstrumentos = ({
                             key={`in-${k}`}
                             type="button"
                             onClick={() => onFilaChange(i, key, nextVal)}
-                            className={`w-5 h-5 rounded-[4px] font-black border text-[9px] flex items-center justify-center transition-all cursor-pointer ${colorClass}`}
+                            disabled={inst.calibracionIniciada}
+                            className={`w-5 h-5 rounded-[4px] font-black border text-[9px] flex items-center justify-center transition-all ${inst.calibracionIniciada ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${colorClass}`}
                           >
                             {k}
                           </button>
@@ -714,6 +716,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.estampilla}
+                    disabled={inst.calibracionIniciada}
                     onChange={(e) => onFilaChange(i, "estampilla", e.target.value)}
                     placeholder="USC-"
                     className="w-full p-1 border border-slate-200 rounded font-mono text-[11px]"
@@ -734,7 +737,9 @@ const TablaInstrumentos = ({
                   <button
                     type="button"
                     onClick={() => onEliminarFila(i)}
-                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-red-500 hover:bg-red-50 transition cursor-pointer"
+                    disabled={inst.calibracionIniciada}
+                    title={inst.calibracionIniciada ? "No se puede eliminar: la calibración ya inició" : "Eliminar instrumento"}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white text-red-500 hover:bg-red-50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Trash2 size={13} />
                   </button>
@@ -1324,6 +1329,7 @@ useEffect(() => {
         return {
           id: generarIdUnico(),
           idInstrumento: det.idInstrumento,
+          calibracionIniciada: det.calibracionIniciada ?? false,
           item: det.item ?? null,
           instrumento: det.instrumento || "",
           marca: det.marca || "",
@@ -1465,11 +1471,29 @@ const handleGenerarActa = useCallback(async () => {
     });
 
     const cumpleRequisitosCompletos = cabeceraLista && instrumentosValidos;
-    const estadoCalculado = cumpleRequisitosCompletos ? "RECIBIDO" : "BORRADOR";
+    const salidaCompleta = Boolean(
+      formulario.fechaSalida &&
+      formulario.nombreQuienEmpaca.trim() &&
+      /^Accesorios: (Bueno|Malo) -\s*\S/i.test(formulario.accesorios) &&
+      formulario.nombreQuienRecibeServicio.trim() &&
+      formulario.instrumentos.length > 0 &&
+      formulario.instrumentos.every((inst) =>
+        [inst.ibcE_out, inst.ibcT_out, inst.ibcD_out, inst.ibcA_out].every(
+          (valor) => typeof valor === "boolean"
+        )
+      )
+    );
+    const estadoCalculado = !cumpleRequisitosCompletos
+      ? "BORRADOR"
+      : salidaCompleta
+      ? "ENTREGADO"
+      : "RECIBIDO";
 
     // Feedback visual para el usuario
-    if (cumpleRequisitosCompletos) {
-      showToast("✅ Requisitos completos. La recepción se procesará como definitiva.");
+    if (estadoCalculado === "ENTREGADO") {
+      showToast("✅ Salida completa. La recepción quedará cerrada como ENTREGADO.");
+    } else if (cumpleRequisitosCompletos) {
+      showToast("✅ Recepción guardada. Puedes completar la salida en otro momento.");
     } else {
       showToast("⚠️ Faltan datos (ETDA o básicos). Se guardará el avance como BORRADOR.");
     }

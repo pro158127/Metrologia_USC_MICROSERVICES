@@ -1,4 +1,4 @@
-type TablaPlantillas = "plantillas" | "version_plantilla" | "documentos_plantillas";
+type TablaPlantillas = "plantillas" | "version_plantilla" | "version_plantillas" | "documentos_plantillas";
 type Operacion = "INSERT" | "UPDATE" | "DELETE";
 
 interface EventoRealtimePayload {
@@ -18,7 +18,14 @@ const processPlantillasRealtime = (
 
   // 1. EVENTOS DIRECTOS EN LA TABLA PADRE: plantillas
   if (tabla === "plantillas") {
-    const id = Number(data.idPlantilla);
+    const fila: PlantillaModel = {
+      idPlantilla: Number(data.ID_PLANTILLA ?? data.idPlantilla),
+      modulo: data.MODULO ?? data.modulo ?? "COTIZACIONES",
+      activa: Boolean(data.ACTIVA ?? data.activa ?? true),
+      nombre: data.NOMBRE ?? data.nombre ?? "",
+      versiones: data.versiones ?? [],
+    };
+    const id = fila.idPlantilla;
 
     if (operacion === "DELETE") {
       return plantillasActuales.filter((p) => p.idPlantilla !== id);
@@ -28,17 +35,26 @@ const processPlantillasRealtime = (
     if (operacion === "INSERT") {
       return existe
         ? plantillasActuales
-        : [{ ...(data as PlantillaModel), versiones: data.versiones ?? [] }, ...plantillasActuales];
+        : [fila, ...plantillasActuales];
     }
     if (operacion === "UPDATE") {
-      return plantillasActuales.map((p) => (p.idPlantilla === id ? { ...p, ...data } : p));
+      return plantillasActuales.map((p) => (p.idPlantilla === id ? { ...p, ...fila } : p));
     }
   }
 
   // 2. EVENTOS EN LA TABLA HIJA: version_plantilla
-  if (tabla === "version_plantilla") {
-    const idPlantilla = Number(data.idPlantilla);
-    const idVersion = Number(data.idVersionPlantilla);
+  if (tabla === "version_plantilla" || tabla === "version_plantillas") {
+    const version: VersionPlantillaModel = {
+      idVersionPlantilla: Number(data.ID_VERSION_PLANTILLA ?? data.idVersionPlantilla),
+      idPlantilla: Number(data.ID_PLANTILLA_FK ?? data.idPlantilla),
+      version: Number(data.VERSION ?? data.version ?? 1),
+      mapeoExcelJson: data.MAPEO_EXCEL_JSON ?? data.mapeoExcelJson ?? null,
+      idUsuarioCreador: Number(data.ID_USUARIO_CREADOR_FK ?? data.idUsuarioCreador),
+      createdAt: data.CREATED_AT ?? data.createdAt,
+      iddocumentos: data.ID_DOCUMENTOS_FK ?? data.iddocumentos ?? null,
+    };
+    const idPlantilla = version.idPlantilla;
+    const idVersion = version.idVersionPlantilla;
 
     return plantillasActuales.map((plantilla) => {
       if (plantilla.idPlantilla !== idPlantilla) return plantilla;
@@ -56,7 +72,7 @@ const processPlantillasRealtime = (
       if (operacion === "INSERT") {
         return {
           ...plantilla,
-          versiones: existe ? versiones : [...versiones, data as VersionPlantillaModel],
+          versiones: existe ? versiones : [...versiones, version],
         };
       }
 
@@ -64,7 +80,7 @@ const processPlantillasRealtime = (
       return {
         ...plantilla,
         versiones: versiones.map((v) =>
-          v.idVersionPlantilla === idVersion ? { ...v, ...data } : v
+          v.idVersionPlantilla === idVersion ? { ...v, ...version } : v
         ),
       };
     });

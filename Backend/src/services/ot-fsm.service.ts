@@ -105,7 +105,7 @@ const tieneEstampilla = (d: { ESTAMPILLA: string | null }): boolean => {
  *   En_calibración          -> recepción OK y ≥1 instrumento con PDF (calibración) + estampilla.
  *   Certificado_en_revisión -> recepción OK y ≥1 certificado APROBADO.
  *   Certificado_aprobado    -> recepción OK y 100% instrumentos con certificado APROBADO.
- *   Certificado_enviado     -> 100% aprobado y estado de pago PAGADO.
+ *   Certificado_enviado se asigna explícitamente solo después de confirmar el envío del correo.
  */
 export async function evaluarTransicionesOT(
   tx: PrismaTx,
@@ -241,10 +241,6 @@ export async function evaluarTransicionesOT(
   if (recepcionOk && todosCertificadosAprobados) {
     cumplidos.push(EstadoOT.Certificado_aprobado);
   }
-  if (recepcionOk && todosCertificadosAprobados && pagoRealizado) {
-    cumplidos.push(EstadoOT.Certificado_enviado);
-  }
-
   const objetivo = cumplidos.reduce(
     (max, e) => (rango(e) > rango(max) ? e : max),
     estadoActual

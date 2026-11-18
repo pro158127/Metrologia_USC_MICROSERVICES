@@ -57,7 +57,8 @@ export interface TabUsuariosProps {
   filteredUsers: (UsuarioModel & uso_rol)[];
   openCreate: () => void;
   openEdit: (user: UsuarioModel & uso_rol) => void;
-  toggleEstado: (id: number, estado: boolean) => void;
+  toggleEstado: (id: number, estado: boolean) => Promise<void>;
+  recargarUsuarios: () => Promise<void>;
   showToast: (msg: string) => void;
   rolColors: RolColorMap;
 }
