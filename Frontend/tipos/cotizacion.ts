@@ -213,6 +213,9 @@ export interface QuotationDetailViewProps {
   formatCurrency: (v: number) => string;
   loadingHistorial: boolean;
   onopentable:() => void;
+  enviosCorreo: import("@/app/action_module/cotizacion").EnvioCorreoCotizacion[];
+  cargandoEnviosCorreo: boolean;
+  onReintentarCorreo: (idEnvio: number, correo: string) => Promise<void>;
   
 }
 

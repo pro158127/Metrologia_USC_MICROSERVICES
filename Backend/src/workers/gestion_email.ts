@@ -101,10 +101,27 @@ export const emailWorker = new Worker<EmailJobData>(
       minio_links, tipo_entry, id_registro
     } = job.data;
 
+    if (job.data.id_envio_correo) {
+      await prisma.correo_envios.update({
+        where: { ID_ENVIO_CORREO: job.data.id_envio_correo },
+        data: {
+          ESTADO: 'EN_PROCESO',
+          INTENTOS: { increment: 1 },
+          ID_JOB: String(job.id),
+        },
+      });
+    }
+
     console.log(`[EmailWorker] Iniciando Job ${job.id} | Tipo: ${template_type} | Registro: ${id_registro}`);
 
     if (tipo_entry === 'test') {
       console.log(`[EmailWorker] Modo TEST detectado para ${to}. Omitiendo envío.`);
+      if (job.data.id_envio_correo) {
+        await prisma.correo_envios.update({
+          where: { ID_ENVIO_CORREO: job.data.id_envio_correo },
+          data: { ESTADO: 'OMITIDO_TEST' },
+        });
+      }
       return { status: 'skipped_test_mode', to };
     }
 
@@ -146,41 +163,26 @@ export const emailWorker = new Worker<EmailJobData>(
   }
 );
 
-emailWorker.on('completed', (job) => {
+emailWorker.on('completed', async (job, result) => {
   console.log(`[EmailWorker] Job encolado en Redis completado: ${job.id}`);
+  if (job?.data.id_envio_correo && result?.status !== 'skipped_test_mode') {
+    await prisma.correo_envios.update({
+      where: { ID_ENVIO_CORREO: job.data.id_envio_correo },
+      data: { ESTADO: 'ENVIADO', ENVIADO_AT: new Date(), ULTIMO_ERROR: null },
+    }).catch((error) => console.error('[EmailWorker] No se pudo marcar el correo como enviado:', error));
+  }
 });
 
 emailWorker.on('failed', async (job, err) => {
   console.error(`[EmailWorker] Job fallido: ${job?.id} | Error: ${err.message}`);
 
   if (job && job.data) {
-    const { id_registro, template_type } = job.data;
+    const { id_registro } = job.data;
 
     const totalIntentos = Number(job.opts.attempts ?? 1);
     if (job.attemptsMade >= totalIntentos) {
       await registrarFalloCorreo(prisma, job.data, String(job.id), err, job.attemptsMade);
     }
 
-    try {
-      // Verificamos si el correo que falló era de una creación de OT
-      if (template_type === 'crear_ot' && id_registro) {
-        
-        // 1. Consultamos la OT para obtener el ID de la cotización
-        const ot = await prisma.ordenes_trabajo.findUnique({
-          where: { ID_ORDEN_TRABAJO: Number(id_registro) }
-        });
-
-        // 2. Si existe y tiene una cotización anclada, la regresamos a ENVIADA
-        if (ot && ot.ID_COTIZACION_FK) {
-          await prisma.cotizaciones.update({
-            where: { ID_COTIZACION: ot.ID_COTIZACION_FK },
-            data: { ESTADO: 'ENVIADA' }
-          });
-          console.warn(`[EmailWorker] ⚠️ Reversión ejecutada: Cotización ${ot.ID_COTIZACION_FK} regresada a 'ENVIADA' porque el correo de la OT falló.`);
-        }
-      }
-    } catch (dbError) {
-      console.error(`[EmailWorker] 🚨 Error crítico al intentar revertir el estado de la cotización:`, dbError);
-    }
   }
 });

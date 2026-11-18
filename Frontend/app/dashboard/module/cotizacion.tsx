@@ -11,6 +11,9 @@ import {
   crearCotizacion,
   actualizarCotizacion,
   cambiarEstadoCotizacion,
+  obtenerEnviosCorreoCotizacion,
+  reintentarEnvioCorreoCotizacion,
+  type EnvioCorreoCotizacion,
   
 } from "@/app/action_module/cotizacion";
 
@@ -323,10 +326,19 @@ const QuotationDetailView = ({
   formatCurrency,
   loadingHistorial,
   onopentable,
+  enviosCorreo,
+  cargandoEnviosCorreo,
+  onReintentarCorreo,
 }: QuotationDetailViewProps) => {
   const historial: HistorialItem[] = historialitems || [];
   const { can } = usePermissions();
   const puedeVersionar = can("cotizaciones", "crear_version_corregida");
+  const puedeReintentarCorreo = can("cotizaciones", "crear_editar");
+  const [correos, setCorreos] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    setCorreos(Object.fromEntries(enviosCorreo.map((envio) => [envio.id, envio.destinatario])));
+  }, [enviosCorreo]);
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] p-6 mt-6 animate-in slide-in-from-bottom-2 duration-200">
@@ -349,6 +361,12 @@ const QuotationDetailView = ({
           </button>
         </div>
       </div>
+
+      {selectedQuotation.estado === "APROBADA" && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          Esta cotización ya fue aprobada por el cliente. Se puede corregir antes de iniciar la calibración; los cambios generan una nueva versión de la cotización y, si se modifican sus detalles, de las OT y recepciones. No se solicita otra aprobación al cliente.
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_0.8fr] mt-6">
         <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4 flex flex-col gap-3">
@@ -378,6 +396,55 @@ const QuotationDetailView = ({
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Sección de historial de estados */}
+      <div className="mt-6 border-t border-slate-100 pt-4">
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Envíos por correo</div>
+        <p className="text-xs text-slate-500 mb-3">Si un correo falla, la aprobación y los documentos existentes se conservan. El reintento usa esos archivos y no vuelve a generar OT ni recepción.</p>
+        {cargandoEnviosCorreo ? (
+          <div className="text-xs text-slate-400">Consultando envíos...</div>
+        ) : enviosCorreo.length === 0 ? (
+          <div className="text-xs text-slate-400">Aún no hay envíos asociados a esta cotización.</div>
+        ) : (
+          <div className="space-y-3">
+            {enviosCorreo.map((envio) => (
+              <div key={envio.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-slate-700">{envio.tipo} · {envio.asunto}</div>
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${envio.estado === "ENVIADO" ? "bg-emerald-50 text-emerald-700" : envio.estado === "FALLIDO" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+                    {envio.estado.replaceAll("_", " ")}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-slate-500">Destinatario: {envio.destinatario} · Intentos: {envio.intentos}</div>
+                {envio.estado === "FALLIDO" && (
+                  <div className="mt-3 rounded-lg border border-rose-100 bg-rose-50 p-3">
+                    <div className="text-xs font-semibold text-rose-800">No se pudo enviar. Revise el correo del cliente y corrija la dirección para reenviar.</div>
+                    {envio.ultimoError && <div className="mt-1 break-words text-[11px] text-rose-700">Motivo: {envio.ultimoError}</div>}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <input
+                        aria-label={`Correo de reenvío ${envio.id}`}
+                        type="email"
+                        value={correos[envio.id] ?? envio.destinatario}
+                        onChange={(event) => setCorreos((actual) => ({ ...actual, [envio.id]: event.target.value }))}
+                        className="min-w-64 flex-1 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs outline-none focus:border-rose-400"
+                      />
+                      {puedeReintentarCorreo && (
+                        <button
+                          type="button"
+                          onClick={() => onReintentarCorreo(envio.id, correos[envio.id] ?? envio.destinatario)}
+                          className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white hover:bg-rose-700"
+                        >
+                          Corregir y reenviar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Sección de historial de estados */}
@@ -685,6 +752,8 @@ export default function Cotizaciones() {
   const [descuento, setDescuento] = useState<number>(0);
   const [viaticos, setViaticos] = useState<number>(0);
   const [selectedQuotation, setSelectedQuotation] = useState<CotizacionVista | null>(null);
+  const [enviosCorreo, setEnviosCorreo] = useState<EnvioCorreoCotizacion[]>([]);
+  const [cargandoEnviosCorreo, setCargandoEnviosCorreo] = useState(false);
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
   const [modalItems, setModalItems] = useState<QuoteItem[]>([]);
   const [modalDescuento, setModalDescuento] = useState<number>(0);
@@ -799,6 +868,37 @@ export default function Cotizaciones() {
     setToast(msg);
     setTimeout(() => setToast(""), 3000);
   }, []);
+
+  const cargarEnviosCorreo = useCallback(async (idCotizacion: number) => {
+    setCargandoEnviosCorreo(true);
+    try {
+      const response = await obtenerEnviosCorreoCotizacion(idCotizacion);
+      if (response.ok && Array.isArray(response.data)) setEnviosCorreo(response.data);
+      else setEnviosCorreo([]);
+    } finally {
+      setCargandoEnviosCorreo(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const id = selectedQuotation?.idCotizacion;
+    if (!id) {
+      setEnviosCorreo([]);
+      return;
+    }
+    void cargarEnviosCorreo(id);
+  }, [selectedQuotation?.idCotizacion, cargarEnviosCorreo]);
+
+  const handleReintentarCorreo = useCallback(async (idEnvio: number, correo: string) => {
+    if (!selectedQuotation) return;
+    const response = await reintentarEnvioCorreoCotizacion(selectedQuotation.idCotizacion, idEnvio, correo);
+    if (!response.ok) {
+      showToast(`❌ ${response.error ?? 'No se pudo reintentar el correo.'}`);
+      return;
+    }
+    showToast(`📨 Reenvío programado a ${response.data?.destinatario}. La aprobación y los documentos se conservan.`);
+    await cargarEnviosCorreo(selectedQuotation.idCotizacion);
+  }, [selectedQuotation, showToast, cargarEnviosCorreo]);
 
   const handleNuevaCotizacion = useCallback(() => {
     setItems([]);
@@ -1231,6 +1331,9 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
               formatCurrency={formatCurrency}
               historialitems={historialFormateado}
               loadingHistorial={loadingCotizaciones}
+              enviosCorreo={enviosCorreo}
+              cargandoEnviosCorreo={cargandoEnviosCorreo}
+              onReintentarCorreo={handleReintentarCorreo}
           
             />
           )}

@@ -541,7 +541,7 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
-  const { tipo, id_registro, codigo_actual, tipo_entry, id_job, action } = job.data;
+  const { tipo, id_registro, codigo_actual, tipo_entry, id_job, action, force_regenerate } = job.data;
 
   let mappingConfig = {} as MappingConfig;
   let s3TemplateKey = '';
@@ -669,7 +669,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
   // ====================================================================
   const ultimaVersion = docExistente?.version_documentos?.[0];
 
-  if (ultimaVersion && recordUpdatedAt) {
+  if (ultimaVersion && recordUpdatedAt && !force_regenerate) {
     // Tomamos las fechas en milisegundos para comparar
     // Adaptado para createdAt o created_at según como lo llame Prisma
     const fechaUltimoPdf = new Date(ultimaVersion.createdAt || (ultimaVersion as any).created_at || ultimaVersion.FECHA_CREACION).getTime();

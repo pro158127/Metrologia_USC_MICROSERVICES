@@ -35,7 +35,8 @@ const transicionesValidas: Record<Estados, Estados[]> = {
   RECHAZADA: [],
   EN_SEGUIMIENTO: [],
 };
-import { getGenerationExcelQueue } from '../lib/queue/queue.js';
+import { getEmailQueue, getGenerationExcelQueue } from '../lib/queue/queue.js';
+import { EmailJobData } from '../lib/queue/queue.js';
 const excelquue = getGenerationExcelQueue();
 
 // Esquemas de documentos categorizados por cotización
@@ -97,6 +98,145 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.get(
+    '/api/v1/cotizaciones/:id/envios-correo',
+    { preHandler: [fastify.authenticate], schema: { params: idParamSchema } },
+    async (request) => {
+      assertPermission(request, 'cotizaciones', 'consultar');
+      const idCotizacion = request.params.id;
+      const cotizacion = await fastify.prisma.cotizaciones.findUnique({
+        where: { ID_COTIZACION: idCotizacion },
+        select: { ID_COTIZACION: true },
+      });
+      if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
+
+      const envios = await fastify.prisma.correo_envios.findMany({
+        where: { ID_COTIZACION_FK: idCotizacion },
+        orderBy: { CREATED_AT: 'desc' },
+      });
+      return {
+        ok: true as const,
+        data: envios.map((envio) => ({
+          id: envio.ID_ENVIO_CORREO,
+          tipo: envio.TIPO,
+          destinatario: envio.DESTINATARIO,
+          asunto: envio.ASUNTO,
+          estado: envio.ESTADO,
+          ultimoError: envio.ULTIMO_ERROR,
+          intentos: envio.INTENTOS,
+          creadoAt: envio.CREATED_AT,
+          enviadoAt: envio.ENVIADO_AT,
+        })),
+      };
+    }
+  );
+
+  app.post(
+    '/api/v1/cotizaciones/:id/envios-correo/:idEnvio/reintentar',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        params: z.object({ id: z.coerce.number(), idEnvio: z.coerce.number() }),
+        body: z.object({ correo: z.email().optional() }),
+      },
+    },
+    async (request) => {
+      assertPermission(request, 'cotizaciones', 'crear_editar');
+      const idCotizacion = request.params.id;
+      const idEnvio = request.params.idEnvio;
+      const correoNuevo = request.body.correo?.trim().toLowerCase();
+      const idUsuario = Number(request.user?.sub ?? 0) || null;
+
+      const envio = await fastify.prisma.correo_envios.findFirst({
+        where: { ID_ENVIO_CORREO: idEnvio, ID_COTIZACION_FK: idCotizacion },
+      });
+      if (!envio) throw new AppError(404, 'No se encontró el envío de correo solicitado.');
+      if (envio.ESTADO !== 'FALLIDO') {
+        throw new AppError(409, `Solo se pueden reintentar correos fallidos. Estado actual: ${envio.ESTADO}.`);
+      }
+
+      const cotizacion = await fastify.prisma.cotizaciones.findUnique({
+        where: { ID_COTIZACION: idCotizacion },
+        select: { ID_CLIENTE_FK: true, clientes: { select: { CORREO: true } } },
+      });
+      if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
+      if (correoNuevo && cotizacion.ID_CLIENTE_FK) {
+        const correoAnterior = cotizacion.clientes?.CORREO ?? null;
+        if (correoAnterior !== correoNuevo) {
+          await fastify.prisma.clientes.update({
+            where: { ID_CLIENTE: cotizacion.ID_CLIENTE_FK },
+            data: { CORREO: correoNuevo },
+          });
+          await registrarBitacora(fastify.prisma, {
+            action: 'ACTUALIZAR_CORREO_PARA_REENVIO',
+            tableName: 'clientes',
+            recordId: cotizacion.ID_CLIENTE_FK,
+            userId: idUsuario,
+            ip: request.ip,
+            details: { idCotizacion, correoAnterior, correoNuevo },
+          });
+        }
+      }
+      const destinatario = correoNuevo ?? cotizacion.clientes?.CORREO ?? envio.DESTINATARIO;
+      if (!destinatario) throw new AppError(409, 'El cliente no tiene un correo configurado. Ingrese una dirección válida para reintentar.');
+
+      const reservado = await fastify.prisma.correo_envios.updateMany({
+        where: { ID_ENVIO_CORREO: idEnvio, ID_COTIZACION_FK: idCotizacion, ESTADO: 'FALLIDO' },
+        data: {
+          ESTADO: 'PENDIENTE',
+          DESTINATARIO: destinatario,
+          ULTIMO_ERROR: null,
+          SOLICITADO_POR: idUsuario,
+          ENVIADO_AT: null,
+        },
+      });
+      if (reservado.count !== 1) throw new AppError(409, 'Este correo ya fue tomado por otro reintento. Actualice la vista.');
+
+      const minioLinks = Array.isArray(envio.MINIO_LINKS)
+        ? envio.MINIO_LINKS.filter((link): link is string => typeof link === 'string')
+        : [];
+      const contextData = (envio.CONTEXTO ?? {}) as Record<string, unknown>;
+      const jobData: EmailJobData = {
+        to: destinatario,
+        subject: envio.ASUNTO,
+        template_type: envio.TEMPLATE_TYPE as EmailJobData['template_type'],
+        context_data: contextData,
+        minio_links: minioLinks,
+        id_registro: envio.ID_REGISTRO,
+        id_cotizacion: idCotizacion,
+        id_envio_correo: idEnvio,
+        notificar_usuario_id: idUsuario ?? envio.SOLICITADO_POR,
+        modulo_origen: envio.MODULO,
+        tabla_origen: envio.MODULO,
+        tipo_entry: 'prod',
+      };
+
+      try {
+        const job = await getEmailQueue().add(envio.TEMPLATE_TYPE, jobData);
+        await fastify.prisma.correo_envios.update({
+          where: { ID_ENVIO_CORREO: idEnvio },
+          data: { ID_JOB: String(job.id) },
+        });
+        await registrarBitacora(fastify.prisma, {
+          action: 'REINTENTO_CORREO',
+          tableName: 'correo_envios',
+          recordId: idEnvio,
+          userId: idUsuario,
+          ip: request.ip,
+          details: { idCotizacion, destinatario, jobId: String(job.id), tipo: envio.TIPO },
+        });
+        return { ok: true as const, data: { idEnvio, idJob: String(job.id), destinatario } };
+      } catch (error) {
+        const motivo = error instanceof Error ? error.message : String(error);
+        await fastify.prisma.correo_envios.update({
+          where: { ID_ENVIO_CORREO: idEnvio },
+          data: { ESTADO: 'FALLIDO', ULTIMO_ERROR: motivo },
+        });
+        throw new AppError(503, `No se pudo programar el reenvío: ${motivo}`);
+      }
+    }
+  );
 
   app.post(
     '/api/v1/cotizaciones',
@@ -284,10 +424,8 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
     if (reqEstado === Estados.ENVIADA) {
       assertPermission(request, 'cotizaciones', 'enviar_al_cliente');
     }
-    let codigo_actual_ot=null
-    let codigo_actual_recep=null
-    let id_registro_recp=null
-    let id_registro_ot=null
+    const otsParaRegenerar: Array<{ id: number; codigo: string }> = [];
+    const recepcionesParaRegenerar: Array<{ id: number; codigo: string }> = [];
     const resultado = await fastify.prisma.$transaction(async (tx) => {
       // 1. CONSULTA MAESTRA: Traemos todo el árbol de relaciones de una vez
       const existente = await tx.cotizaciones.findUnique({
@@ -425,8 +563,6 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         }
 
         // 4.1 Sincronizar cada OT (Master con todos; hijas con su sitio).
-        let masterOtActualizado: any = null;
-        let otUnicaActualizada: any = null;
         for (const ot of existente.ordenes_trabajo) {
           const esMaster = ot.SITIO_CALIBRACION == null;
           const dets = esMaster
@@ -470,18 +606,9 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             data: { CODIGO_OT: consecutivo_ot },
           });
 
-          if (esMaster) masterOtActualizado = update_ot;
-          if (existente.ordenes_trabajo.length === 1) otUnicaActualizada = update_ot;
+          otsParaRegenerar.push({ id: update_ot.ID_ORDEN_TRABAJO, codigo: update_ot.CODIGO_OT });
 
           await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
-        }
-
-        if (masterOtActualizado) {
-          codigo_actual_ot = masterOtActualizado.CODIGO_OT;
-          id_registro_ot = masterOtActualizado.ID_ORDEN_TRABAJO;
-        } else if (otUnicaActualizada) {
-          codigo_actual_ot = otUnicaActualizada.CODIGO_OT;
-          id_registro_ot = otUnicaActualizada.ID_ORDEN_TRABAJO;
         }
 
         // 4.2 Sincronizar cada Recepción según su sitio.
@@ -523,8 +650,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             where: { CODIGO_RECEPCION: recep.CODIGO_RECEPCION },
             data: { CODIGO_RECEPCION: consec },
           });
-          codigo_actual_recep = update_rec.CODIGO_RECEPCION;
-          id_registro_recp = update_rec.ID_RECEPCION;
+          recepcionesParaRegenerar.push({ id: update_rec.ID_RECEPCION, codigo: update_rec.CODIGO_RECEPCION });
         }
       } else {
         subtotal = existente.cotizacion_detalles
@@ -563,6 +689,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           ...(codigo && { CODIGO_COTIZACION: codigo }),
           ...(request.body.idCliente && { ID_CLIENTE_FK: request.body.idCliente }),
           ...(reqEstado && { ESTADO: reqEstado }),
+          UPDATED_AT: new Date(),
           viaticos,
           descuento,
           MONTO_TOTAL: montoTotal,
@@ -614,7 +741,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       return cotizacionActualizada;
     });
 
-const trackingJobs: Record<string, string> = {};
+const trackingJobs: Record<string, string[]> = {};
 
     // 7.1. SIEMPRE generamos el Excel de la Cotización actualizada
     const quoteTracker_Cot = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
@@ -624,35 +751,44 @@ const trackingJobs: Record<string, string> = {};
       id_registro: resultado.ID_COTIZACION,
       action: 'cot_update',
       codigo_actual: resultado.CODIGO_COTIZACION,
-      tipo: 1
+      tipo: 1,
+      id_usuario: idUsuario,
+      id_cotizacion: resultado.ID_COTIZACION,
+      force_regenerate: true,
     });
-    trackingJobs.cot = quoteTracker_Cot.id;
+    trackingJobs.cot = [quoteTracker_Cot.id];
 
     // 7.2. SOLO generamos el Excel de OT si realmente existe una OT vinculada
-    if (id_registro_ot && codigo_actual_ot) {
+    for (const otActualizada of otsParaRegenerar) {
       const ordeneo_tracke = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
       await excelquue.add('actualizacion_ordenes_ot', {
         id_job: ordeneo_tracke.id, 
         tipo_entry: 'prod', 
-        id_registro: id_registro_ot,
-        codigo_actual: codigo_actual_ot,
+        id_registro: otActualizada.id,
+        codigo_actual: otActualizada.codigo,
         action: 'ot_actualizar',
-        tipo: 2
+        tipo: 2,
+        id_usuario: idUsuario,
+        id_cotizacion: resultado.ID_COTIZACION,
+        force_regenerate: true,
       });
-      trackingJobs.ot = ordeneo_tracke.id;
+      (trackingJobs.ot ??= []).push(ordeneo_tracke.id);
     }
 
     // 7.3. SOLO generamos el Excel de Recepción si realmente existe una Recepción vinculada
-    if (id_registro_recp && codigo_actual_recep) {
+    for (const recepcionActualizada of recepcionesParaRegenerar) {
       const receprtracker = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
       await excelquue.add('actualizacion_recepciones', {
         id_job: receprtracker.id, 
         tipo_entry: 'prod', 
-        id_registro: id_registro_recp,
-        codigo_actual: codigo_actual_recep,
-        tipo: 3
+        id_registro: recepcionActualizada.id,
+        codigo_actual: recepcionActualizada.codigo,
+        tipo: 3,
+        id_usuario: idUsuario,
+        id_cotizacion: resultado.ID_COTIZACION,
+        force_regenerate: true,
       });
-      trackingJobs.rec = receprtracker.id;
+      (trackingJobs.rec ??= []).push(receprtracker.id);
     }
 
     // Retornamos un JSON dinámico solo con los jobs que sí se ejecutaron
@@ -780,7 +916,7 @@ const trackingJobs: Record<string, string> = {};
       });
 
       // 5. DETONAR GENERACIÓN DE EXCEL (BULLMQ)
-   const trackingJobs: Record<string, string> = {};
+   const trackingJobs: Record<string, string[]> = {};
 
       // 🔥 1. DETONAR TIPO 1 (Siempre). El correo de aprobación SOLO se envía
       // cuando el nuevo estado es APROBADA; otros estados usan una acción neutra
@@ -792,9 +928,11 @@ const trackingJobs: Record<string, string> = {};
         id_registro: resultado.cotizacion.ID_COTIZACION,
         action: resultado.cotizacion.ESTADO === 'APROBADA' ? 'aprove' : 'estado_cambio',
         codigo_actual: resultado.cotizacion.CODIGO_COTIZACION,
-        tipo: 1
+        tipo: 1,
+        id_usuario: idUsuario,
+        id_cotizacion: resultado.cotizacion.ID_COTIZACION,
       });
-      trackingJobs.cot = quoteTrackerCot.id;
+      trackingJobs.cot = [quoteTrackerCot.id];
 
       // 2. DETONAR TIPO 2 (Orden de Trabajo) — una por cada OT generada/reutilizada
       const hayMasterResultado = resultado.ots.some((o: any) => o.SITIO_CALIBRACION == null);
@@ -807,9 +945,11 @@ const trackingJobs: Record<string, string> = {};
           id_registro: ot.ID_ORDEN_TRABAJO,
           action: esMaster || !hayMasterResultado ? "ot_create" : "ot_update",
           codigo_actual: ot.CODIGO_OT,
-          tipo: 2
+          tipo: 2,
+          id_usuario: idUsuario,
+          id_cotizacion: resultado.cotizacion.ID_COTIZACION,
         });
-        trackingJobs.ot = quoteTrackerOT.id;
+        (trackingJobs.ot ??= []).push(quoteTrackerOT.id);
       }
 
       // 3. DETONAR TIPO 3 (Recepción) — una por cada Recepción generada/reutilizada
@@ -820,9 +960,11 @@ const trackingJobs: Record<string, string> = {};
           tipo_entry: 'prod',
           id_registro: rec.ID_RECEPCION,
           codigo_actual: rec.CODIGO_RECEPCION,
-          tipo: 3
+          tipo: 3,
+          id_usuario: idUsuario,
+          id_cotizacion: resultado.cotizacion.ID_COTIZACION,
         });
-        trackingJobs.rec = quoteTrackerRec.id;
+        (trackingJobs.rec ??= []).push(quoteTrackerRec.id);
       }
 
       return reply.code(200).send({ 
@@ -925,9 +1067,16 @@ const trackingJobs: Record<string, string> = {};
       let recs: any[] = [];
 
       const resultado = await fastify.prisma.$transaction(async (tx) => {
-        const actualizada = await tx.cotizaciones.update({
-          where: { ID_COTIZACION: cotizacion.ID_COTIZACION },
+        // Reclamo condicional para que dos clics simultáneos en el link no
+        // generen dos juegos de OT/recepciones.
+        const reclamo = await tx.cotizaciones.updateMany({
+          where: { ID_COTIZACION: cotizacion.ID_COTIZACION, ESTADO: Estados.ENVIADA },
           data: { ESTADO: Estados.APROBADA, MOTIVO_RECHAZO: null },
+        });
+        if (reclamo.count !== 1) return { aprobadaAhora: false as const, cotizacion: null, creador: null };
+
+        const actualizada = await tx.cotizaciones.findUniqueOrThrow({
+          where: { ID_COTIZACION: cotizacion.ID_COTIZACION },
           include: { clientes: true, cotizacion_detalles: true },
         });
 
@@ -968,8 +1117,16 @@ const trackingJobs: Record<string, string> = {};
           nivelPrioridad: 'ALTA',
         });
 
-        return actualizada;
+        return { aprobadaAhora: true as const, cotizacion: actualizada, creador };
       });
+
+      if (!resultado.aprobadaAhora || !resultado.cotizacion) {
+        return reply
+          .type('text/html')
+          .code(200)
+          .send(renderHtmlAprobacion('Cotización ya procesada', `La cotización ${cotizacion.CODIGO_COTIZACION} ya fue aprobada. No es necesario aprobarla otra vez.`, false));
+      }
+      const cotizacionAprobada = resultado.cotizacion;
 
       // Detonar generación de Excel/PDF y correo de confirmación (mismo flujo que la aprobación interna).
       try {
@@ -977,10 +1134,12 @@ const trackingJobs: Record<string, string> = {};
         await excelquue.add('actualizacion_estado_cot', {
           id_job: quoteTrackerCot.id,
           tipo_entry: 'prod',
-          id_registro: resultado.ID_COTIZACION,
+          id_registro: cotizacionAprobada.ID_COTIZACION,
           action: 'aprove',
-          codigo_actual: resultado.CODIGO_COTIZACION,
+          codigo_actual: cotizacionAprobada.CODIGO_COTIZACION,
           tipo: 1,
+          id_usuario: resultado.creador ?? undefined,
+          id_cotizacion: cotizacionAprobada.ID_COTIZACION,
         });
 
         const hayMasterOts = ots.some((o: any) => o.SITIO_CALIBRACION == null);
@@ -994,6 +1153,8 @@ const trackingJobs: Record<string, string> = {};
             action: esMaster || !hayMasterOts ? 'ot_create' : 'ot_update',
             codigo_actual: ot.CODIGO_OT,
             tipo: 2,
+            id_usuario: resultado.creador ?? undefined,
+            id_cotizacion: cotizacionAprobada.ID_COTIZACION,
           });
         }
 
@@ -1006,6 +1167,8 @@ const trackingJobs: Record<string, string> = {};
             action: 'rec_create',
             codigo_actual: rec.CODIGO_RECEPCION,
             tipo: 3,
+            id_usuario: resultado.creador ?? undefined,
+            id_cotizacion: cotizacionAprobada.ID_COTIZACION,
           });
         }
       } catch (error) {
@@ -1018,7 +1181,7 @@ const trackingJobs: Record<string, string> = {};
         .send(
           renderHtmlAprobacion(
             'Cotización aprobada',
-            `La cotización ${resultado.CODIGO_COTIZACION} ha sido aprobada correctamente. Nuestro equipo continuará con la recepción de sus equipos y la ejecución del servicio.`,
+            `La cotización ${cotizacionAprobada.CODIGO_COTIZACION} ha sido aprobada correctamente. Nuestro equipo continuará con la recepción de sus equipos y la ejecución del servicio.`,
             true
           )
         );

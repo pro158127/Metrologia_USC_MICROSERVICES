@@ -187,6 +187,8 @@ export interface GenerationExcelJobData {
   id_job?: string;
   action?:string;
   id_usuario?: number;
+  id_cotizacion?: number;
+  force_regenerate?: boolean;
 }
 
 
@@ -237,6 +239,8 @@ export interface EmailJobData {
   id_registro?: number;            // Para trazabilidad en tu BD
   tipo_entry?: 'test' | 'prod';    // Útil si quieres omitir envíos reales en dev
   notificar_usuario_id?: number | null;
+  id_envio_correo?: number;
+  id_cotizacion?: number;
   modulo_origen?: string;
   tabla_origen?: string;
 }

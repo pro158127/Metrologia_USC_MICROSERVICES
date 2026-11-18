@@ -110,6 +110,7 @@ export default async function plantillasGeneracionRoutes(fastify: FastifyInstanc
           id_job: quote_base.id,
           action:action,
           id_usuario: Number(request.user?.sub ?? 0) || undefined,
+          id_cotizacion: tipo === 1 ? id_registro : undefined,
         };
         await queue.add(GENERATION_EXCEL, jobData);
 

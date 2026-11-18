@@ -12,7 +12,7 @@ import { PrismaClient } from '@prisma/client';
 import { pipeline } from 'stream/promises';
 import { GenerarExcelBody } from '../routes/plantillas-generacion.schemas.js';
 import { generarExcelPlantilla } from './generador.excel.js'; 
-import { getEmailQueue } from '../lib/queue/queue.js';
+import { encolarCorreoConRegistro } from '../services/email-delivery.service.js';
 const prisma = new PrismaClient();
 
 async function processTarifasJob(job: Job<TarifasJobData>) {
@@ -127,10 +127,9 @@ const generador_excel= new Worker<GenerarExcelBody>(GENERATION_EXCEL, async(job)
 generador_excel.on('completed', async(job,returnvalue) => {
   console.log(`✅ [generador_excel-worker] Job Redis ${job.id} completado con éxito. (Quote BD ID: ${job.data.id_job})`);
   if (returnvalue?.exito && returnvalue?.datos_correo) {
-    const emailQueue = getEmailQueue(); // Instancia segura
     if(returnvalue.estado=="ENVIADA"){
     if(returnvalue.action=="cot_create"){
-     await emailQueue.add('crear_cotizacion', {
+     await encolarCorreoConRegistro(prisma, {
     to: returnvalue.datos_correo.emailDestino,
     subject: `Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
     template_type: 'crear_cotizacion',
@@ -139,12 +138,13 @@ generador_excel.on('completed', async(job,returnvalue) => {
     // 👇 ESTO FALTABA PARA QUE TU WORKER DE CORREOS NO FALLE EN LOS LOGS
     tipo_entry: job.data.tipo_entry, 
     id_registro: job.data.id_registro,
+    id_cotizacion: job.data.id_registro,
     notificar_usuario_id: job.data.id_usuario ?? null,
     modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
   });
     }}
     if (returnvalue.action === "cot_update") {
-      await emailQueue.add('actualizacion_cotizacion', {
+      await encolarCorreoConRegistro(prisma, {
         to: returnvalue.datos_correo.emailDestino,
         // Cambiamos el Asunto para reflejar la aprobación
         subject: `Cotizacion actualizada: Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
@@ -152,13 +152,14 @@ generador_excel.on('completed', async(job,returnvalue) => {
         context_data: returnvalue.datos_correo, // Ya incluye cantidadEquipos y numeroOT
         minio_links: [returnvalue.url_pdf],
         id_registro: job.data.id_registro,
+        id_cotizacion: job.data.id_registro,
         notificar_usuario_id: job.data.id_usuario ?? null,
         modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
       });
     }
 
     if(returnvalue.action=="aprove"){
-      await emailQueue.add('aproved', {
+      await encolarCorreoConRegistro(prisma, {
         to: returnvalue.datos_correo.emailDestino,
         // Cambiamos el Asunto para reflejar la aprobación
         subject: `✅ Aprobada: Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
@@ -166,13 +167,14 @@ generador_excel.on('completed', async(job,returnvalue) => {
         context_data: returnvalue.datos_correo, // Ya incluye cantidadEquipos y numeroOT
         minio_links: [returnvalue.url_pdf],
         id_registro: job.data.id_registro,
+        id_cotizacion: job.data.id_registro,
         notificar_usuario_id: job.data.id_usuario ?? null,
         modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
       });
     }
 
       if (returnvalue.action === "ot_create") {
-  await emailQueue.add('crear_ot', {
+  await encolarCorreoConRegistro(prisma, {
     to: returnvalue.datos_correo.emailDestino,
     // 1. Nuevo asunto indicando la acción requerida
     subject: `📋 Registro de Orden de Trabajo ${returnvalue.datos_correo.numeroOT} - MetroSoft`,
@@ -191,7 +193,7 @@ generador_excel.on('completed', async(job,returnvalue) => {
 }
 
       if (returnvalue.action === "ot_actualizar") {
-  await emailQueue.add('actualizacion_ordenes', {
+  await encolarCorreoConRegistro(prisma, {
     to: returnvalue.datos_correo.emailDestino,
     subject: `📋 Orden de Trabajo actualizada ${returnvalue.datos_correo.numeroOT} - MetroSoft`,
     template_type: 'actualizacion_ordenes',

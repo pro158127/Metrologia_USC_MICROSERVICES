@@ -60,6 +60,32 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model EmailDelivery {
+  idEnvioCorreo  Int      @id @default(autoincrement()) @map("ID_ENVIO_CORREO")
+  idCotizacion   Int?     @map("ID_COTIZACION_FK")
+  idRegistro     Int      @map("ID_REGISTRO")
+  modulo         String   @map("MODULO")
+  tipo           String   @map("TIPO")
+  destinatario   String   @map("DESTINATARIO")
+  asunto         String   @map("ASUNTO")
+  templateType   String   @map("TEMPLATE_TYPE")
+  contexto       Json     @map("CONTEXTO")
+  minioLinks     Json     @default("[]") @map("MINIO_LINKS")
+  estado         String   @default("PENDIENTE") @map("ESTADO")
+  idJob          String?  @map("ID_JOB")
+  ultimoError    String?  @map("ULTIMO_ERROR")
+  intentos       Int      @default(0) @map("INTENTOS")
+  solicitadoPor  Int?     @map("SOLICITADO_POR")
+  createdAt      DateTime @default(now()) @map("CREATED_AT")
+  updatedAt      DateTime @updatedAt @map("UPDATED_AT")
+  enviadoAt      DateTime? @map("ENVIADO_AT")
+
+  @@index([idCotizacion, createdAt])
+  @@index([idCotizacion, estado])
+  @@index([idRegistro, modulo])
+  @@map("correo_envios")
+}
+
 model Notificacion {
   idNotificacion Int      @id @default(autoincrement()) @map("ID_NOTIFICACION")
   idUsuario      Int      @map("ID_USUARIO_FK")

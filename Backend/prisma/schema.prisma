@@ -23,6 +23,31 @@ model audit_logs {
   usuarios  usuarios? @relation(fields: [USER_ID], references: [ID_USUARIO_AUTO_INCREMENT])
 }
 
+model correo_envios {
+  ID_ENVIO_CORREO   Int      @id @default(autoincrement())
+  ID_COTIZACION_FK  Int?
+  ID_REGISTRO       Int
+  MODULO            String
+  TIPO              String
+  DESTINATARIO      String
+  ASUNTO            String
+  TEMPLATE_TYPE     String
+  CONTEXTO          Json
+  MINIO_LINKS       Json     @default("[]")
+  ESTADO            String   @default("PENDIENTE")
+  ID_JOB            String?
+  ULTIMO_ERROR      String?
+  INTENTOS          Int      @default(0)
+  SOLICITADO_POR    Int?
+  CREATED_AT        DateTime @default(now())
+  UPDATED_AT        DateTime @updatedAt
+  ENVIADO_AT        DateTime?
+
+  @@index([ID_COTIZACION_FK, CREATED_AT])
+  @@index([ID_COTIZACION_FK, ESTADO])
+  @@index([ID_REGISTRO, MODULO])
+}
+
 model calibraciones {
   ID_CALIBRACION            Int                       @id @default(autoincrement())
   ID_INSTRUMENTO_FK         Int                       @unique

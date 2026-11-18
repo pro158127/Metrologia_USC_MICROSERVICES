@@ -11,6 +11,54 @@ import type {
 import type { ActionResponse } from "@/tipos/comunes";
 import { fastifyRequest, FastifyHttpError } from "@/app/lib/api/fastifyClient";
 
+export interface EnvioCorreoCotizacion {
+  id: number;
+  tipo: string;
+  destinatario: string;
+  asunto: string;
+  estado: string;
+  ultimoError: string | null;
+  intentos: number;
+  creadoAt: string | Date;
+  enviadoAt: string | Date | null;
+}
+
+export async function obtenerEnviosCorreoCotizacion(
+  idCotizacion: number,
+): Promise<ActionResponse<EnvioCorreoCotizacion[]>> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: 'No autenticado' };
+  try {
+    return await fastifyRequest<ActionResponse<EnvioCorreoCotizacion[]>>(
+      session,
+      `/api/v1/cotizaciones/${idCotizacion}/envios-correo`,
+    );
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'No se pudo cargar el estado de los correos' };
+  }
+}
+
+export async function reintentarEnvioCorreoCotizacion(
+  idCotizacion: number,
+  idEnvio: number,
+  correo?: string,
+): Promise<ActionResponse<{ idEnvio: number; idJob: string; destinatario: string }>> {
+  const perm = await validarPermiso('crear_editar');
+  if (!perm.autorizado) return { ok: false, error: perm.error };
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: 'No autenticado' };
+  try {
+    return await fastifyRequest<ActionResponse<{ idEnvio: number; idJob: string; destinatario: string }>>(
+      session,
+      `/api/v1/cotizaciones/${idCotizacion}/envios-correo/${idEnvio}/reintentar`,
+      { method: 'POST', body: correo ? { correo } : {} },
+    );
+  } catch (error) {
+    if (error instanceof FastifyHttpError) return { ok: false, error: error.message };
+    return { ok: false, error: error instanceof Error ? error.message : 'No se pudo reintentar el correo' };
+  }
+}
+
 // ==========================================
 // VALIDACIÓN DE PERMISOS (sin cambios)
 // ==========================================
