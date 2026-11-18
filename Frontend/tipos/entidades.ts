@@ -148,6 +148,7 @@ export interface CotizacionDetalleModel {
   valorUnitario: number | string;
   valorTotal: number | string;
   sitio: string | null;
+  idUnidades: string[];
 }
 
 export interface HistorialEstadoCotizacionModel {
@@ -270,6 +271,7 @@ export interface RecepcionEquipoDetalleModel {
   idInstrumento: number;
   idRecepcion: number;
   item?: number | null;
+  idUnidad?: string | null;
   instrumento: string;
   marca: string | null;
   modelo: string | null;

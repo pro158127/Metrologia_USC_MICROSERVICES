@@ -67,6 +67,7 @@ export const recepcionDetalleDtoSchema = z.object({
   idInstrumento: z.number(),
   idRecepcion: z.number(),
   item: z.number().nullable(),
+  idUnidad: z.string().nullable(),
   instrumento: z.string(),
   marca: z.string().nullable(),
   modelo: z.string().nullable(),
@@ -94,6 +95,7 @@ export const cotizacionDetalleDtoSchema = z.object({
   valorUnitario: z.number(),
   valorTotal: z.number(),
   sitio: z.string().nullable(),
+  idUnidades: z.array(z.string()),
 });
 export type CotizacionDetalleDto = z.infer<typeof cotizacionDetalleDtoSchema>;
 
@@ -381,6 +383,7 @@ export const recepcionDetalleRawToDtoSchema = z
     ID_INSTRUMENTO: z.number(),
     ID_RECEPCION_FK: z.number(),
     ITEM: z.number().nullish(),
+    ID_UNIDAD_FK: z.string().nullish(),
     INSTRUMENTO: z.string(),
     MARCA: z.string().nullish(),
     MODELO: z.string().nullish(),
@@ -399,6 +402,7 @@ export const recepcionDetalleRawToDtoSchema = z
     idInstrumento: raw.ID_INSTRUMENTO,
     idRecepcion: raw.ID_RECEPCION_FK,
     item: raw.ITEM ?? null,
+    idUnidad: raw.ID_UNIDAD_FK ?? null,
     instrumento: raw.INSTRUMENTO,
     marca: raw.MARCA ?? null,
     modelo: raw.MODELO ?? null,
@@ -427,6 +431,7 @@ export const cotizacionDetalleRawToDtoSchema = z
     VALOR_UNITARIO: z.coerce.number(),
     VALOR_TOTAL: z.coerce.number(),
     sitio: z.string().nullish(),
+    ID_UNIDADES: z.array(z.string()).nullish(),
   })
   .transform((raw): CotizacionDetalleDto => ({
     idDetalle: raw.ID_DETALLE,
@@ -439,6 +444,7 @@ export const cotizacionDetalleRawToDtoSchema = z
     valorUnitario: raw.VALOR_UNITARIO,
     valorTotal: raw.VALOR_TOTAL,
     sitio: raw.sitio ?? null,
+    idUnidades: raw.ID_UNIDADES ?? [],
   }));
 export type CotizacionDetalleRaw = z.input<typeof cotizacionDetalleRawToDtoSchema>;
 
@@ -780,6 +786,7 @@ export const instrumentoRecepcionInputSchema = z.object({
   idLocal: z.string().optional(),
   idInstrumento: z.number().optional(),
   instrumento: z.string().min(1),
+  tipoServicio: z.string().trim().min(1).optional(),
   marca: z.string().nullish(),
   modelo: z.string().nullish(),
   serie: z.string().nullish(),

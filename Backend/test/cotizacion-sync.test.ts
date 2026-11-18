@@ -92,6 +92,26 @@ test('al quitar una unidad actualiza la línea y conserva la identidad de las un
   assert.equal((mock.getQuoteUpdate()?.MONTO_TOTAL as Prisma.Decimal).toFixed(2), '990.00');
 });
 
+test('mantiene líneas separadas cuando el mismo instrumento tiene tipos de servicio distintos', async () => {
+  const mock = fakeTx({
+    details: [detalle({ ID_UNIDADES: ['unidad-1'], CANTIDAD: 1, VALOR_TOTAL: new Prisma.Decimal(500) })],
+    tarifas: [
+      { Instrumento: 'Manómetro', MAGNITUD: 'Presión', TIPO_SERVICIO: 'Calibración', Norma: 'NTC-1', historial_tarifas: [{ PRECIO_U: 500 }] },
+      { Instrumento: 'Manómetro', MAGNITUD: 'Presión', TIPO_SERVICIO: 'Verificación', Norma: 'NTC-2', historial_tarifas: [{ PRECIO_U: 700 }] },
+    ],
+  });
+
+  await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'unidad-1', tipoServicio: 'Calibración' },
+    { instrumento: 'Manómetro', idUnidad: 'unidad-2', tipoServicio: 'Verificación' },
+  ], 'LABORATORIO');
+
+  const active = mock.details.filter((d) => d.activacion);
+  assert.equal(active.length, 2);
+  assert.deepEqual(active.map((d) => d.TIPO_SERVICIO).sort(), ['Calibración', 'Verificación']);
+  assert.deepEqual(active.map((d) => d.ID_UNIDADES?.[0]).sort(), ['unidad-1', 'unidad-2']);
+});
+
 test('rechaza tarifa inexistente o ambigua antes de reemplazar las líneas vigentes', async () => {
   const existing = detalle();
   const missing = fakeTx({ details: [existing], tarifas: [] });

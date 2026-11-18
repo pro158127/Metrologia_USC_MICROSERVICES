@@ -23,9 +23,11 @@ export type {
 export interface FilaInstrumento {
   id: string;
   idInstrumento?: number;
+  idUnidad?: string | null;
   calibracionIniciada?: boolean;
   item?: number | null;
   instrumento: string;
+  tipoServicio: string;
   marca: string;
   modelo: string;
   serie: string;
