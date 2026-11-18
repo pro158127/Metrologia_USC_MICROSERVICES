@@ -5,13 +5,13 @@ import handlebars from 'handlebars';
 import nodemailer from 'nodemailer';
 import { fileURLToPath } from 'url';
 import { Client as MinioClient } from 'minio';
-import { getRedisConnection } from '../lib/queue/queue.js';
+import { EMAIL_QUEUE_NAME, getRedisConnection } from '../lib/queue/queue.js';
 import { EmailJobData } from '../lib/queue/queue.js'; 
 import { PrismaClient } from '@prisma/client';
+import { registrarFalloCorreo } from '../services/email-delivery.service.js';
 const prisma = new PrismaClient();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const EMAIL_QUEUE_NAME = 'email_queue_jobs';
 
 // 1. Configuración del Cliente MinIO
 const cleanEndPoint = (process.env.MINIO_ENDPOINT || 'minio-storage').replace(/^https?:\/\//, '').split(':')[0]; 
@@ -31,6 +31,9 @@ const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.gmail.com",
   port: parseInt(process.env.SMTP_PORT || '587', 10),
   secure: false, // Soporte para STARTTLS
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 20_000,
   auth: {
     user: process.env.SMTP_USER || process.env.OUTLOOK_USER,
     pass: process.env.SMTP_PASSWORD || process.env.OUTLOOK_APP_PASSWORD,
@@ -83,7 +86,7 @@ const procesarAdjuntosNodemailer = async (links?: string[]) => {
         content: Buffer.concat(chunks) // Nodemailer procesa el Buffer crudo directamente
       });
     } catch (err: any) {
-      console.error(`[EmailWorker] ⚠️ Error al procesar adjunto (${link}):`, err.message);
+      throw new Error(`No se pudo preparar el adjunto requerido ${link}: ${err.message}`);
     }
   }
   return attachments;
@@ -94,8 +97,8 @@ export const emailWorker = new Worker<EmailJobData>(
   EMAIL_QUEUE_NAME,
   async (job: Job<EmailJobData>) => {
     const { 
-      to, subject, template_type, context_data, 
-      minio_links, tipo_entry, id_registro 
+      to, subject, template_type, context_data,
+      minio_links, tipo_entry, id_registro
     } = job.data;
 
     console.log(`[EmailWorker] Iniciando Job ${job.id} | Tipo: ${template_type} | Registro: ${id_registro}`);
@@ -121,6 +124,14 @@ export const emailWorker = new Worker<EmailJobData>(
         attachments: emailAttachments
       });
 
+      const destinatarios = (Array.isArray(to) ? to : [to]).map((v) => v.toLowerCase());
+      const aceptados = (info.accepted ?? []).map((v) => String(v).toLowerCase());
+      const rechazados = (info.rejected ?? []).map(String);
+      const faltantes = destinatarios.filter((destinatario) => !aceptados.includes(destinatario));
+      if (rechazados.length || faltantes.length) {
+        throw new Error(`SMTP rechazó destinatarios. Rechazados: ${rechazados.join(', ') || 'ninguno'}; sin aceptación: ${faltantes.join(', ') || 'ninguno'}`);
+      }
+
       console.log(`[EmailWorker] ✅ Éxito | Job ${job.id} procesado. MessageId: ${info.messageId}`);
       return { status: 'delivered' };
 
@@ -144,6 +155,11 @@ emailWorker.on('failed', async (job, err) => {
 
   if (job && job.data) {
     const { id_registro, template_type } = job.data;
+
+    const totalIntentos = Number(job.opts.attempts ?? 1);
+    if (job.attemptsMade >= totalIntentos) {
+      await registrarFalloCorreo(prisma, job.data, String(job.id), err, job.attemptsMade);
+    }
 
     try {
       // Verificamos si el correo que falló era de una creación de OT

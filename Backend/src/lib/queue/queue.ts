@@ -20,7 +20,7 @@ export const TARIFAS_QUEUE = 'tarifas-queue';
 export const CRON_QUEUE = 'cron-queue';
 
 export const  GENERATION_EXCEL='generation-excel-queue';
-const EMAIL_QUEUE_NAME = 'email_queue_jobs';
+export const EMAIL_QUEUE_NAME = 'email_queue_jobs';
 
 let emailQueue: Queue | null = null;
 let connection: IORedis | null = null;
@@ -186,6 +186,7 @@ export interface GenerationExcelJobData {
   tipo_entry: 'test' | 'prod';
   id_job?: string;
   action?:string;
+  id_usuario?: number;
 }
 
 
@@ -223,7 +224,8 @@ export type EmailTemplateType =
   | 'crear_usuario'
   | 'restablecer_contrasena'
   | 'codigo_recuperacion'
-  | 'cambio_contrasena'; // Agrega los que necesites
+  | 'cambio_contrasena'
+  | 'pago_registrado';
 
 // 2. Interfaz estricta para el trabajo de BullMQ
 export interface EmailJobData {
@@ -234,6 +236,9 @@ export interface EmailJobData {
   minio_links?: string[];          // URLs prefirmadas de S3/MinIO (Opcional)
   id_registro?: number;            // Para trazabilidad en tu BD
   tipo_entry?: 'test' | 'prod';    // Útil si quieres omitir envíos reales en dev
+  notificar_usuario_id?: number | null;
+  modulo_origen?: string;
+  tabla_origen?: string;
 }
 export interface ImportarOTEPayload {
   s3KeyTemp: string;        // La ruta temporal del archivo subido por el cliente

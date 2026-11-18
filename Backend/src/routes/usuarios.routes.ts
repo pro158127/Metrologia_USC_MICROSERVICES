@@ -120,6 +120,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
             contrasenaTemporal: contraseñaTemporal,
           },
           id_registro: nuevoUsuario.ID_USUARIO_AUTO_INCREMENT,
+          notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+          modulo_origen: 'administracion_usuarios',
+          tabla_origen: 'usuarios',
           tipo_entry: 'prod',
         });
       } catch (mailError) {
@@ -318,6 +321,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
             nuevaContrasena: nuevaContrasenaTemporal,
           },
           id_registro: idUsuario,
+          notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+          modulo_origen: 'administracion_usuarios',
+          tabla_origen: 'usuarios',
           tipo_entry: 'prod',
         });
       } catch (mailError) {

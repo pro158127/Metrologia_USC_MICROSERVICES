@@ -140,6 +140,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
               codigo,
             },
             id_registro: usuario.ID_USUARIO_AUTO_INCREMENT,
+            notificar_usuario_id: usuario.ID_USUARIO_AUTO_INCREMENT,
+            modulo_origen: 'autenticacion',
+            tabla_origen: 'usuarios',
             tipo_entry: 'prod',
           });
         } catch (mailError) {

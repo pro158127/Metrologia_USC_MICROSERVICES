@@ -138,7 +138,9 @@ generador_excel.on('completed', async(job,returnvalue) => {
     minio_links: [returnvalue.url_pdf],
     // 👇 ESTO FALTABA PARA QUE TU WORKER DE CORREOS NO FALLE EN LOS LOGS
     tipo_entry: job.data.tipo_entry, 
-    id_registro: job.data.id_registro
+    id_registro: job.data.id_registro,
+    notificar_usuario_id: job.data.id_usuario ?? null,
+    modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
   });
     }}
     if (returnvalue.action === "cot_update") {
@@ -148,7 +150,10 @@ generador_excel.on('completed', async(job,returnvalue) => {
         subject: `Cotizacion actualizada: Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
         template_type: 'actualizar_cotizacion', // Apunta al segundo HTML en tu worker de correos
         context_data: returnvalue.datos_correo, // Ya incluye cantidadEquipos y numeroOT
-        minio_links: [returnvalue.url_pdf]
+        minio_links: [returnvalue.url_pdf],
+        id_registro: job.data.id_registro,
+        notificar_usuario_id: job.data.id_usuario ?? null,
+        modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
       });
     }
 
@@ -159,7 +164,10 @@ generador_excel.on('completed', async(job,returnvalue) => {
         subject: `✅ Aprobada: Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
         template_type: 'aproved', // Apunta al segundo HTML en tu worker de correos
         context_data: returnvalue.datos_correo, // Ya incluye cantidadEquipos y numeroOT
-        minio_links: [returnvalue.url_pdf]
+        minio_links: [returnvalue.url_pdf],
+        id_registro: job.data.id_registro,
+        notificar_usuario_id: job.data.id_usuario ?? null,
+        modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
       });
     }
 
@@ -176,7 +184,9 @@ generador_excel.on('completed', async(job,returnvalue) => {
     minio_links: [returnvalue.url_excel],
     // 5. Mantenemos el rastreo para los logs de BullMQ
     tipo_entry: job.data.tipo_entry, 
-    id_registro: job.data.id_registro
+    id_registro: job.data.id_registro,
+    notificar_usuario_id: job.data.id_usuario ?? null,
+    modulo_origen: 'ordenes_trabajo', tabla_origen: 'ordenes_trabajo'
   });
 }
 
@@ -188,7 +198,9 @@ generador_excel.on('completed', async(job,returnvalue) => {
     context_data: returnvalue.datos_correo,
     minio_links: [returnvalue.url_excel],
     tipo_entry: job.data.tipo_entry,
-    id_registro: job.data.id_registro
+    id_registro: job.data.id_registro,
+    notificar_usuario_id: job.data.id_usuario ?? null,
+    modulo_origen: 'ordenes_trabajo', tabla_origen: 'ordenes_trabajo'
   });
 }
     

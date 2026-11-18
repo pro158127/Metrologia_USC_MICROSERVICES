@@ -76,6 +76,9 @@ export default async function perfilRoutes(fastify: FastifyInstance) {
           codigo,
         },
         id_registro: id,
+        notificar_usuario_id: id,
+        modulo_origen: 'perfil',
+        tabla_origen: 'usuarios',
         tipo_entry: 'prod',
       });
 

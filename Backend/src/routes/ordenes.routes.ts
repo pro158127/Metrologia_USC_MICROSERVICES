@@ -316,6 +316,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           codigo_actual: codigoOT,
           tipo_entry: 'prod',
           id_job: quoteJobId,
+          id_usuario: idUsuario,
         });
 
         return reply.code(200).send({ 

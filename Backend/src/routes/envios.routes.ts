@@ -5,7 +5,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
 import { uploadBuffer } from '../lib/minioClient.js';
-import { getEmailQueue } from '../lib/queue/queue.js';
+import { enviarCorreoYEsperar } from '../services/email-delivery.service.js';
 import { transicionarOT, evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertAnyPermission } from '../lib/permissions.js';
@@ -328,6 +328,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       const idOT = request.params.id;
       const { ot, certificados, todosAprobados, entregaCompleta, entregasPendientes } = await cargarContextoOT(fastify, idOT);
 
+      const destinoPago = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
+      if (!destinoPago) {
+        throw new AppError(409, 'No se puede registrar el pago: la OT no tiene un correo válido. Revise o actualice el correo electrónico.');
+      }
+
       if (!entregaCompleta) {
         throw new AppError(409, `No se puede subir el comprobante. Falta completar la entrega: ${entregasPendientes.join(', ')}.`);
       }
@@ -436,43 +441,31 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           details: { codigoOT: ot.CODIGO_OT, idDocumento: documento.ID_DOCUMENTO },
         });
 
-        return { idDocumento: documento.ID_DOCUMENTO, rutaUrl: documento.RUTA_URL, yaPagada };
-      });
-
-      // Notificación de "pago registrado" (una sola vez por transición de pago).
-      if (!resultado.yaPagada) {
-        const destino = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
-        if (destino) {
-          const links = [
-            ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
-            resultado.rutaUrl,
-          ];
-          try {
-            await getEmailQueue().add('pago_registrado', {
-              to: destino,
-              subject: `Pago registrado — OT ${ot.CODIGO_OT}`,
-              template_type: 'pago_registrado',
-              context_data: {
-                nombreCliente: ot.clientes?.NOMBRE_CONTACTO ?? ot.clientes?.RAZON_SOCIAL ?? 'Cliente',
-                numeroOT: ot.CODIGO_OT,
-                numeroCotizacion: ot.no_cotizacion ?? null,
-                totalCertificados: certificados.length,
-                certificados: certificados.map((c, i) => ({
-                  item: i + 1,
-                  codigo: c.codigo,
-                  instrumento: c.instrumento,
-                  estampilla: c.estampilla ?? '—',
-                })),
-              },
-              minio_links: links,
-              id_registro: idOT,
-              tipo_entry: 'prod',
-            });
-          } catch (mailError) {
-            fastify.log.error(mailError);
-          }
+        if (!yaPagada) {
+          await enviarCorreoYEsperar({
+            to: destinoPago,
+            subject: `Pago registrado — OT ${ot.CODIGO_OT}`,
+            template_type: 'pago_registrado',
+            context_data: {
+              nombreCliente: ot.clientes?.NOMBRE_CONTACTO ?? ot.clientes?.RAZON_SOCIAL ?? 'Cliente',
+              numeroOT: ot.CODIGO_OT,
+              numeroCotizacion: ot.no_cotizacion ?? null,
+              totalCertificados: certificados.length,
+              certificados: certificados.map((c, i) => ({
+                item: i + 1, codigo: c.codigo, instrumento: c.instrumento, estampilla: c.estampilla ?? '—',
+              })),
+            },
+            minio_links: [...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v), key],
+            id_registro: idOT,
+            notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+            modulo_origen: 'entrega_y_envio',
+            tabla_origen: 'ordenes_trabajo',
+            tipo_entry: 'prod',
+          });
         }
-      }
+
+        return { idDocumento: documento.ID_DOCUMENTO, rutaUrl: documento.RUTA_URL, yaPagada };
+      }, { timeout: 180_000 });
 
       return {
         ok: true as const,
@@ -522,7 +515,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         ...comprobantes.map((c) => c.RUTA_URL),
       ];
 
-      const job = await getEmailQueue().add('enviar_certificados', {
+      const emailData = {
         to: destino,
         subject: `Certificados de calibración — OT ${ot.CODIGO_OT}`,
         template_type: 'envia_certifiados',
@@ -540,27 +533,26 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         },
         minio_links: links,
         id_registro: idOT,
+        notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+        modulo_origen: 'entrega_y_envio',
+        tabla_origen: 'ordenes_trabajo',
         tipo_entry: 'prod',
-      }, { delay: 5000 });
+      } as const;
 
-      try {
-        await fastify.prisma.$transaction(async (tx) => {
-          await transicionarOT(tx, idOT, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
-          await registrarBitacora(tx, {
+      const jobId = await fastify.prisma.$transaction(async (tx) => {
+        await transicionarOT(tx, idOT, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
+        await registrarBitacora(tx, {
             action: 'ENVIAR_CERTIFICADOS', tableName: 'ordenes_trabajo', recordId: idOT,
             userId: Number(request.user?.sub ?? 0), ip: request.ip,
             details: { codigoOT: ot.CODIGO_OT, totalCertificados: certificados.length },
-          });
         });
-      } catch (error) {
-        await job.remove().catch((removeError) => fastify.log.error(removeError));
-        throw error;
-      }
+        return await enviarCorreoYEsperar(emailData);
+      }, { timeout: 180_000 });
 
       return {
         ok: true as const,
-        message: `Certificados encolados para envío a ${destino}.`,
-        id_job: job.id,
+        message: `Certificados enviados a ${destino}.`,
+        id_job: jobId,
       };
     }
   );
@@ -757,7 +749,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         ...comprobantes.map((c) => c.RUTA_URL),
       ];
 
-      const job = await getEmailQueue().add('enviar_certificados', {
+      const emailData = {
         to: destino,
         subject: `Certificados de calibración — Cotización ${idCotizacion}`,
         template_type: 'envia_certifiados',
@@ -776,29 +768,28 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         },
         minio_links: links,
         id_registro: idCotizacion,
+        notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+        modulo_origen: 'entrega_y_envio',
+        tabla_origen: 'cotizaciones',
         tipo_entry: 'prod',
-      }, { delay: 5000 });
+      } as const;
 
-      try {
-        await fastify.prisma.$transaction(async (tx) => {
-          for (const hija of hijas) {
-            await transicionarOT(tx, hija.ID_ORDEN_TRABAJO, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
-          }
-          await registrarBitacora(tx, {
+      const jobId = await fastify.prisma.$transaction(async (tx) => {
+        for (const hija of hijas) {
+          await transicionarOT(tx, hija.ID_ORDEN_TRABAJO, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
+        }
+        await registrarBitacora(tx, {
             action: 'ENVIAR_CERTIFICADOS', tableName: 'cotizaciones', recordId: idCotizacion,
             userId: Number(request.user?.sub ?? 0), ip: request.ip,
             details: { idCotizacion, totalOTs: hijas.length, totalCertificados: certificados.length },
-          });
         });
-      } catch (error) {
-        await job.remove().catch((removeError) => fastify.log.error(removeError));
-        throw error;
-      }
+        return await enviarCorreoYEsperar(emailData);
+      }, { timeout: 180_000 });
 
       return {
         ok: true as const,
-        message: `Certificados encolados para envío a ${destino}.`,
-        id_job: job.id,
+        message: `Certificados enviados a ${destino}.`,
+        id_job: jobId,
       };
     }
   );
