@@ -1,6 +1,10 @@
 // next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Oculta el indicador visual de desarrollo de Next.js. Los errores siguen
+  // apareciendo en la terminal y en la consola del navegador.
+  devIndicators: false,
+
   // allowedDevOrigins es útil en desarrollo para los assets estáticos
   allowedDevOrigins: [
     'localhost:3000',
