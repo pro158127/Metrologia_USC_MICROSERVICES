@@ -561,6 +561,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           });
 
           let otCambio = false;
+          const idsOTConservados = new Set<number>();
 
           for (let i = 0; i < instrumentosActualizados.length; i++) {
             const inst = instrumentosActualizados[i];
@@ -575,6 +576,10 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               otDetalles.find((d) => d.INSTRUMENTO === inst.instrumento);
 
             if (otDet) {
+              // Retener por PK, no por el ID_UNIDAD_FK de la copia cargada
+              // antes del UPDATE. Si ese ID era null, comparar la copia vieja
+              // abajo podía retirar el mismo detalle que acabamos de reparar.
+              idsOTConservados.add(otDet.ID_DETALLE);
               const marca = inst.marca ?? null;
               const modelo = inst.modelo ?? null;
               const serie = inst.serie ?? null;
@@ -609,7 +614,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             } else {
               // Instrumento nuevo en recepción: crear su detalle en la OT.
               otCambio = true;
-              await tx.orden_trabajo_detalles.create({
+              const nuevoDetalleOT = await tx.orden_trabajo_detalles.create({
                 data: {
                   ID_ORDEN_TRABAJO_FK: actual.ID_ORDEN_TRABAJO_FK,
                   ITEM: item,
@@ -624,12 +629,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                   activacion: true,
                 },
               });
+              idsOTConservados.add(nuevoDetalleOT.ID_DETALLE);
             }
           }
 
-          const unidadesOTVigentes = new Set(instrumentosActualizados.map((instrumento) => instrumento.idUnidad).filter(Boolean));
           const idsOTRetirados = otDetalles
-            .filter((detalle) => detalle.activacion !== false && (!detalle.ID_UNIDAD_FK || !unidadesOTVigentes.has(detalle.ID_UNIDAD_FK)))
+            .filter((detalle) => detalle.activacion !== false && !idsOTConservados.has(detalle.ID_DETALLE))
             .map((detalle) => detalle.ID_DETALLE);
           if (idsOTRetirados.length) {
             otCambio = true;
