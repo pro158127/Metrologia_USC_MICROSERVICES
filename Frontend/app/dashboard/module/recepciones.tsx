@@ -28,6 +28,7 @@ import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
+import { obtenerDatosIniciales as obtenerDatosInicialesOT } from "@/app/action_module/ordenes";
 import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
 import { VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
 import type { QuoteItem, TarifaOption, cambiospayload } from "@/tipos/cotizacion";
@@ -1055,13 +1056,16 @@ useEffect(() => {
     if (recepcionesEquipo.length > 0) return;
     setTableLoading("recepciones_equipo", true);
     try {
-      const data = await getInitialData();
+      const [data, datosOrdenes] = await Promise.all([
+        getInitialData(),
+        obtenerDatosInicialesOT(),
+      ]);
       // Actualizamos el contexto global (fusionando con el estado actual para no
       // pisar actualizaciones en tiempo real que hayan llegado durante el fetch)
       mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
       mergeTable("clientes", data.clientes as ClienteModel[]);
       mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-      mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+      mergeTable("ordenes_trabajo", datosOrdenes.ordenes as OrdenTrabajoModel[]);
       mergeTable("tarifas", data.tarifas as TarifaModel[]);
     } catch (error) {
       console.error(error);
@@ -1246,10 +1250,13 @@ useEffect(() => {
         // Refrescar datos de trazabilidad
         setTableLoading("recepciones_equipo", true);
         try {
-          const data = await getInitialData();
+          const [data, datosOrdenes] = await Promise.all([
+            getInitialData(),
+            obtenerDatosInicialesOT(),
+          ]);
           mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
           mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-          mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+          mergeTable("ordenes_trabajo", datosOrdenes.ordenes as OrdenTrabajoModel[]);
         } finally {
           setTableLoading("recepciones_equipo", false);
         }
@@ -1550,11 +1557,14 @@ const handleGenerarActa = useCallback(async () => {
       // Refrescar la tabla global de recepciones (fusionando, sin pisar tiempo real)
       setTableLoading("recepciones_equipo", true);
       try {
-        const data = await getInitialData();
+        const [data, datosOrdenes] = await Promise.all([
+          getInitialData(),
+          obtenerDatosInicialesOT(),
+        ]);
         mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
         mergeTable("clientes", data.clientes as ClienteModel[]);
         mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+        mergeTable("ordenes_trabajo", datosOrdenes.ordenes as OrdenTrabajoModel[]);
         mergeTable("tarifas", data.tarifas as TarifaModel[]);
       } finally {
         setTableLoading("recepciones_equipo", false);
@@ -1610,10 +1620,13 @@ const handleGenerarActa = useCallback(async () => {
 
       setTableLoading("recepciones_equipo", true);
       try {
-        const data = await getInitialData();
+        const [data, datosOrdenes] = await Promise.all([
+          getInitialData(),
+          obtenerDatosInicialesOT(),
+        ]);
         mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
         mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
+        mergeTable("ordenes_trabajo", datosOrdenes.ordenes as OrdenTrabajoModel[]);
       } finally {
         setTableLoading("recepciones_equipo", false);
       }
