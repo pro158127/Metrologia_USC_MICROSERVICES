@@ -4,7 +4,7 @@ import { obtenerDatosReporte } from '../services/reportes.service.js';
 import { getReportesQueue } from '../lib/queue/queue.js';
 import { AppError } from '../lib/errors.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
-import { getObjectBuffer } from '../lib/minioClient.js';
+import { getObjectStream } from '../lib/minioClient.js';
 import {
   exportarReporteBodySchema,
   reporteJobParamsSchema,
@@ -159,12 +159,12 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
         throw new AppError(404, 'El archivo del reporte no está disponible. Genérelo nuevamente.');
       }
 
-      const buffer = await getObjectBuffer(archivo.key);
+      const stream = await getObjectStream(archivo.key);
       return reply
         .header('Content-Type', archivo.mime)
         .header('Content-Disposition', `attachment; filename="${archivo.filename}"`)
         .header('Cache-Control', 'private, no-store')
-        .send(buffer);
+        .send(stream);
     }
   );
 }
