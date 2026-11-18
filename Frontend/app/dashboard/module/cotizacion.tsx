@@ -506,7 +506,7 @@ const CreateQuotationWizard = ({
                 </div>
                 <div className="flex justify-between items-center gap-4 py-1">
                   <span className="font-medium text-slate-500">Viáticos de campo:</span>
-                  <input type="number" min="0" value={viaticos} onChange={(e) => setViaticos(parseFloat(e.target.value) || 0)} className="w-28 p-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 text-right font-mono outline-none"/>
+                  <input type="number" min="0" step="0.01" value={viaticos} onChange={(e) => setViaticos(parseFloat(e.target.value) || 0)} className="w-28 p-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 text-right font-mono outline-none"/>
                 </div>
               </div>
               <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
@@ -698,7 +698,7 @@ export default function Cotizaciones() {
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
   const formatCurrency = (value: number) =>
-    value.toLocaleString("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    value.toLocaleString("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR

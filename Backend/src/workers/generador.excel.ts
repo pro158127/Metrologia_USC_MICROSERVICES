@@ -142,10 +142,13 @@ const scalarMap: Record<string, any> = {
     contacto: cotizacion.clientes?.NOMBRE_CONTACTO || 'N/A',
     email: cotizacion.clientes?.CORREO || 'N/A',
     total_cantidad_servicios: cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0),
-    total_servicio: cotizacion.MONTO_TOTAL,
+    total_servicio: cotizacion.cotizacion_detalles?.reduce(
+      (acc: number, item: any) => acc + Number(item.VALOR_TOTAL || 0),
+      0,
+    ) ?? 0,
     descuento: cotizacion.descuento || 0, // ✅ Falta mapear la llave del JSON
    viaticos: Number(cotizacion.viaticos || 0), // ✅ Falta mapear la llave del JSON
-    monto_total: Number(cotizacion.MONTO_TOTAL || 0) + Number(cotizacion.viaticos || 0),
+    monto_total: Number(cotizacion.MONTO_TOTAL || 0),
   };
 
   // 1. Mapeo de Escalares
@@ -399,6 +402,12 @@ export function resolverDatosRecepcionConCeldas(recepcion: any, mappingConfig: M
     ? recepcion.PRUEBAS_COMPLETAS 
     : (recepcion.PRUEBAS_COMPLETAS === 'true' || recepcion.PRUEBAS_COMPLETAS === true);
 
+  const nombresTecnicos = [...new Set(
+    (recepcion.ordenes_trabajo?.orden_trabajo_detalles ?? [])
+      .map((detalle: any) => detalle.usuarios?.NOMBRE_COMPLETO?.trim())
+      .filter((nombre: string | undefined): nombre is string => Boolean(nombre)),
+  )].join(', ');
+
   const scalarMap: Record<string, any> = {
     nombre_quien_entrega: recepcion.NOMBRE_ENTREGA || recepcion.SOLICITANTE,
     no_cotizacion: recepcion.cotizaciones?.CODIGO_COTIZACION || '', 
@@ -414,7 +423,7 @@ export function resolverDatosRecepcionConCeldas(recepcion: any, mappingConfig: M
     pruebas_pesaje_si: estadoPruebas ? 'X' : '',
     pruebas_pesaje_no: !estadoPruebas ? 'X' : '',
     pruebas_pesaje_justificacion_no: !estadoPruebas ? recepcion.OBSERVACIONES_PRUEBAS : '',
-    nombre_quien_calibra: recepcion.NOMBRE_CALIBRA,
+    nombre_quien_calibra: nombresTecnicos,
     nombre_quien_recibe_servicio: recepcion.NOMBRE_RECIBE_SERVICIO,
   };
 
@@ -573,7 +582,25 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
       ordenTrabajo = await tx.ordenes_trabajo.findFirst({ where: { ID_ORDEN_TRABAJO: Number(id_registro) }, include: { orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } }, clientes: true } });
     }
     if (tipo === 3) {
-      recepcion = await tx.recepciones_equipo.findFirst({ where: { ID_RECEPCION: Number(id_registro) }, include: { recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } }, cotizaciones: true } });
+      recepcion = await tx.recepciones_equipo.findFirst({
+        where: { ID_RECEPCION: Number(id_registro) },
+        include: {
+          recepcion_equipo_detalles: {
+            where: { OR: [{ activacion: true }, { activacion: null }] },
+            orderBy: { ITEM: 'asc' },
+          },
+          cotizaciones: true,
+          ordenes_trabajo: {
+            include: {
+              orden_trabajo_detalles: {
+                where: { OR: [{ activacion: true }, { activacion: null }] },
+                orderBy: { ITEM: 'asc' },
+                include: { usuarios: { select: { NOMBRE_COMPLETO: true } } },
+              },
+            },
+          },
+        },
+      });
     }
 
     // 🔥 BUSCAR SI YA EXISTE UN DOCUMENTO PREVIO Y SU ÚLTIMA VERSIÓN
@@ -601,21 +628,21 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
 
   if (tipo === 1 && cotizacion) {
     recordUpdatedAt = cotizacion.UPDATED_AT || cotizacion.CREATED_AT;
-    const totalCalculado = Number(cotizacion.MONTO_TOTAL || 0) + Number(cotizacion.viaticos || 0);
+    const totalCalculado = Number(cotizacion.MONTO_TOTAL || 0);
     const fechaEmisionStr = cotizacion.CREATED_AT.toLocaleDateString('es-CO');
     const fechaVencimientoObj = new Date(cotizacion.CREATED_AT);
     fechaVencimientoObj.setDate(fechaVencimientoObj.getDate() + 30);
     const totalEquipos = cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0) || 0;
     const codigoOT = cotizacion.ordenes_trabajo && cotizacion.ordenes_trabajo.length > 0 ? cotizacion.ordenes_trabajo[0].CODIGO_OT : 'Pendiente de asignación';
     const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
-    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'https://qcwngnfx-3000.use2.devtunnels.ms').replace(/\/$/, '');
+    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
     datosPlantillaCorreo = {
       nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
       numeroCotizacion: cotizacion.CODIGO_COTIZACION,
       fechaEmision: fechaEmisionStr,
       fechaVencimiento: fechaVencimientoObj.toLocaleDateString('es-CO'),
-      valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(totalCalculado),
+      valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(totalCalculado),
       linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar?token=${tokenAprobacion}`,
       emailDestino: cotizacion.clientes?.CORREO,
       cantidadEquipos: totalEquipos,
@@ -765,7 +792,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
     
 
 
-    const totalCalculado = Number(cotizacion.MONTO_TOTAL || 0) + Number(cotizacion.viaticos || 0);
+    const totalCalculado = Number(cotizacion.MONTO_TOTAL || 0);
     
     // Formatear fechas a formato local
     const fechaEmisionStr = cotizacion.CREATED_AT.toLocaleDateString('es-CO');
@@ -781,14 +808,14 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
                      ? cotizacion.ordenes_trabajo[0].CODIGO_OT 
                      : 'Pendiente de asignación';
     const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
-    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'https://qcwngnfx-3000.use2.devtunnels.ms/').replace(/\/$/, '');
+    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000/').replace(/\/$/, '');
     // Mapeo exacto a las variables de tu HTML {{...}}
 datosPlantillaCorreo = {
       nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
       numeroCotizacion: cotizacion.CODIGO_COTIZACION,
       fechaEmision: fechaEmisionStr,
       fechaVencimiento: fechaVencimientoStr,
-      valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP' }).format(totalCalculado),
+      valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(totalCalculado),
       linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar?token=${tokenAprobacion}`,
       emailDestino: cotizacion.clientes?.CORREO,
       

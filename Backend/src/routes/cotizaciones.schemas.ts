@@ -27,7 +27,7 @@ export const crearCotizacionBodySchema = z
     codigo: z.string().optional(),
     idCliente: z.number(),
     viaticos: z.number().min(0).optional(),
-    descuento: z.number().min(0).max(100).optional(),
+    descuento: z.number().int().min(0).max(100).optional(),
     estado: z.enum(['BORRADOR', 'ENVIADA']).optional(),
     detalles: z.array(detalleInputSchema).min(1),
   })
@@ -359,7 +359,7 @@ export const actualizarCotizacionBodySchema = z
     idCliente: z.number().optional(),
     estado: estadosEnum.optional(),
     viaticos: z.number().min(0).optional(),
-    descuento: z.number().min(0).max(100).optional(),
+    descuento: z.number().int().min(0).max(100).optional(),
     detalles: z.array(detalleInputSchema).optional(),
     cambios: historialCambioInputSchema // 🔥 Usamos el Input, no el DTO
   })
@@ -556,7 +556,12 @@ export const cotizacionRawToDtoSchema = z
     MOTIVO_RECHAZO: z.string().nullish(),
     enviar: z.boolean(),
     descuento: z.coerce.number().nullish(),
-    cotizacion_detalles: z.array(detalleRawToDtoSchema).nullish(),
+    cotizacion_detalles: z.preprocess(
+      (detalles) => Array.isArray(detalles)
+        ? detalles.filter((detalle) => (detalle as { activacion?: boolean | null })?.activacion !== false)
+        : detalles,
+      z.array(detalleRawToDtoSchema).nullish(),
+    ),
     clientes: clienteRawToDtoSchema.nullish(),
     historial_estado_cotizacion: z.array(historialEstadoRawToDtoSchema).nullish(),
     historial_cambios: z.array(historialCambioRawToDtoSchema).nullish(),

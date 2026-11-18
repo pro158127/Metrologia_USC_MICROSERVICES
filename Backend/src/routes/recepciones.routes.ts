@@ -7,6 +7,10 @@ import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { sincronizarCotizacionDesdeRecepcion } from '../services/cotizacion-sync.service.js';
+import {
+  validarIdentidadInstrumentosRecepcion,
+  validarOTEditableAntesDeCalibrar,
+} from '../services/ot-edit-lock.service.js';
 import { getGenerationExcelQueue } from '../lib/queue/queue.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import {
@@ -31,7 +35,10 @@ import {
 type InstrumentoInput = InstrumentoRecepcionInput;
 
 const REC_INCLUDE = {
-  recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
+  recepcion_equipo_detalles: {
+    where: { OR: [{ activacion: true }, { activacion: null }] },
+    orderBy: { ITEM: 'asc' },
+  },
   documentos: true,
   cotizaciones: { include: { clientes: true } },
   ordenes_trabajo: {
@@ -132,7 +139,10 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       const recepciones = await fastify.prisma.recepciones_equipo.findMany({
         where: { VIGENTE: true, activacion: { not: false } },
         include: {
-          recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
+          recepcion_equipo_detalles: {
+            where: { OR: [{ activacion: true }, { activacion: null }] },
+            orderBy: { ITEM: 'asc' },
+          },
           cotizaciones: { include: { clientes: true } },
           ordenes_trabajo: {
             include: {
@@ -194,7 +204,10 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           fastify.prisma.recepciones_equipo.findMany({
             where: { VIGENTE: true, activacion: { not: false } },
             include: {
-              recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
+              recepcion_equipo_detalles: {
+                where: { OR: [{ activacion: true }, { activacion: null }] },
+                orderBy: { ITEM: 'asc' },
+              },
               cotizaciones: { include: { clientes: true } },
               ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
               documentos: true,
@@ -274,17 +287,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               ID_CLIENTE_FK: body.idCliente ?? null,
               ESTADO: 'BORRADOR',
               MONTO_TOTAL: 0,
-              cotizacion_detalles: {
-                create: body.instrumentos.map((inst) => ({
-                  EQUIPO_DESCRIPCION: inst.instrumento,
-                  TIPO_SERVICIO: 'Calibración',
-                  MAGNITUD: 'n/a',
-                  CANTIDAD: 1,
-                  VALOR_UNITARIO: 0,
-                  VALOR_TOTAL: 0,
-                  activacion: true,
-                })),
-              },
             },
           });
         }
@@ -322,6 +324,8 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           });
         }
 
+        await validarOTEditableAntesDeCalibrar(tx, ot.ID_ORDEN_TRABAJO, 'instrumentos de recepción');
+
         // 3. Crear la Recepción enlazada
         const codigoRec = await generarConsecutivo(tx, 'REC');
         const nueva = await tx.recepciones_equipo.create({
@@ -348,6 +352,13 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           },
           include: REC_INCLUDE,
         });
+
+        await sincronizarCotizacionDesdeRecepcion(
+          tx,
+          cotizacion.ID_COTIZACION,
+          body.instrumentos.map((instrumento) => ({ instrumento: instrumento.instrumento })),
+          normalizarSitio(body.sitioCalibracion),
+        );
 
         await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
 
@@ -416,6 +427,15 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         });
         if (!actual) throw new AppError(404, 'Recepción no encontrada');
 
+        if (actual.ID_ORDEN_TRABAJO_FK) {
+          await validarIdentidadInstrumentosRecepcion(
+            tx,
+            actual.ID_ORDEN_TRABAJO_FK,
+            actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false),
+            body.instrumentos,
+          );
+        }
+
         // 1. Nuevo consecutivo versionado de la Recepción
         const nuevoCodigoRec = await generarConsecutivo(tx, 'REC', actual.CODIGO_RECEPCION);
 
@@ -441,7 +461,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         });
 
         // 3. Sincronizar instrumentos (match por ITEM/posición, soft-delete de sobrantes)
-        const existentes = [...actual.recepcion_equipo_detalles].sort(
+        const existentes = actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false).sort(
           (a, b) => (a.ITEM ?? 0) - (b.ITEM ?? 0) || a.ID_INSTRUMENTO - b.ID_INSTRUMENTO
         );
         const usados = new Set<number>();
@@ -450,8 +470,10 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           const inst = body.instrumentos[i];
           const item = i + 1;
           const match =
-            existentes.find((d) => d.ITEM === item && !usados.has(d.ID_INSTRUMENTO)) ??
-            existentes.find((d) => !usados.has(d.ID_INSTRUMENTO));
+            (inst.idInstrumento != null
+              ? existentes.find((d) => d.ID_INSTRUMENTO === inst.idInstrumento && !usados.has(d.ID_INSTRUMENTO))
+              : existentes.find((d) => d.ITEM === item && !usados.has(d.ID_INSTRUMENTO)) ??
+                existentes.find((d) => !usados.has(d.ID_INSTRUMENTO)));
 
           if (match) {
             usados.add(match.ID_INSTRUMENTO);
@@ -487,8 +509,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           for (let i = 0; i < body.instrumentos.length; i++) {
             const inst = body.instrumentos[i];
             const item = i + 1;
+            const detalleAnterior = inst.idInstrumento != null
+              ? existentes.find((d) => d.ID_INSTRUMENTO === inst.idInstrumento)
+              : null;
             const otDet =
-              otDetalles.find((d) => d.ITEM === item) ??
+              (detalleAnterior ? otDetalles.find((d) => d.ITEM === detalleAnterior.ITEM) : undefined) ??
+              (!inst.idInstrumento ? otDetalles.find((d) => d.ITEM === item) : undefined) ??
               otDetalles.find((d) => d.INSTRUMENTO === inst.instrumento);
 
             if (otDet) {
@@ -565,7 +591,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             tx,
             actual.ID_COTIZACION_FK,
             body.instrumentos,
-            actual.SITIO_CALIBRACION ?? 'LABORATORIO',
+            normalizarSitio(body.sitioCalibracion ?? actual.SITIO_CALIBRACION),
           );
         }
 
@@ -655,10 +681,22 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         });
         if (!rec) throw new AppError(404, 'Recepción no encontrada');
 
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          await validarOTEditableAntesDeCalibrar(tx, rec.ID_ORDEN_TRABAJO_FK, 'instrumentos de recepción');
+        }
+
         const detalle = rec.recepcion_equipo_detalles.find(
           (d) => d.ID_INSTRUMENTO === idInstrumento
         );
         if (!detalle) throw new AppError(404, 'Instrumento no encontrado en la recepción');
+
+        const instrumentosActivos = rec.recepcion_equipo_detalles.filter((d) => d.activacion !== false);
+        if (detalle.activacion === false) {
+          throw new AppError(404, 'El instrumento ya está desactivado en la recepción');
+        }
+        if (instrumentosActivos.length <= 1) {
+          throw new AppError(409, 'No se puede eliminar el último instrumento activo de una recepción.');
+        }
 
         // 1. Soft delete en Recepción
         await tx.recepcion_equipo_detalles.update({
@@ -668,13 +706,20 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
         // 2. Soft delete en OT
         if (rec.ID_ORDEN_TRABAJO_FK) {
-          const otDet = await tx.orden_trabajo_detalles.findFirst({
+          const otDetPorItem = detalle.ITEM != null
+            ? await tx.orden_trabajo_detalles.findFirst({
+                where: {
+                  ID_ORDEN_TRABAJO_FK: rec.ID_ORDEN_TRABAJO_FK,
+                  ITEM: detalle.ITEM,
+                  OR: [{ activacion: true }, { activacion: null }],
+                },
+              })
+            : null;
+          const otDet = otDetPorItem ?? await tx.orden_trabajo_detalles.findFirst({
             where: {
               ID_ORDEN_TRABAJO_FK: rec.ID_ORDEN_TRABAJO_FK,
-              OR: [
-                ...(detalle.ITEM != null ? [{ ITEM: detalle.ITEM }] : []),
-                { INSTRUMENTO: detalle.INSTRUMENTO },
-              ],
+              INSTRUMENTO: detalle.INSTRUMENTO,
+              OR: [{ activacion: true }, { activacion: null }],
             },
           });
           if (otDet) {
@@ -850,6 +895,10 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           where: { ID_RECEPCION: request.params.id },
         });
         if (!rec) throw new AppError(404, 'Recepción no encontrada');
+
+        if (rec.ID_ORDEN_TRABAJO_FK) {
+          await validarOTEditableAntesDeCalibrar(tx, rec.ID_ORDEN_TRABAJO_FK, 'instrumentos de recepción');
+        }
 
         // Soft delete de la recepción (no se borra físicamente).
         await tx.recepciones_equipo.update({

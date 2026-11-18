@@ -14,7 +14,7 @@ export const s3Client = new S3Client({
 
 // 2. CLIENTE PÚBLICO (Exclusivo para presigned URLs de descarga hacia el navegador)
 export const s3ClientPublic = new S3Client({
-  endpoint: process.env.MINIO_PUBLIC_ENDPOINT || 'https://qcwngnfx-9000.use2.devtunnels.ms',
+  endpoint: process.env.MINIO_PUBLIC_ENDPOINT || 'http://localhost:3000',
   region: process.env.MINIO_REGION || 'us-east-1',
   credentials: {
     accessKeyId: process.env.MINIO_ACCESS_KEY || 'admin_metrologia',

@@ -258,6 +258,11 @@ export interface OrdenTrabajoModel {
   cliente?: ClienteModel | null;
   cotizacion?: CotizacionModel | null;
   instrumentos?: OrdenTrabajoDetalleModel[];
+  tecnicosInstrumentos?: Array<{
+    item: number;
+    instrumento: string;
+    nombreTecnico: string;
+  }>;
 }
 
 export interface RecepcionEquipoDetalleModel {

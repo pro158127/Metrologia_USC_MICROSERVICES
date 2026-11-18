@@ -77,7 +77,7 @@ export async function obtenerReportes(filtros: FiltrosReporte = {}): Promise<Dat
 async function exportarReporte(
   formato: "pdf" | "excel",
   filtros: FiltrosReporte
-): Promise<string | null> {
+): Promise<{ jobId: string | null; error: string | null }> {
   try {
     const session = await auth();
     const res = await fastifyRequest<{ ok: boolean; data: { jobId: string } }>(
@@ -85,18 +85,22 @@ async function exportarReporte(
       `/api/v1/reportes/exportar-${formato}`,
       { method: "POST", body: filtros }
     );
-    return res.data?.jobId ?? null;
+    return { jobId: res.data?.jobId ?? null, error: null };
   } catch (error) {
     console.error(`Error exportando reporte ${formato}:`, error);
-    return null;
+    return { jobId: null, error: error instanceof Error ? error.message : "Error desconocido" };
   }
 }
 
-export async function exportarReportePdf(filtros: FiltrosReporte = {}): Promise<string | null> {
+export async function exportarReportePdf(
+  filtros: FiltrosReporte = {}
+): Promise<{ jobId: string | null; error: string | null }> {
   return exportarReporte("pdf", filtros);
 }
 
-export async function exportarReporteExcel(filtros: FiltrosReporte = {}): Promise<string | null> {
+export async function exportarReporteExcel(
+  filtros: FiltrosReporte = {}
+): Promise<{ jobId: string | null; error: string | null }> {
   return exportarReporte("excel", filtros);
 }
 

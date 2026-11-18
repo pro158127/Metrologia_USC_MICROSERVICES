@@ -53,6 +53,7 @@ export async function getInitialData(): Promise<InitialDataResponse> {
 
 export interface InstrumentoRecepcionPayload {
   idLocal?: string;
+  idInstrumento?: number;
   instrumento: string;
   marca?: string;
   modelo?: string;

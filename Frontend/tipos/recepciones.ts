@@ -23,6 +23,7 @@ export type {
 export interface FilaInstrumento {
   id: string;
   idInstrumento?: number;
+  item?: number | null;
   instrumento: string;
   marca: string;
   modelo: string;
@@ -114,6 +115,7 @@ export interface DatosGeneralesSectionProps {
 export interface TablaInstrumentosProps {
   instrumentos: FilaInstrumento[];
   tarifasDisponibles: TarifaModel[];
+  tecnicosInstrumentos: Array<{ item: number; instrumento: string; nombreTecnico: string }>;
   onFilaChange: (
     index: number,
     propiedad: keyof FilaInstrumento,

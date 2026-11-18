@@ -194,7 +194,7 @@ async function resolverRegistro(prisma: PrismaClient, tipo: TipoDocumentoExcel, 
       where: { ID_COTIZACION: id },
       include: {
         clientes: true,
-        cotizacion_detalles: true,
+        cotizacion_detalles: { where: { activacion: true } },
         historial_cambios: true,
       },
     });
@@ -214,6 +214,15 @@ async function resolverRegistro(prisma: PrismaClient, tipo: TipoDocumentoExcel, 
     include: {
       recepcion_equipo_detalles: true,
       cotizaciones: true,
+      ordenes_trabajo: {
+        include: {
+          orden_trabajo_detalles: {
+            where: { OR: [{ activacion: true }, { activacion: null }] },
+            orderBy: { ITEM: 'asc' },
+            include: { usuarios: { select: { NOMBRE_COMPLETO: true } } },
+          },
+        },
+      },
     },
   });
 }
@@ -227,7 +236,7 @@ function construirValores(tipo: TipoDocumentoExcel, registro: unknown): ValuesDo
 
 function construirValoresCotizacion(c: any): ValuesDoc {
   const cliente = c.clientes as any;
-  const detalles = (c.cotizacion_detalles ?? []) as any[];
+  const detalles = ((c.cotizacion_detalles ?? []) as any[]).filter((d) => d.activacion !== false);
   const cambios = (c.historial_cambios ?? []) as any[];
   const totalCantidad = detalles.reduce((acc, d) => acc + (d.CANTIDAD ?? 0), 0);
   const totalServicio = detalles.reduce((acc, d) => acc + Number(d.VALOR_TOTAL ?? 0), 0);
@@ -336,6 +345,11 @@ function mapearDetalleOt(d: any): Record<string, unknown> {
 
 function construirValoresRecepcion(r: any): ValuesDoc {
   const detalles = (r.recepcion_equipo_detalles ?? []) as any[];
+  const nombresTecnicos = [...new Set(
+    (r.ordenes_trabajo?.orden_trabajo_detalles ?? [])
+      .map((detalle: any) => detalle.usuarios?.NOMBRE_COMPLETO?.trim())
+      .filter((nombre: string | undefined): nombre is string => Boolean(nombre)),
+  )].join(', ');
   return {
     scalars: {
       nombre_quien_entrega: r.NOMBRE_ENTREGA,
@@ -352,7 +366,7 @@ function construirValoresRecepcion(r: any): ValuesDoc {
       pruebas_pesaje_si: normalizarBooleano(r.PRUEBAS_COMPLETAS),
       pruebas_pesaje_no: r.PRUEBAS_COMPLETAS === false ? true : null,
       pruebas_pesaje_justificacion_no: r.OBSERVACIONES_PRUEBAS,
-      nombre_quien_calibra: r.NOMBRE_CALIBRA,
+      nombre_quien_calibra: nombresTecnicos,
       nombre_quien_recibe_servicio: r.NOMBRE_RECIBE_SERVICIO,
     },
     tables: {

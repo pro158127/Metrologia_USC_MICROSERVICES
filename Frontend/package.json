@@ -10,7 +10,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "backend": "workspace:*",
     "@fortune-sheet/core": "^1.0.4",
     "@fortune-sheet/react": "^1.0.4",
     "@types/bcryptjs": "^3.0.0",
@@ -22,6 +21,7 @@
     "@zwight/luckyexcel": "^1.1.6",
     "@zzhaoh/luckyexcel": "^1.1.6",
     "argon2": "^0.44.0",
+    "backend": "workspace:*",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
@@ -46,6 +46,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@prisma/client": "6.4.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.1",
@@ -56,6 +57,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "jose": "^6.2.4",
+    "prisma": "6.4.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

@@ -5,7 +5,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'stream';
-import { s3Client, BUCKET_NAME, streamToBuffer } from './s3Client.js';
+import { s3Client, s3ClientPublic, BUCKET_NAME, streamToBuffer } from './s3Client.js';
 
 /**
  * Capa de acceso a MinIO (S3-compatible) con wrappers limpios de streams,
@@ -70,21 +70,7 @@ export async function getSignedObjectUrl(key: string, ttlSeconds = 3600): Promis
     Bucket: BUCKET_NAME,
     Key: key,
   });
-  const url = await getSignedUrl(s3Client as any, command as any, { expiresIn: ttlSeconds });
-
-  // Si se define MINIO_PUBLIC_URL, reescribe el host para que la URL firmada sea
-  // accesible desde el navegador (en Docker el endpoint interno no es resoluble).
-  const publicOrigin = process.env.MINIO_PUBLIC_URL;
-  if (publicOrigin) {
-    try {
-      const signed = new URL(url);
-      const target = new URL(publicOrigin);
-      signed.protocol = target.protocol;
-      signed.host = target.host;
-      return signed.toString();
-    } catch {
-      return url;
-    }
-  }
-  return url;
+  // Firmar directamente con el host público. Reescribir después el host de
+  // una firma SigV4 invalida la firma porque el host forma parte de ella.
+  return getSignedUrl(s3ClientPublic as any, command as any, { expiresIn: ttlSeconds });
 }

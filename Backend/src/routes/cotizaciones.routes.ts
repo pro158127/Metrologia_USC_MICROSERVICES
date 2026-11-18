@@ -22,6 +22,8 @@ import {
   notificarUsuario,
 } from '../services/notificacion.service.js';
 import { generarOrdenesTrabajoAprobacion } from '../services/cotizacion-aprobacion.service.js';
+import { validarOTEditableAntesDeCalibrar } from '../services/ot-edit-lock.service.js';
+import { calcularMontoTotalCotizacion, calcularValorDetalle, normalizarDinero } from '../services/cotizacion-money.service.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import { firmarTokenAprobacion, verificarTokenAprobacion } from '../lib/approval-token.js';
 const transicionesValidas: Record<Estados, Estados[]> = {
@@ -135,10 +137,10 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       let id_jobs: string | undefined; 
       
       const resultado = await fastify.prisma.$transaction(async (tx) => {
-        let subtotalDetalles = 0;
+        let subtotalDetalles = new Prisma.Decimal(0);
         const detallesMapeados = request.body.detalles.map((d) => {
-          const valorTotal = d.cantidad * d.valorUnitario;
-          subtotalDetalles += valorTotal;
+          const valorTotal = calcularValorDetalle(d.cantidad, d.valorUnitario);
+          subtotalDetalles = subtotalDetalles.plus(valorTotal);
           return {
             EQUIPO_DESCRIPCION: d.equipoDescripcion,
             TIPO_SERVICIO: d.tipoServicio,
@@ -151,10 +153,9 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           };
         });
 
-        const viaticos = request.body.viaticos || 0;
+        const viaticos = normalizarDinero(request.body.viaticos ?? 0);
         const descuentoPorcentaje = request.body.descuento || 0;
-        const subtotalConViaticos = subtotalDetalles + viaticos;
-        const montoTotal = subtotalConViaticos - subtotalConViaticos * (descuentoPorcentaje / 100);
+        const montoTotal = calcularMontoTotalCotizacion(subtotalDetalles, viaticos, descuentoPorcentaje);
 
         const estado = request.body.estado || Estados.BORRADOR;
         const consecutivo = await generarConsecutivo(tx, "COT");
@@ -303,19 +304,23 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       });
       if (!existente) throw new AppError(404, 'Cotización no encontrada');
 
-      // 2. BLOQUEO DE SEGURIDAD (Validar estado de todas las OTs)
-      if (existente.ordenes_trabajo && existente.ordenes_trabajo.length > 0) {
-        const estadosBloqueados = ['En_recepción', 'Asignada', 'En_calibración', 'Certificado_en_revisión', 'Certificado_aprobado', 'Certificado_enviado'];
-        const otBloqueada = existente.ordenes_trabajo.find(
-          (ot) => ot.estado && estadosBloqueados.includes(ot.estado)
+      const estadosCotizacionEditables = new Set(['BORRADOR', 'ENVIADA', 'APROBADA']);
+      if (!estadosCotizacionEditables.has(existente.ESTADO)) {
+        throw new AppError(
+          409,
+          `No se puede modificar la cotización ${existente.CODIGO_COTIZACION} mientras esté en estado '${existente.ESTADO}'. Solo se permiten cambios en borrador, enviada o aprobada.`,
         );
+      }
 
-        if (otBloqueada) {
-          throw new AppError(409, `Bloqueo de seguridad: La Orden de Trabajo ${otBloqueada.CODIGO_OT} se encuentra en estado '${otBloqueada.estado}'. No es posible modificar la cotización.`);
+      // 2. Bloquear cambios comerciales desde el inicio de la calibración.
+      // Borrador, enviada, aprobada y OT asignada siguen siendo editables.
+      if (existente.ordenes_trabajo && existente.ordenes_trabajo.length > 0) {
+        for (const ot of existente.ordenes_trabajo) {
+          await validarOTEditableAntesDeCalibrar(tx, ot.ID_ORDEN_TRABAJO, 'cotización');
         }
       }
 
-      let subtotal = 0;
+      let subtotal = new Prisma.Decimal(0);
       
       // 3. LÓGICA DIFERENCIAL (CRUD DE DETALLES COTIZACIÓN)
       if (detalles) {
@@ -338,8 +343,8 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         const idsEntrantes = [];
 
         for (const d of detalles) {
-          const valorTotal = d.cantidad * d.valorUnitario;
-          subtotal += valorTotal;
+          const valorTotal = calcularValorDetalle(d.cantidad, d.valorUnitario);
+          subtotal = subtotal.plus(valorTotal);
 
           const esNuevo = !d.idDetalle || d.idDetalle > 1000000000000;
 
@@ -522,16 +527,20 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           id_registro_recp = update_rec.ID_RECEPCION;
         }
       } else {
-        subtotal = existente.cotizacion_detalles.reduce(
-          (acc, d) => acc + d.CANTIDAD * Number(d.VALOR_UNITARIO), 0
-        );
+        subtotal = existente.cotizacion_detalles
+          .filter((d) => d.activacion !== false)
+          .reduce(
+            (acc, d) => acc.plus(calcularValorDetalle(d.CANTIDAD, d.VALOR_UNITARIO)),
+            new Prisma.Decimal(0),
+          );
       }
 
       // 5. ACTUALIZACIÓN FINANCIERA Y MAESTRA
-      const viaticos = reqViaticos !== undefined ? reqViaticos : Number(existente.viaticos || 0);
+      const viaticos = reqViaticos !== undefined
+        ? normalizarDinero(reqViaticos)
+        : existente.viaticos ?? new Prisma.Decimal(0);
       const descuento = reqDescuento !== undefined ? reqDescuento : Number(existente.descuento || 0);
-      const subtotalConViaticos = subtotal + viaticos;
-      const montoTotal = subtotalConViaticos - subtotalConViaticos * (descuento / 100);
+      const montoTotal = calcularMontoTotalCotizacion(subtotal, viaticos, descuento);
 
       if (reqEstado && reqEstado !== existente.ESTADO) {
         const permitidos = transicionesValidas[existente.ESTADO] || [];

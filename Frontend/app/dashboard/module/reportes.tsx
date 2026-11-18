@@ -571,10 +571,11 @@ export function MainRendererreport() {
   const exportar = useCallback(
     async (formato: "pdf" | "excel") => {
       setExportando(true);
-      const jobId =
+      const resultado =
         formato === "pdf" ? await exportarReportePdf(filtros) : await exportarReporteExcel(filtros);
+      const jobId = resultado.jobId;
       if (!jobId) {
-        showToast("No se pudo encolar la exportación.");
+        showToast(resultado.error ?? "No se pudo encolar la exportación.");
         setExportando(false);
         return;
       }
@@ -587,7 +588,7 @@ export function MainRendererreport() {
         } else if (st?.status === "failed") {
           clearInterval(interval);
           setExportando(false);
-          showToast("Error al generar el archivo.");
+          showToast(st.error ? `Error al generar el archivo: ${st.error}` : "Error al generar el archivo.");
         }
       }, 2000);
     },

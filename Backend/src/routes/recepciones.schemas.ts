@@ -726,9 +726,10 @@ export const recepcionEquipoRawToDtoSchema = z
     nombreRecibe: raw.NOMBRE_RECIBE ?? null,
     nombreEmpaca: raw.NOMBRE_EMPACA ?? null,
     nombreCalibra: (() => {
-      const asignados = raw.ordenes_trabajo?.tecnicosInstrumentos
-        ?.map((detalle) => `${detalle.instrumento}: ${detalle.nombreTecnico}`);
-      return asignados?.length ? asignados.join(' | ') : raw.NOMBRE_CALIBRA ?? null;
+      const asignados = [...new Set(raw.ordenes_trabajo?.tecnicosInstrumentos
+        ?.map((detalle) => detalle.nombreTecnico.trim())
+        .filter(Boolean) ?? [])];
+      return asignados.length ? asignados.join(', ') : null;
     })(),
     nombreRecibeServicio: raw.NOMBRE_RECIBE_SERVICIO ?? null,
     accesorios: raw.ACCESORIOS ?? null,

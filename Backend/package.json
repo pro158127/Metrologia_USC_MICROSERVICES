@@ -6,6 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "test": "tsx --test test/*.test.ts",
     "//": "--- WORKER PESADO (Soldadora: Python, Pandas, Excels gigantes) ---",
     "worker:documentos": "tsx src/workers/documentos.worker.ts",
     "worker:plantillas": "tsx src/workers/plantillas.worker.ts",

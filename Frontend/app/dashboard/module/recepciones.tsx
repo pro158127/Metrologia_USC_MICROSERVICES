@@ -492,6 +492,7 @@ const DatosGeneralesSection = ({
 const TablaInstrumentos = ({
   instrumentos,
   tarifasDisponibles,
+  tecnicosInstrumentos,
   onFilaChange,
   onAgregarFila,
   onEliminarFila,
@@ -532,7 +533,8 @@ const TablaInstrumentos = ({
           <thead>
             <tr className="bg-slate-900 text-[10px] font-bold uppercase tracking-wider text-white border-b border-slate-800 sticky top-0 z-10">
           
-              <th className="p-3 w-48">Instrumento</th>
+          <th className="p-3 w-48">Instrumento</th>
+          <th className="p-3 w-52">Técnico asignado</th>
               <th className="p-3 w-32">Marca</th>
               <th className="p-3 w-32">Modelo</th>
               <th className="p-3 w-32">Serie</th>
@@ -574,7 +576,7 @@ const TablaInstrumentos = ({
                       {sugerenciasTarifas.map((sug) => (
                         <option
                           key={sug.id}
-                          value={sug.label}
+                          value={sug.instrumento}
                           data-id={sug.id}
                           data-magnitud={sug.magnitud}
                           data-tipo={sug.tipoServicio}
@@ -595,6 +597,15 @@ const TablaInstrumentos = ({
                       />
                     </div>
                   )}
+                </td>
+
+                <td className="p-3 text-slate-600">
+                  {tecnicosInstrumentos
+                    .filter((asignacion) => asignacion.item === (inst.item ?? i + 1))
+                    .map((asignacion) => asignacion.nombreTecnico.trim())
+                    .filter(Boolean)
+                    .filter((nombre, indice, nombres) => nombres.indexOf(nombre) === indice)
+                    .join(", ") || <span className="text-slate-400">Sin asignar</span>}
                 </td>
 
                 <td className="p-2">
@@ -823,10 +834,11 @@ const InspeccionYFirmasSection = ({
           )}
           <input
             value={nombreQuienCalibra}
-            onChange={(e) => onUpdateGeneral("nombreQuienCalibra", e.target.value)}
+            readOnly
             className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs bg-white mt-1"
-            placeholder="Nombre quién calibra"
+            placeholder="Los nombres se toman de las asignaciones de la OT"
           />
+          <span className="text-[10px] text-slate-400">Técnicos asignados en la OT, separados por coma.</span>
         </div>
       </div>
 
@@ -974,6 +986,10 @@ export function MainRenderers() {
     selectedRecepcionId !== null &&
     selectedRecepcionId !== "NUEVA" &&
     !!recepcionActual?.idOrdenTrabajo;
+  const tecnicosInstrumentos = recepcionActual?.ordenTrabajo?.tecnicosInstrumentos ?? [];
+  const nombresTecnicosAsignados = [...new Set(
+    tecnicosInstrumentos.map((asignacion) => asignacion.nombreTecnico.trim()).filter(Boolean)
+  )].join(", ");
 
   // --- Helpers para el VersionModal (soft delete) ---
   const tarifasOptions: TarifaOption[] = useMemo(() => {
@@ -1024,7 +1040,7 @@ export function MainRenderers() {
       style: "currency",
       currency: "COP",
       minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
+      maximumFractionDigits: 2,
     });
 
   // --- Helpers ---
@@ -1195,6 +1211,10 @@ useEffect(() => {
   const confirmarEliminarInstrumento = useCallback(
     async (auditForm: cambiospayload) => {
       if (!deleteInstrumento || !recepcionActual?.idRecepcion) return;
+      if (formulario.instrumentos.length <= 1) {
+        showToast("⚠️ No se puede eliminar el último instrumento activo de una recepción.");
+        return;
+      }
 
       setIsDeleting(true);
       try {
@@ -1240,7 +1260,7 @@ useEffect(() => {
         setDeleteModalItems([]);
       }
     },
-    [deleteInstrumento, recepcionActual, showToast, mergeTable, setTableLoading]
+    [deleteInstrumento, recepcionActual, formulario.instrumentos.length, showToast, mergeTable, setTableLoading]
   );
 
   // --- Operaciones de ítems dentro del VersionModal (solo contexto) ---
@@ -1304,6 +1324,7 @@ useEffect(() => {
         return {
           id: generarIdUnico(),
           idInstrumento: det.idInstrumento,
+          item: det.item ?? null,
           instrumento: det.instrumento || "",
           marca: det.marca || "",
           modelo: det.modelo || "",
@@ -1474,12 +1495,13 @@ const handleGenerarActa = useCallback(async () => {
         accesorios: formulario.accesorios || undefined,
         pruebasCompletas: formulario.pruebasCompletas,
         observacionesPruebas: formulario.observacionesPruebas || undefined,
-        nombreCalibra: formulario.nombreQuienCalibra || undefined,
+        nombreCalibra: nombresTecnicosAsignados || undefined,
         nombreRecibeServicio: formulario.nombreQuienRecibeServicio || undefined,
         
         // Instrumentos con mapeo exacto de Entrada y Salida
         instrumentos: formulario.instrumentos.map((inst) => ({
           idLocal: inst.id,
+          idInstrumento: inst.idInstrumento,
           instrumento: inst.instrumento,
           marca: inst.marca || undefined,
           modelo: inst.modelo || undefined,
@@ -1551,7 +1573,7 @@ const handleGenerarActa = useCallback(async () => {
     } finally {
       setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, recepcionActual, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion, plantillasCompletas]);
+  }, [formulario, selectedRecepcionId, recepcionActual, nombresTecnicosAsignados, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion, plantillasCompletas]);
 
   // --- Trazabilidad: cargar historial de cambios de la cotización ---
   const abrirHistorial = useCallback(async () => {
@@ -1737,6 +1759,7 @@ const handleGenerarActa = useCallback(async () => {
           <TablaInstrumentos
             instrumentos={formulario.instrumentos}
             tarifasDisponibles={tarifasDisponibles}
+            tecnicosInstrumentos={tecnicosInstrumentos}
             onFilaChange={handleFilaChange}
             onAgregarFila={agregarFilaInstrumento}
             onEliminarFila={eliminarFilaInstrumento}
@@ -1746,7 +1769,7 @@ const handleGenerarActa = useCallback(async () => {
             accesorios={formulario.accesorios}
             pruebasCompletas={formulario.pruebasCompletas}
             observacionesPruebas={formulario.observacionesPruebas}
-            nombreQuienCalibra={formulario.nombreQuienCalibra}
+            nombreQuienCalibra={nombresTecnicosAsignados}
             nombreQuienRecibeServicio={formulario.nombreQuienRecibeServicio}
             onUpdateGeneral={handleUpdateGeneral}
           />
