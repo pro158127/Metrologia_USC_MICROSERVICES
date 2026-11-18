@@ -330,10 +330,12 @@ export interface DocumentoVersionItem {
   rutaUrl: string;
   createdAt: string;
   usuario: string | null;
+  codigoRecepcion?: string;
 }
 
 export interface DocumentoItem {
   idDocumento: number;
+  idVersionActual?: number;
   nombre: string;
   rutaUrl: string;
   mimeType: string;
