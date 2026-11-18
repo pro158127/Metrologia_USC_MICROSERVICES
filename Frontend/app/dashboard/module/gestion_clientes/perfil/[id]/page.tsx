@@ -24,7 +24,6 @@ import {
   CheckCircle2,
   History,
 } from "lucide-react";
-import Link from "next/link";
 import type { Estados } from "@/tipos/enums";
 import type {
   DocumentConfig,
@@ -437,7 +436,7 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                           {(() => {
                             const historicos = (items as DocumentoItem[]).flatMap((doc) =>
                               doc.versiones
-                                .filter((version) => version.version !== doc.versionActual)
+                                .filter((version) => version.idVersion !== doc.idVersionActual)
                                 .map((version) => ({ doc, version }))
                             );
                             const historialAbierto = openHistoryFolder === f.key;
@@ -462,7 +461,7 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                                         <div key={`${doc.idDocumento}-${version.idVersion}`} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5">
                                           <div className="flex min-w-0 items-center gap-2">
                                             <History size={12} className="shrink-0 text-slate-400" />
-                                            <span className="truncate text-[10px] text-slate-600">{doc.nombre}</span>
+                                            <span className="truncate text-[10px] text-slate-600">{version.codigoRecepcion ?? doc.nombre}</span>
                                             <span className="shrink-0 text-[10px] font-bold text-slate-500">v{version.version}</span>
                                             <span className="shrink-0 text-[10px] text-slate-400">{version.usuario ?? "—"} · {new Date(version.createdAt).toLocaleDateString("es-CO")}</span>
                                           </div>

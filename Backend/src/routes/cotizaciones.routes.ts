@@ -47,9 +47,11 @@ const documentoVersionItemSchema = z.object({
   rutaUrl: z.string(),
   createdAt: z.coerce.date(),
   usuario: z.string().nullable(),
+  codigoRecepcion: z.string().optional(),
 });
 const documentoItemSchema = z.object({
   idDocumento: z.number(),
+  idVersionActual: z.number().optional(),
   nombre: z.string(),
   rutaUrl: z.string(),
   mimeType: z.string(),
@@ -1361,7 +1363,16 @@ const trackingJobs: Record<string, string[]> = {};
             ...(otIds.length ? [{ ID_ORDEN_TRABAJO_FK: { in: otIds } }] : []),
           ],
         },
-        select: { ID_RECEPCION: true },
+        select: {
+          ID_RECEPCION: true,
+          CODIGO_RECEPCION: true,
+          ID_ORDEN_TRABAJO_FK: true,
+          ID_RECEPCION_RAIZ: true,
+          VERSION: true,
+          VIGENTE: true,
+          activacion: true,
+          CREATED_AT: true,
+        },
       });
       const recIds = recepciones.map((r) => r.ID_RECEPCION);
 
@@ -1471,8 +1482,26 @@ const trackingJobs: Record<string, string[]> = {};
         usuario: v.usuarios?.NOMBRE_COMPLETO ?? null,
       });
 
+      const receiptById = new Map(recepciones.map((recepcion) => [recepcion.ID_RECEPCION, recepcion]));
+      const esArchivoRecepcionGenerado = (doc: (typeof documentos)[number]) => {
+        const recepcion = doc.ID_RECEPCION_FK ? receiptById.get(doc.ID_RECEPCION_FK) : null;
+        if (!recepcion) return false;
+        if (doc.NOMBRE === recepcion.CODIGO_RECEPCION) return true;
+        return doc.version_documentos.some((version) => {
+          const content = version.content_json;
+          if (!content || typeof content !== 'object' || Array.isArray(content)) return false;
+          return typeof content.pdf === 'string' && typeof content.excel === 'string';
+        });
+      };
+
+      const toVersionRecepcion = (
+        version: Parameters<typeof toVersion>[0],
+        codigoRecepcion: string
+      ) => ({ ...toVersion(version), codigoRecepcion });
+
       const toItem = (doc: (typeof documentos)[number]) => ({
         idDocumento: doc.ID_DOCUMENTO,
+        idVersionActual: doc.version_documentos[0]?.ID_VERSION,
         nombre: doc.NOMBRE,
         rutaUrl: doc.RUTA_URL,
         mimeType: doc.MIME_TYPE,
@@ -1493,13 +1522,59 @@ const trackingJobs: Record<string, string[]> = {};
         const item = toItem(doc);
         if (doc.ordenPagoId != null && otIds.includes(doc.ordenPagoId)) {
           categorias.comprobantes.push(item);
-        } else if (doc.ID_RECEPCION_FK != null && recIds.includes(doc.ID_RECEPCION_FK)) {
-          categorias.recepcion.push(item);
         } else if (doc.ID_COTIZACION_FK === idCotizacion) {
           categorias.cotizacion.push(item);
-        } else {
+        } else if (doc.ID_ORDEN_TRABAJO_FK != null && otIds.includes(doc.ID_ORDEN_TRABAJO_FK)) {
           categorias.ordenTrabajo.push(item);
         }
+      }
+
+      // Una recepción vigente por OT. Las recepciones reemplazadas y los
+      // documentos previos se conservan únicamente en la trazabilidad.
+      const recepcionesPorOT = new Map<string, typeof recepciones>();
+      for (const recepcion of recepciones) {
+        const claveOT = recepcion.ID_ORDEN_TRABAJO_FK != null
+          ? `ot:${recepcion.ID_ORDEN_TRABAJO_FK}`
+          : `raiz:${recepcion.ID_RECEPCION_RAIZ ?? recepcion.ID_RECEPCION}`;
+        const grupo = recepcionesPorOT.get(claveOT) ?? [];
+        grupo.push(recepcion);
+        recepcionesPorOT.set(claveOT, grupo);
+      }
+      for (const grupo of recepcionesPorOT.values()) {
+        const ordenadas = [...grupo].sort(
+          (a, b) => (b.VERSION ?? 1) - (a.VERSION ?? 1) || b.CREATED_AT.getTime() - a.CREATED_AT.getTime()
+        );
+        const vigente = ordenadas.find((recepcion) => recepcion.VIGENTE && recepcion.activacion !== false);
+        if (!vigente) continue;
+
+        const documentoVigente = documentos.find(
+          (doc) => doc.ID_RECEPCION_FK === vigente.ID_RECEPCION && esArchivoRecepcionGenerado(doc)
+        );
+        if (!documentoVigente) continue;
+
+        const item = toItem(documentoVigente);
+        const versionesHistoricas = ordenadas
+          .filter((recepcion) => recepcion.ID_RECEPCION !== vigente.ID_RECEPCION)
+          .flatMap((recepcion) => {
+            const docHistorico = documentos.find(
+              (doc) => doc.ID_RECEPCION_FK === recepcion.ID_RECEPCION && esArchivoRecepcionGenerado(doc)
+            );
+            return docHistorico
+              ? docHistorico.version_documentos.map((version) =>
+                  toVersionRecepcion(version, recepcion.CODIGO_RECEPCION)
+                )
+              : [];
+          });
+        const versionesDelDocumentoVigente = documentoVigente.version_documentos
+          .filter((version) => version.VERSION !== item.versionActual)
+          .map((version) => toVersionRecepcion(version, vigente.CODIGO_RECEPCION));
+        const unicas = new Map(
+          [...versionesHistoricas, ...versionesDelDocumentoVigente].map((version) => [version.idVersion, version])
+        );
+        item.versiones = [...unicas.values()].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        categorias.recepcion.push(item);
       }
 
       for (const cert of certificados) {
