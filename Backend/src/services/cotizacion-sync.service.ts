@@ -151,10 +151,11 @@ export async function sincronizarCotizacionDesdeRecepcion(
     const unidades = fila.idsUnidades.filter(Boolean);
     if (idDetalle) {
       const dbDetalle = detalles.find((d) => d.ID_DETALLE === idDetalle)!;
-      const idsProtegidos = await tx.certificados.findMany({
-        where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: dbDetalle.ID_UNIDADES } } } },
+      const idsDetalle = dbDetalle.ID_UNIDADES ?? [];
+      const idsProtegidos = idsDetalle.length ? await tx.certificados.findMany({
+        where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: idsDetalle } } } },
         select: { calibraciones: { select: { recepcion_equipo_detalles: { select: { ID_UNIDAD_FK: true } } } } },
-      });
+      }) : [];
       const protegidos = new Set(idsProtegidos.map((c) => c.calibraciones.recepcion_equipo_detalles.ID_UNIDAD_FK).filter(Boolean));
       if ([...protegidos].some((id) => !unidades.includes(id as string))) {
         throw new AppError(409, `No se puede quitar una unidad de "${fila.nombre}": ya tiene un certificado creado.`);

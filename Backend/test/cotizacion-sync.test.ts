@@ -16,6 +16,7 @@ type Detail = {
   VALOR_TOTAL: Prisma.Decimal;
   sitio: string;
   activacion: boolean;
+  ID_UNIDADES?: string[];
 };
 
 function fakeTx(options: { details?: Detail[]; tarifas?: object[]; viaticos?: number; descuento?: number } = {}) {
@@ -44,6 +45,7 @@ function fakeTx(options: { details?: Detail[]; tarifas?: object[]; viaticos?: nu
         return row;
       },
     },
+    certificados: { findMany: async () => [] },
     tarifas: { findMany: async () => tarifas },
     cotizaciones: {
       findUnique: async () => ({ viaticos: new Prisma.Decimal(options.viaticos ?? 100), descuento: options.descuento ?? 10 }),
@@ -80,10 +82,10 @@ test('agrupa instrumentos repetidos y completa la línea con su tarifa exacta', 
   assert.equal((mock.getQuoteUpdate()?.MONTO_TOTAL as Prisma.Decimal).toFixed(2), '2312.21');
 });
 
-test('al quitar una unidad actualiza cantidad y monto, y conserva la línea anterior desactivada', async () => {
+test('al quitar una unidad actualiza la línea y conserva la identidad de las unidades restantes', async () => {
   const mock = fakeTx({ details: [detalle()], viaticos: 100, descuento: 10 });
   await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [{ instrumento: 'Manómetro' }, { instrumento: 'Manómetro' }], 'LABORATORIO');
-  assert.equal(mock.details[0].activacion, false);
+  assert.equal(mock.details[0].activacion, true);
   const current = mock.details.find((d) => d.activacion)!;
   assert.equal(current.CANTIDAD, 2);
   assert.equal(current.VALOR_TOTAL.toFixed(2), '1000.00');
