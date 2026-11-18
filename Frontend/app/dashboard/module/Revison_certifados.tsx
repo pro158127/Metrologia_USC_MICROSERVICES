@@ -236,7 +236,7 @@ const CertificatesTable = ({
   selected,
   sortField,
   sortDir,
-  tienePermisosRevision,
+  puedeRevisarCertificado,
   handleSort,
   setSelected,
   setShowAprobar,
@@ -340,7 +340,7 @@ const CertificatesTable = ({
                 </span>
               </td>
               <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
-                {!c.bloqueado && tienePermisosRevision ? (
+                {!c.bloqueado && puedeRevisarCertificado(c) ? (
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setShowAprobar(c.idCertificado)}
@@ -371,7 +371,7 @@ const CertificatesTable = ({
 
 const PDFViewerPanel = ({
   selectedCert,
-  tienePermisosRevision,
+  tienePermisoSobreSeleccionado,
   setSelected,
   setShowAprobar,
   setShowDevolver,
@@ -402,7 +402,7 @@ const PDFViewerPanel = ({
       />
     </div>
 
-    {tienePermisosRevision && (
+    {tienePermisoSobreSeleccionado && (
       <div className="flex gap-3">
         <button
           onClick={() => setShowAprobar(selectedCert.idCertificado)}
@@ -472,12 +472,12 @@ export function RevisionCertificados() {
   const { data: session } = useSession();
   const { can } = usePermissions();
   const rol = (session?.user?.role as string) || "Sin rol";
-
-  const tienePermisosRevision = Boolean(
-    can("revision", "revisar_aprobar_acreditados") ||
-      can("revision", "revisar_aprobar_no_acreditados") ||
-      rol === "Director Técnico" ||
-      rol === "Coordinadora"
+  const puedeRevisarCertificado = useCallback(
+    (certificado: CertificadoRevision) =>
+      certificado.acreditado
+        ? can("revision", "revisar_aprobar_acreditados")
+        : can("revision", "revisar_aprobar_no_acreditados"),
+    [can]
   );
   const [certsRaw, setCertsRaw] = useState<CertificadoRevision[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -543,7 +543,11 @@ export function RevisionCertificados() {
 
   const handleAprobar = useCallback(
     async (idCertificado: number) => {
-      if (!tienePermisosRevision) return;
+      const certificado = certsRaw.find((item) => item.idCertificado === idCertificado);
+      if (!certificado || !puedeRevisarCertificado(certificado)) {
+        showToast("❌ No tienes permiso para revisar este tipo de certificado.");
+        return;
+      }
       const res = await aprobarCertificado(idCertificado);
       if (!res.ok) {
         showToast(`❌ ${res.error ?? "No se pudo aprobar el certificado."}`);
@@ -554,12 +558,16 @@ export function RevisionCertificados() {
       showToast(`✅ ${res.message ?? "Certificado aprobado con éxito."}`);
       await cargar();
     },
-    [tienePermisosRevision, showToast, cargar]
+    [certsRaw, puedeRevisarCertificado, showToast, cargar]
   );
 
   const handleDevolver = useCallback(
     async (idCertificado: number) => {
-      if (!tienePermisosRevision) return;
+      const certificado = certsRaw.find((item) => item.idCertificado === idCertificado);
+      if (!certificado || !puedeRevisarCertificado(certificado)) {
+        showToast("❌ No tienes permiso para revisar este tipo de certificado.");
+        return;
+      }
       if (!motivo.trim()) {
         setMotivoError(true);
         return;
@@ -576,7 +584,7 @@ export function RevisionCertificados() {
       showToast(`📤 ${res.message ?? "Certificado rechazado y devuelto al técnico."}`);
       await cargar();
     },
-    [tienePermisosRevision, motivo, showToast, cargar]
+    [certsRaw, puedeRevisarCertificado, motivo, showToast, cargar]
   );
 
   return (
@@ -621,7 +629,7 @@ export function RevisionCertificados() {
             selected={selected}
             sortField={sortField}
             sortDir={sortDir}
-            tienePermisosRevision={tienePermisosRevision}
+            puedeRevisarCertificado={puedeRevisarCertificado}
             handleSort={handleSort}
             setSelected={setSelected}
             setShowAprobar={setShowAprobar}
@@ -633,7 +641,7 @@ export function RevisionCertificados() {
       {selected && selectedCert && (
         <PDFViewerPanel
           selectedCert={selectedCert}
-          tienePermisosRevision={tienePermisosRevision}
+          tienePermisoSobreSeleccionado={puedeRevisarCertificado(selectedCert)}
           setSelected={setSelected}
           setShowAprobar={setShowAprobar}
           setShowDevolver={setShowDevolver}
