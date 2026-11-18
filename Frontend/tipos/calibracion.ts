@@ -62,7 +62,7 @@ export interface CertificatesTableProps {
   selected: number | null;
   sortField: SortField;
   sortDir: SortDir;
-  tienePermisosRevision: boolean;
+  puedeRevisarCertificado: (certificado: CertificadoRevision) => boolean;
   handleSort: (field: SortField) => void;
   setSelected: (v: number | null) => void;
   setShowAprobar: (v: number) => void;
@@ -71,7 +71,7 @@ export interface CertificatesTableProps {
 
 export interface PDFViewerPanelProps {
   selectedCert: CertificadoRevision;
-  tienePermisosRevision: boolean;
+  tienePermisoSobreSeleccionado: boolean;
   setSelected: (v: number | null) => void;
   setShowAprobar: (v: number) => void;
   setShowDevolver: (v: number) => void;
