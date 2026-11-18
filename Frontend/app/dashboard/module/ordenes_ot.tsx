@@ -1824,10 +1824,48 @@ const saveOrderEdits = async () => {
   );
 
   const otss: Partial<OTBase>[] = useMemo(() => {
-    return ordenesTrabajo
+    const candidatas = ordenesTrabajo
       .filter((orden) => orden.vigente !== false)
       .filter((orden) => !(orden.sitioCalibracion == null && orden.tieneHijas))
-      .map((orden) => mapearOTResumen(orden));
+
+    // La API entrega también el historial. Para datos antiguos puede haber
+    // varias filas con VIGENTE=true (o sin ese campo); agrupar por familia y
+    // sitio asegura que el Kanban muestre solo la última versión de cada OT.
+    const ultimaPorFamiliaYSitio = new Map<string, OrdenTrabajoModel>();
+    const prioridadVersion = (orden: OrdenTrabajoModel) => {
+      const version = orden.version ?? 1;
+      const sufijo = orden.codigo.match(/([A-Z])$/i)?.[1]?.toUpperCase() ?? "";
+      const letra = sufijo ? sufijo.charCodeAt(0) - 64 : 0;
+      return [version, letra, orden.idOrdenTrabajo] as const;
+    };
+
+    for (const orden of candidatas) {
+      const familia = orden.idOtRaiz != null
+        ? `raiz:${orden.idOtRaiz}`
+        : orden.idOrdenTrabajoPadre != null
+          ? `padre:${orden.idOrdenTrabajoPadre}`
+          : orden.idCotizacion != null
+            ? `cotizacion:${orden.idCotizacion}`
+            : `ot:${orden.idOrdenTrabajo}`;
+      const clave = `${familia}|sitio:${orden.sitioCalibracion ?? "UNICO"}`;
+      const actual = ultimaPorFamiliaYSitio.get(clave);
+      if (!actual) {
+        ultimaPorFamiliaYSitio.set(clave, orden);
+        continue;
+      }
+
+      const nuevaPrioridad = prioridadVersion(orden);
+      const prioridadActual = prioridadVersion(actual);
+      if (
+        nuevaPrioridad[0] > prioridadActual[0] ||
+        (nuevaPrioridad[0] === prioridadActual[0] && nuevaPrioridad[1] > prioridadActual[1]) ||
+        (nuevaPrioridad[0] === prioridadActual[0] && nuevaPrioridad[1] === prioridadActual[1] && nuevaPrioridad[2] > prioridadActual[2])
+      ) {
+        ultimaPorFamiliaYSitio.set(clave, orden);
+      }
+    }
+
+    return [...ultimaPorFamiliaYSitio.values()].map(mapearOTResumen);
   }, [ordenesTrabajo, mapearOTResumen]);
 
   /**
