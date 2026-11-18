@@ -579,18 +579,45 @@ export function MainRendererreport() {
         setExportando(false);
         return;
       }
-      const interval = setInterval(async () => {
+
+      const iniciado = Date.now();
+      const consultar = async () => {
         const st = await consultarEstadoJobReporte(jobId);
-        if (st?.status === "completed" && st.url) {
-          clearInterval(interval);
+        if (st?.status === "completed") {
           setExportando(false);
-          window.open(st.url, "_blank");
-        } else if (st?.status === "failed") {
-          clearInterval(interval);
+          if (!st.url) {
+            showToast(st.error ?? "El reporte terminó, pero no tiene un archivo descargable. Genéralo nuevamente.");
+            return;
+          }
+          // El job termina de forma asíncrona; window.open aquí suele ser
+          // bloqueado por Chrome porque ya no ocurre dentro del clic original.
+          // Un enlace same-origin descarga el adjunto sin abrir otra pestaña.
+          const enlace = document.createElement("a");
+          enlace.href = st.url;
+          enlace.download = `reporte.${formato === "excel" ? "xlsx" : "pdf"}`;
+          enlace.style.display = "none";
+          document.body.appendChild(enlace);
+          enlace.click();
+          enlace.remove();
+          return;
+        }
+        if (st?.status === "failed") {
           setExportando(false);
           showToast(st.error ? `Error al generar el archivo: ${st.error}` : "Error al generar el archivo.");
+          return;
         }
-      }, 2000);
+
+        if (Date.now() - iniciado > 10 * 60 * 1000) {
+          setExportando(false);
+          showToast("La generación está tardando más de lo esperado. Vuelve a intentarlo y revisa los logs del worker de reportes.");
+          return;
+        }
+
+        // setTimeout evita consultas simultáneas cuando una respuesta HTTP
+        // tarda más que el intervalo configurado.
+        window.setTimeout(consultar, 2000);
+      };
+      void consultar();
     },
     [filtros, showToast]
   );
