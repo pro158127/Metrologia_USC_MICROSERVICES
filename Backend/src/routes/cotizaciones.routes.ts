@@ -48,6 +48,7 @@ const documentoVersionItemSchema = z.object({
   createdAt: z.coerce.date(),
   usuario: z.string().nullable(),
   codigoRecepcion: z.string().optional(),
+  codigoOT: z.string().optional(),
 });
 const documentoItemSchema = z.object({
   idDocumento: z.number(),
@@ -1352,7 +1353,16 @@ const trackingJobs: Record<string, string[]> = {};
 
       const ordenes = await fastify.prisma.ordenes_trabajo.findMany({
         where: { ID_COTIZACION_FK: idCotizacion },
-        select: { ID_ORDEN_TRABAJO: true },
+        select: {
+          ID_ORDEN_TRABAJO: true,
+          CODIGO_OT: true,
+          ID_OT_RAIZ: true,
+          ID_OT_PADRE_FK: true,
+          VERSION: true,
+          VIGENTE: true,
+          SITIO_CALIBRACION: true,
+          CREATED_AT: true,
+        },
       });
       const otIds = ordenes.map((o) => o.ID_ORDEN_TRABAJO);
 
@@ -1482,22 +1492,21 @@ const trackingJobs: Record<string, string[]> = {};
         usuario: v.usuarios?.NOMBRE_COMPLETO ?? null,
       });
 
-      const receiptById = new Map(recepciones.map((recepcion) => [recepcion.ID_RECEPCION, recepcion]));
-      const esArchivoRecepcionGenerado = (doc: (typeof documentos)[number]) => {
-        const recepcion = doc.ID_RECEPCION_FK ? receiptById.get(doc.ID_RECEPCION_FK) : null;
-        if (!recepcion) return false;
-        if (doc.NOMBRE === recepcion.CODIGO_RECEPCION) return true;
-        return doc.version_documentos.some((version) => {
-          const content = version.content_json;
-          if (!content || typeof content !== 'object' || Array.isArray(content)) return false;
-          return typeof content.pdf === 'string' && typeof content.excel === 'string';
-        });
+      const esArchivoGenerado = (doc: (typeof documentos)[number], codigo: string) => {
+        const nombre = doc.NOMBRE.trim().replace(/\.(pdf|xlsx?)$/i, '');
+        const keyName = doc.RUTA_URL.split('/').pop()?.split('?')[0]?.replace(/\.(pdf|xlsx?)$/i, '') ?? '';
+        return nombre.localeCompare(codigo, undefined, { sensitivity: 'accent' }) === 0 ||
+          keyName.localeCompare(codigo, undefined, { sensitivity: 'accent' }) === 0;
       };
 
       const toVersionRecepcion = (
         version: Parameters<typeof toVersion>[0],
         codigoRecepcion: string
       ) => ({ ...toVersion(version), codigoRecepcion });
+      const toVersionOT = (
+        version: Parameters<typeof toVersion>[0],
+        codigoOT: string
+      ) => ({ ...toVersion(version), codigoOT });
 
       const toItem = (doc: (typeof documentos)[number]) => ({
         idDocumento: doc.ID_DOCUMENTO,
@@ -1524,9 +1533,56 @@ const trackingJobs: Record<string, string[]> = {};
           categorias.comprobantes.push(item);
         } else if (doc.ID_COTIZACION_FK === idCotizacion) {
           categorias.cotizacion.push(item);
-        } else if (doc.ID_ORDEN_TRABAJO_FK != null && otIds.includes(doc.ID_ORDEN_TRABAJO_FK)) {
-          categorias.ordenTrabajo.push(item);
         }
+      }
+
+      // Las OTs maestras son contenedores del grupo heterogéneo; mostrar solo
+      // una OT vigente por sitio/raíz evita duplicar documentos de versiones.
+      const ordenesPorLinaje = new Map<string, typeof ordenes>();
+      for (const orden of ordenes) {
+        const raiz = orden.ID_OT_RAIZ ?? orden.ID_OT_PADRE_FK ?? orden.ID_ORDEN_TRABAJO;
+        const sitio = orden.SITIO_CALIBRACION ?? 'MASTER';
+        const clave = `${raiz}:${sitio}`;
+        const grupo = ordenesPorLinaje.get(clave) ?? [];
+        grupo.push(orden);
+        ordenesPorLinaje.set(clave, grupo);
+      }
+      for (const grupo of ordenesPorLinaje.values()) {
+        const ordenadas = [...grupo].sort(
+          (a, b) => (b.VERSION ?? 1) - (a.VERSION ?? 1) ||
+            (b.CREATED_AT?.getTime() ?? 0) - (a.CREATED_AT?.getTime() ?? 0)
+        );
+        const vigente = ordenadas.find((orden) => orden.VIGENTE);
+        if (!vigente || vigente.SITIO_CALIBRACION == null) continue;
+
+        const documentoVigente = documentos.find(
+          (doc) => doc.ID_ORDEN_TRABAJO_FK === vigente.ID_ORDEN_TRABAJO &&
+            esArchivoGenerado(doc, vigente.CODIGO_OT)
+        );
+        if (!documentoVigente) continue;
+
+        const item = toItem(documentoVigente);
+        const historicas = ordenadas
+          .filter((orden) => orden.ID_ORDEN_TRABAJO !== vigente.ID_ORDEN_TRABAJO)
+          .flatMap((orden) => {
+            const docHistorico = documentos.find(
+              (doc) => doc.ID_ORDEN_TRABAJO_FK === orden.ID_ORDEN_TRABAJO &&
+                esArchivoGenerado(doc, orden.CODIGO_OT)
+            );
+            return docHistorico
+              ? docHistorico.version_documentos.map((version) => toVersionOT(version, orden.CODIGO_OT))
+              : [];
+          });
+        const versionesPrevias = documentoVigente.version_documentos
+          .filter((version) => version.ID_VERSION !== item.idVersionActual)
+          .map((version) => toVersionOT(version, vigente.CODIGO_OT));
+        const unicas = new Map(
+          [...historicas, ...versionesPrevias].map((version) => [version.idVersion, version])
+        );
+        item.versiones = [...unicas.values()].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        categorias.ordenTrabajo.push(item);
       }
 
       // Una recepción vigente por OT. Las recepciones reemplazadas y los
@@ -1548,7 +1604,8 @@ const trackingJobs: Record<string, string[]> = {};
         if (!vigente) continue;
 
         const documentoVigente = documentos.find(
-          (doc) => doc.ID_RECEPCION_FK === vigente.ID_RECEPCION && esArchivoRecepcionGenerado(doc)
+          (doc) => doc.ID_RECEPCION_FK === vigente.ID_RECEPCION &&
+            esArchivoGenerado(doc, vigente.CODIGO_RECEPCION)
         );
         if (!documentoVigente) continue;
 
@@ -1557,7 +1614,8 @@ const trackingJobs: Record<string, string[]> = {};
           .filter((recepcion) => recepcion.ID_RECEPCION !== vigente.ID_RECEPCION)
           .flatMap((recepcion) => {
             const docHistorico = documentos.find(
-              (doc) => doc.ID_RECEPCION_FK === recepcion.ID_RECEPCION && esArchivoRecepcionGenerado(doc)
+              (doc) => doc.ID_RECEPCION_FK === recepcion.ID_RECEPCION &&
+                esArchivoGenerado(doc, recepcion.CODIGO_RECEPCION)
             );
             return docHistorico
               ? docHistorico.version_documentos.map((version) =>
