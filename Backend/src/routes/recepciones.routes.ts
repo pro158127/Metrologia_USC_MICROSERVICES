@@ -269,7 +269,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const body = request.body;
-      let instrumentosConId = body.instrumentos.map((instrumento) => ({ ...instrumento, idUnidad: randomUUID() }));
+      let instrumentosConId: InstrumentoInput[] = body.instrumentos.map((instrumento) => ({ ...instrumento, idUnidad: randomUUID() }));
       if (body.estado === 'RECIBIDO' && !validarRecepcionDefinitiva(body.instrumentos, body)) {
         throw new AppError(409, 'No se puede marcar RECIBIDO: complete entrega, fecha, datos de cada instrumento y los cuatro valores IBC de entrada.');
       }
