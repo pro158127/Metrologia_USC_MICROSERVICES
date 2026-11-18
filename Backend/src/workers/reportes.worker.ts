@@ -14,7 +14,7 @@ import {
   generarReportePdf,
   generarReporteExcel,
 } from '../services/reportes.service.js';
-import { uploadBuffer, getSignedObjectUrl } from '../lib/minioClient.js';
+import { uploadBuffer } from '../lib/minioClient.js';
 
 const prisma = new PrismaClient();
 
@@ -39,9 +39,9 @@ export const reportesWorker = new Worker<ReportesJobData>(
 
     const key = `reportes/reporte_${Date.now()}.${ext}`;
     await uploadBuffer(key, buffer, mime, { originalName: `reporte.${ext}` });
-    const url = await getSignedObjectUrl(key, 3600);
-
-    return { url };
+    // Devolvemos la llave interna. El navegador descarga mediante el backend,
+    // evitando firmas S3 que atraviesan el túnel/proxy público.
+    return { key, filename: `reporte.${ext}`, mime };
   },
   {
     connection: getRedisConnection(),

@@ -33,9 +33,9 @@ interface DetalleCotizacionExistente {
 export async function sincronizarCotizacionDesdeRecepcion(
   tx: Tx,
   idCotizacion: number,
-  instrumentos: { instrumento: string; idUnidad?: string | null }[],
+  instrumentos: { instrumento: string; idUnidad?: string | null; tipoServicio?: string | null }[],
   sitio: Sitio,
-): Promise<void> {
+): Promise<boolean> {
   // 1. Detalles activos existentes de la cotización.
   const detalles = await tx.cotizacion_detalles.findMany({
     where: { ID_COTIZACION_FK: idCotizacion, activacion: true },
@@ -80,10 +80,11 @@ export async function sincronizarCotizacionDesdeRecepcion(
 
   const normalizar = (s: string): string => s.trim().toLowerCase();
 
-  const resolverTarifa = (nombre: string, existente?: DetalleCotizacionExistente): TarifaInfo | null => {
+  const resolverTarifa = (nombre: string, tipoServicio?: string | null, existente?: DetalleCotizacionExistente): TarifaInfo | null => {
     const n = normalizar(nombre);
     if (!n) return null;
     let matches = tarifasPorInstrumento.filter(({ instrumento }) => normalizar(instrumento) === n);
+    if (tipoServicio) matches = matches.filter(({ info }) => normalizar(info.tipoServicio) === normalizar(tipoServicio));
     if (existente) {
       matches = matches.filter(({ info }) =>
         info.tipoServicio.toLocaleLowerCase() === existente.tipoServicio.toLocaleLowerCase() &&
@@ -98,19 +99,20 @@ export async function sincronizarCotizacionDesdeRecepcion(
   };
 
   // 3. Agrupar instrumentos por nombre → CANTIDAD.
-  const grupos = new Map<string, { nombre: string; unidades: string[] }>();
+  const grupos = new Map<string, { nombre: string; tipoServicio?: string | null; unidades: string[] }>();
   for (const inst of instrumentos) {
     const name = inst.instrumento?.trim();
     if (!name) continue;
     const key = normalizar(name);
-    const grupo = grupos.get(key);
+    const groupKey = `${key}|${normalizar(inst.tipoServicio ?? '')}`;
+    const grupo = grupos.get(groupKey);
     if (grupo) grupo.unidades.push(inst.idUnidad ?? '');
-    else grupos.set(key, { nombre: name, unidades: [inst.idUnidad ?? ''] });
+    else grupos.set(groupKey, { nombre: name, tipoServicio: inst.tipoServicio, unidades: [inst.idUnidad ?? ''] });
   }
 
-  const filas = [...grupos.values()].map(({ nombre, unidades }) => {
+  const filas = [...grupos.values()].map(({ nombre, tipoServicio, unidades }) => {
     const existentesCompatibles = (existentesPorInstrumento.get(normalizar(nombre)) ?? [])
-      .filter((detalle) => detalle.sitio === sitio);
+      .filter((detalle) => detalle.sitio === sitio && (!tipoServicio || normalizar(detalle.tipoServicio) === normalizar(tipoServicio)));
     const clavesComerciales = new Set(existentesCompatibles.map((d) =>
       `${d.tipoServicio.toLocaleLowerCase()}|${d.magnitud.toLocaleLowerCase()}|${(d.norma ?? '').toLocaleLowerCase()}`
     ));
@@ -118,7 +120,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
       throw new AppError(409, `La cotización tiene varias tarifas para "${nombre}" en el mismo sitio. No se puede recalcular la recepción sin identificar cuál línea corresponde.`);
     }
     const existente = existentesCompatibles[0];
-    const tarifa = resolverTarifa(nombre, existente);
+    const tarifa = resolverTarifa(nombre, tipoServicio, existente);
     if (!existente && !tarifa) {
       throw new AppError(409, `No existe una tarifa activa con el nombre exacto "${nombre}". No se guardó el cambio en la cotización.`);
     }
@@ -132,7 +134,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
       nombre,
       cantidad: unidades.length,
       idsUnidades: unidades,
-      tipoServicio: existente?.tipoServicio ?? tarifa?.tipoServicio ?? 'Calibración',
+      tipoServicio: existente?.tipoServicio ?? tarifa?.tipoServicio ?? tipoServicio ?? 'Calibración',
       magnitud: existente?.magnitud ?? tarifa?.magnitud ?? 'n/a',
       norma: existente?.norma ?? tarifa?.norma ?? null,
       valorUnitario: precio,
@@ -160,15 +162,18 @@ export async function sincronizarCotizacionDesdeRecepcion(
       if ([...protegidos].some((id) => !unidades.includes(id as string))) {
         throw new AppError(409, `No se puede quitar una unidad de "${fila.nombre}": ya tiene un certificado creado.`);
       }
-      await tx.cotizacion_detalles.update({
+      const datos = {
+        EQUIPO_DESCRIPCION: fila.nombre,
+        CANTIDAD: fila.cantidad,
+        ID_UNIDADES: unidades,
+        VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
+        activacion: true,
+      };
+      const igual = dbDetalle.EQUIPO_DESCRIPCION === datos.EQUIPO_DESCRIPCION && dbDetalle.CANTIDAD === datos.CANTIDAD &&
+        JSON.stringify(idsDetalle) === JSON.stringify(unidades) && new Prisma.Decimal(dbDetalle.VALOR_TOTAL).eq(datos.VALOR_TOTAL) && dbDetalle.activacion;
+      if (!igual) await tx.cotizacion_detalles.update({
         where: { ID_DETALLE: idDetalle },
-        data: {
-          EQUIPO_DESCRIPCION: fila.nombre,
-          CANTIDAD: fila.cantidad,
-          ID_UNIDADES: unidades,
-          VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
-          activacion: true,
-        },
+        data: datos,
       });
       idsFilasVigentes.add(idDetalle);
     } else {
@@ -213,8 +218,13 @@ export async function sincronizarCotizacionDesdeRecepcion(
   const descuento = Number(cot?.descuento ?? 0);
   const montoTotal = calcularMontoTotalCotizacion(subtotal, viaticos, descuento);
 
-  await tx.cotizaciones.update({
+  const detalleActualizado = await tx.cotizacion_detalles.findMany({ where: { ID_COTIZACION_FK: idCotizacion, activacion: true } });
+  const before = JSON.stringify(detalles.map((d) => [d.ID_DETALLE, d.EQUIPO_DESCRIPCION, d.TIPO_SERVICIO, d.CANTIDAD, String(d.VALOR_TOTAL), d.activacion, d.sitio, d.ID_UNIDADES]).sort());
+  const after = JSON.stringify(detalleActualizado.map((d) => [d.ID_DETALLE, d.EQUIPO_DESCRIPCION, d.TIPO_SERVICIO, d.CANTIDAD, String(d.VALOR_TOTAL), d.activacion, d.sitio, d.ID_UNIDADES]).sort());
+  const changed = before !== after || !new Prisma.Decimal(cot?.MONTO_TOTAL ?? 0).eq(montoTotal);
+  if (changed) await tx.cotizaciones.update({
     where: { ID_COTIZACION: idCotizacion },
     data: { MONTO_TOTAL: montoTotal, UPDATED_AT: new Date() },
   });
+  return changed;
 }

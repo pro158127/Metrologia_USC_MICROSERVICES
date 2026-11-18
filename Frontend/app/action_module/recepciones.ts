@@ -55,6 +55,7 @@ export interface InstrumentoRecepcionPayload {
   idLocal?: string;
   idInstrumento?: number;
   instrumento: string;
+  tipoServicio?: string;
   marca?: string;
   modelo?: string;
   serie?: string;

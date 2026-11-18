@@ -56,6 +56,7 @@ const generarIdUnico = () => Math.random().toString(36).substring(2, 9);
 const crearFilaInstrumentoVacia = (): FilaInstrumento => ({
   id: generarIdUnico(),
   instrumento: "",
+  tipoServicio: "",
   marca: "",
   modelo: "",
   serie: "",
@@ -534,6 +535,7 @@ const TablaInstrumentos = ({
             <tr className="bg-slate-900 text-[10px] font-bold uppercase tracking-wider text-white border-b border-slate-800 sticky top-0 z-10">
           
           <th className="p-3 w-48">Instrumento</th>
+          <th className="p-3 w-48">Tipo de servicio</th>
           <th className="p-3 w-52">Técnico asignado</th>
               <th className="p-3 w-32">Marca</th>
               <th className="p-3 w-32">Modelo</th>
@@ -598,6 +600,20 @@ const TablaInstrumentos = ({
                       />
                     </div>
                   )}
+                </td>
+
+                <td className="p-3">
+                  <select
+                    value={inst.tipoServicio}
+                    disabled={inst.calibracionIniciada}
+                    onChange={(e) => onFilaChange(i, "tipoServicio", e.target.value)}
+                    className="w-full p-1 border border-slate-200 rounded"
+                  >
+                    <option value="">Seleccione servicio</option>
+                    {[...new Set(tarifasDisponibles.filter((t) => t.estado === "ACTIVO" && t.Instrumento.trim().toLowerCase() === inst.instrumento.trim().toLowerCase()).map((t) => t.tipoServicio))].map((tipo) => (
+                      <option key={tipo} value={tipo}>{tipo}</option>
+                    ))}
+                  </select>
                 </td>
 
                 <td className="p-3 text-slate-600">
@@ -1119,7 +1135,7 @@ useEffect(() => {
   const tarifasDisponibles = tarifasStore || [];
 
   // Cotizaciones y órdenes para datalist en el formulario
-  const cotizaciones = cotizacionesStore || [];
+  const cotizaciones = useMemo(() => cotizacionesStore ?? [], [cotizacionesStore]);
   const ordenesTrabajo = ordenesTrabajoStore || [];
 
 
@@ -1161,11 +1177,18 @@ useEffect(() => {
     (index: number, propiedad: keyof FilaInstrumento, valor: FilaInstrumento[keyof FilaInstrumento]) => {
       setFormulario((prev) => {
         const instrumentos = [...prev.instrumentos];
-        instrumentos[index] = { ...instrumentos[index], [propiedad]: valor } as FilaInstrumento;
+        const cambios: Partial<FilaInstrumento> = { [propiedad]: valor };
+        if (propiedad === "instrumento") {
+          const tarifas = (tarifasStore ?? []).filter((t) => t.estado === "ACTIVO" && t.Instrumento.trim().toLowerCase() === String(valor).trim().toLowerCase());
+          const tipos = [...new Set(tarifas.map((t) => t.tipoServicio))];
+          cambios.tipoServicio = tipos.length === 1 ? tipos[0] : "";
+          cambios.idTarifaSeleccionada = tarifas.length === 1 ? tarifas[0].idTarifa : undefined;
+        }
+        instrumentos[index] = { ...instrumentos[index], ...cambios } as FilaInstrumento;
         return { ...prev, instrumentos };
       });
     },
-    []
+    [tarifasStore]
   );
 
   const agregarFilaInstrumento = useCallback(() => {
@@ -1326,13 +1349,19 @@ useEffect(() => {
           entrada?: Record<string, boolean | null>;
           salida?: Record<string, boolean | null>;
         } | null;
+        const detallesCotizacion = cotizaciones.find((cotizacion) => cotizacion.idCotizacion === recepcion.idCotizacion)?.detalles ?? recepcion.cotizacion?.detalles ?? [];
+        const detalleCotizacion = (det.idUnidad
+          ? detallesCotizacion.find((detalle) => detalle.idUnidades.includes(det.idUnidad!))
+          : undefined) ?? detallesCotizacion.find((detalle) => detalle.equipoDescripcion.trim().toLowerCase() === det.instrumento.trim().toLowerCase());
         
         return {
           id: generarIdUnico(),
           idInstrumento: det.idInstrumento,
+          idUnidad: det.idUnidad,
           calibracionIniciada: det.calibracionIniciada ?? false,
           item: det.item ?? null,
           instrumento: det.instrumento || "",
+          tipoServicio: detalleCotizacion?.tipoServicio || "",
           marca: det.marca || "",
           modelo: det.modelo || "",
           serie: det.serie || "",
@@ -1392,7 +1421,7 @@ useEffect(() => {
       setRecepcionActual(recepcion);
       setActaGuardada(false);
     },
-    []
+    [cotizaciones]
   );
 
   // --- Inicializar nueva recepción ---
@@ -1528,6 +1557,7 @@ const handleGenerarActa = useCallback(async () => {
           idLocal: inst.id,
           idInstrumento: inst.idInstrumento,
           instrumento: inst.instrumento,
+          tipoServicio: inst.tipoServicio || undefined,
           marca: inst.marca || undefined,
           modelo: inst.modelo || undefined,
           serie: inst.serie || undefined,
