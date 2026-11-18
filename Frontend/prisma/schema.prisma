@@ -286,6 +286,7 @@ model CotizacionDetalle {
   valorTotal        Decimal    @map("VALOR_TOTAL") @db.Decimal(12, 2)
   cotizacion        Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
   sitio             sitio_calibracion? @default(LABORATORIO)
+  idUnidades        String[]   @default([]) @map("ID_UNIDADES") @db.Uuid
 
   @@map("cotizacion_detalles")
 }
@@ -414,6 +415,7 @@ model OrdenTrabajoDetalle {
   limiteControlEMC       String?      @map("LIMITE_CONTROL_EMC")
   docEspecificacion      String?      @map("DOC_ESPECIFICACION")
   reglaDecision          String?      @map("REGLA_DECISION")
+  idUnidad               String?      @map("ID_UNIDAD_FK") @db.Uuid
   sitioCalibracion       sitio_calibracion? @default(LABORATORIO) @map("sitio_calibracion")
   ordenTrabajo           OrdenTrabajo @relation(fields: [idOrdenTrabajo], references: [idOrdenTrabajo], onDelete:Cascade)
 
@@ -466,6 +468,7 @@ model RecepcionEquipoDetalle {
   estadoIBC        Json?           @map("ESTADO_IBC")
   estampilla       String?         @map("ESTAMPILLA")
   observaciones    String?         @map("OBSERVACIONES")
+  idUnidad         String?         @map("ID_UNIDAD_FK") @db.Uuid
   calibracion      Calibracion?
   recepcion        RecepcionEquipo @relation(fields: [idRecepcion], references: [idRecepcion], onDelete: Cascade)
 

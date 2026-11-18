@@ -9,6 +9,7 @@ interface DetalleCotizacion {
   TIPO_SERVICIO: string;
   MAGNITUD: string;
   CANTIDAD: number;
+  ID_UNIDADES: string[];
   sitio: 'LABORATORIO' | 'CLIENTE' | null;
   activacion: boolean | null;
 }
@@ -36,6 +37,7 @@ function desdoblarRecepcionDetalles(dets: DetalleCotizacion[]): any[] {
         CODIGO_INVENTARIO: null,
         RESOLUCION: null,
         activacion: true,
+        ID_UNIDAD_FK: det.ID_UNIDADES[i],
       });
       itemCounter++;
     }
@@ -69,11 +71,29 @@ export async function upsertRecepcion(
         ESTADO: 'BORRADOR',
       },
     });
-    await tx.recepcion_equipo_detalles.deleteMany({
+    const actuales = await tx.recepcion_equipo_detalles.findMany({
       where: { ID_RECEPCION_FK: existente.ID_RECEPCION },
     });
-    await tx.recepcion_equipo_detalles.createMany({
-      data: detallesRec.map((d) => ({ ID_RECEPCION_FK: existente.ID_RECEPCION, ...d })),
+    for (const detalle of detallesRec) {
+      const actual = actuales.find((item) => item.ID_UNIDAD_FK === detalle.ID_UNIDAD_FK);
+      if (actual) {
+        await tx.recepcion_equipo_detalles.update({
+          where: { ID_INSTRUMENTO: actual.ID_INSTRUMENTO },
+          data: { ITEM: detalle.ITEM, INSTRUMENTO: detalle.INSTRUMENTO, activacion: true },
+        });
+      } else {
+        await tx.recepcion_equipo_detalles.create({
+          data: { ID_RECEPCION_FK: existente.ID_RECEPCION, ...detalle },
+        });
+      }
+    }
+    const activos = new Set(detallesRec.map((detalle) => detalle.ID_UNIDAD_FK));
+    await tx.recepcion_equipo_detalles.updateMany({
+      where: {
+        ID_RECEPCION_FK: existente.ID_RECEPCION,
+        OR: [{ ID_UNIDAD_FK: { notIn: [...activos] } }, { ID_UNIDAD_FK: null }],
+      },
+      data: { activacion: false },
     });
     return existente;
   }
@@ -131,6 +151,7 @@ export async function generarOrdenesTrabajoAprobacion(
           ITEM: itemCounter,
           INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
           TIPO_SERVICIO: detalle.TIPO_SERVICIO,
+        ID_UNIDAD_FK: detalle.ID_UNIDADES[i],
           asignado: null,
           sitio_calibracion: sitio,
         });
@@ -163,6 +184,7 @@ export async function generarOrdenesTrabajoAprobacion(
           ITEM: itemCounter,
           INSTRUMENTO: detalle.EQUIPO_DESCRIPCION,
           TIPO_SERVICIO: detalle.TIPO_SERVICIO,
+          ID_UNIDAD_FK: detalle.ID_UNIDADES[i],
           asignado: null,
           sitio_calibracion: sitioFila,
         });

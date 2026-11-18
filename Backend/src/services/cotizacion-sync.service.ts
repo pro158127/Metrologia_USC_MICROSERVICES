@@ -33,7 +33,7 @@ interface DetalleCotizacionExistente {
 export async function sincronizarCotizacionDesdeRecepcion(
   tx: Tx,
   idCotizacion: number,
-  instrumentos: { instrumento: string }[],
+  instrumentos: { instrumento: string; idUnidad?: string | null }[],
   sitio: Sitio,
 ): Promise<void> {
   // 1. Detalles activos existentes de la cotización.
@@ -98,17 +98,17 @@ export async function sincronizarCotizacionDesdeRecepcion(
   };
 
   // 3. Agrupar instrumentos por nombre → CANTIDAD.
-  const grupos = new Map<string, { nombre: string; cantidad: number }>();
+  const grupos = new Map<string, { nombre: string; unidades: string[] }>();
   for (const inst of instrumentos) {
     const name = inst.instrumento?.trim();
     if (!name) continue;
     const key = normalizar(name);
     const grupo = grupos.get(key);
-    if (grupo) grupo.cantidad += 1;
-    else grupos.set(key, { nombre: name, cantidad: 1 });
+    if (grupo) grupo.unidades.push(inst.idUnidad ?? '');
+    else grupos.set(key, { nombre: name, unidades: [inst.idUnidad ?? ''] });
   }
 
-  const filas = [...grupos.values()].map(({ nombre, cantidad }) => {
+  const filas = [...grupos.values()].map(({ nombre, unidades }) => {
     const existentesCompatibles = (existentesPorInstrumento.get(normalizar(nombre)) ?? [])
       .filter((detalle) => detalle.sitio === sitio);
     const clavesComerciales = new Set(existentesCompatibles.map((d) =>
@@ -130,7 +130,8 @@ export async function sincronizarCotizacionDesdeRecepcion(
     }
     return {
       nombre,
-      cantidad,
+      cantidad: unidades.length,
+      idsUnidades: unidades,
       tipoServicio: existente?.tipoServicio ?? tarifa?.tipoServicio ?? 'Calibración',
       magnitud: existente?.magnitud ?? tarifa?.magnitud ?? 'n/a',
       norma: existente?.norma ?? tarifa?.norma ?? null,
@@ -138,31 +139,62 @@ export async function sincronizarCotizacionDesdeRecepcion(
     };
   });
 
-  // 4. Soft-delete de las líneas actuales del sitio.
-  for (const d of detalles) {
-    if ((d.sitio ?? 'LABORATORIO') !== sitio) continue;
-    await tx.cotizacion_detalles.update({
-      where: { ID_DETALLE: d.ID_DETALLE },
-      data: { activacion: false },
-    });
-  }
-
-  // 5. Crear las líneas agrupadas.
+  // 4. Mantener la identidad de las líneas comerciales y sus unidades.
+  const idsFilasVigentes = new Set<number>();
   for (const fila of filas) {
-    await tx.cotizacion_detalles.create({
-      data: {
+    const existente = (existentesPorInstrumento.get(normalizar(fila.nombre)) ?? [])
+      .find((detalle) => detalle.sitio === sitio &&
+        detalle.tipoServicio.toLocaleLowerCase() === fila.tipoServicio.toLocaleLowerCase() &&
+        detalle.magnitud.toLocaleLowerCase() === fila.magnitud.toLocaleLowerCase() &&
+        (detalle.norma ?? '').toLocaleLowerCase() === (fila.norma ?? '').toLocaleLowerCase());
+    const idDetalle = existente?.idDetalle;
+    const unidades = fila.idsUnidades.filter(Boolean);
+    if (idDetalle) {
+      const dbDetalle = detalles.find((d) => d.ID_DETALLE === idDetalle)!;
+      const idsProtegidos = await tx.certificados.findMany({
+        where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: dbDetalle.ID_UNIDADES } } } },
+        select: { calibraciones: { select: { recepcion_equipo_detalles: { select: { ID_UNIDAD_FK: true } } } } },
+      });
+      const protegidos = new Set(idsProtegidos.map((c) => c.calibraciones.recepcion_equipo_detalles.ID_UNIDAD_FK).filter(Boolean));
+      if ([...protegidos].some((id) => !unidades.includes(id as string))) {
+        throw new AppError(409, `No se puede quitar una unidad de "${fila.nombre}": ya tiene un certificado creado.`);
+      }
+      await tx.cotizacion_detalles.update({
+        where: { ID_DETALLE: idDetalle },
+        data: {
+          EQUIPO_DESCRIPCION: fila.nombre,
+          CANTIDAD: fila.cantidad,
+          ID_UNIDADES: unidades,
+          VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
+          activacion: true,
+        },
+      });
+      idsFilasVigentes.add(idDetalle);
+    } else {
+      const created = await tx.cotizacion_detalles.create({ data: {
         ID_COTIZACION_FK: idCotizacion,
         EQUIPO_DESCRIPCION: fila.nombre,
         TIPO_SERVICIO: fila.tipoServicio,
         MAGNITUD: fila.magnitud,
         NORMA_TECNICA: fila.norma,
         CANTIDAD: fila.cantidad,
+        ID_UNIDADES: unidades,
         VALOR_UNITARIO: fila.valorUnitario,
         VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
         sitio,
         activacion: true,
-      },
+      } });
+      idsFilasVigentes.add(created.ID_DETALLE);
+    }
+  }
+
+  for (const d of detalles) {
+    if ((d.sitio ?? 'LABORATORIO') !== sitio || idsFilasVigentes.has(d.ID_DETALLE)) continue;
+    const certificados = await tx.certificados.count({
+      where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: d.ID_UNIDADES } } } },
     });
+    if (certificados) throw new AppError(409, `No se puede quitar "${d.EQUIPO_DESCRIPCION}": contiene una unidad con certificado creado.`);
+    await tx.cotizacion_detalles.update({ where: { ID_DETALLE: d.ID_DETALLE }, data: { activacion: false } });
   }
 
   // 6. Recalcular MONTO_TOTAL con viáticos y descuento.
