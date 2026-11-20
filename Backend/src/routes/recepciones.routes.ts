@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { assertPermission } from '../lib/permissions.js';
@@ -16,6 +17,7 @@ import { registrarGeneracionPendiente } from '../services/generacion-pendiente.s
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import { pendientesEntregaSalida } from '../services/recepcion-entrega.service.js';
 import { datosSitioOT, sincronizarOTMaestraDesdeRecepcion } from '../services/recepcion-ot-sync.service.js';
+import { cabeceraSolicitanteOT, datosClienteRecepcion, resolverClienteAltaRecepcion } from '../services/recepcion-cliente.service.js';
 import { cerrarSeguimientoSiCompleto, cotizacionListaParaSeguimiento } from '../services/seguimiento-cierre.service.js';
 import {
   clienteRawToDtoSchema,
@@ -398,10 +400,25 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // ==========================================================================
-  // POST /api/v1/recepciones — Creación standalone (ingeniería inversa)
+  app.get('/api/v1/recepciones/solicitantes', {
+    preHandler: [fastify.authenticate],
+    schema: { response: { 200: z.object({
+      ok: z.literal(true),
+      data: z.array(z.object({ idCliente: z.number(), razonSocial: z.string(), nitCedula: z.string() })),
+    }) } },
+  }, async (request) => {
+    assertPermission(request, 'recepcion_de_equipos', 'registrar');
+    const clientes = await fastify.prisma.clientes.findMany({
+      where: { status: 'ACTIVO' },
+      orderBy: [{ RAZON_SOCIAL: 'asc' }, { NIT: 'asc' }],
+      select: { ID_CLIENTE: true, RAZON_SOCIAL: true, NIT: true },
+    });
+    return { ok: true as const, data: clientes.map((cliente) => ({
+      idCliente: cliente.ID_CLIENTE, razonSocial: cliente.RAZON_SOCIAL, nitCedula: cliente.NIT,
+    })) };
+  });
+
   // Autogenera Cotización base → OT → Recepción dentro de una transacción.
-  // ==========================================================================
   app.post(
     '/api/v1/recepciones',
     {
@@ -448,11 +465,13 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           throw new AppError(409, 'La OT indicada no pertenece a la cotización.');
         }
         const cotizacionNueva = !cotizacion;
+        let clienteSeleccionado: Awaited<ReturnType<typeof resolverClienteAltaRecepcion>> | null = null;
         if (!cotizacion) {
+          clienteSeleccionado = await resolverClienteAltaRecepcion(tx, body.solicitante, body.idCliente);
           cotizacion = await tx.cotizaciones.create({
             data: {
               CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT'),
-              ID_CLIENTE_FK: body.idCliente ?? null,
+              ID_CLIENTE_FK: clienteSeleccionado.ID_CLIENTE,
               ESTADO: 'BORRADOR',
               MONTO_TOTAL: 0,
             },
@@ -461,6 +480,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
         await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${cotizacion.ID_COTIZACION} FOR UPDATE`;
         cotizacion = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION } });
+        if (body.idCliente != null && cotizacion.ID_CLIENTE_FK !== body.idCliente) {
+          throw new AppError(409, 'El solicitante seleccionado no coincide con el cliente de la cotización vinculada.');
+        }
+        const clienteCotizacion = clienteSeleccionado ?? (cotizacion.ID_CLIENTE_FK != null
+          ? await tx.clientes.findUnique({ where: { ID_CLIENTE: cotizacion.ID_CLIENTE_FK }, select: datosClienteRecepcion })
+          : null);
         if (codigoCotizacion && cotizacion.CODIGO_COTIZACION !== codigoCotizacion) {
           throw new AppError(409, 'La cotización cambió mientras se abría la recepción. Usa el consecutivo vigente.');
         }
@@ -519,6 +544,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               ID_CLIENTE_FK: cotizacion.ID_CLIENTE_FK,
               no_cotizacion: cotizacion.CODIGO_COTIZACION,
               estado: 'Creada',
+              ...cabeceraSolicitanteOT(clienteCotizacion),
               ...datosSitioOT(sitio),
             },
           });
@@ -610,6 +636,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                 ID_CLIENTE_FK: cotizacion.ID_CLIENTE_FK,
                 ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
                 no_cotizacion: cotizacion.CODIGO_COTIZACION,
+                ...cabeceraSolicitanteOT(clienteCotizacion),
               },
             });
           await tx.ordenes_trabajo.updateMany({
@@ -628,7 +655,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             CODIGO_RECEPCION: codigoRec,
             ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
             ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
-            SOLICITANTE: body.solicitante,
+            SOLICITANTE: clienteSeleccionado?.RAZON_SOCIAL ?? body.solicitante,
             NOMBRE_ENTREGA: body.nombreEntrega ?? null,
             SITIO_CALIBRACION: sitio,
             FECHA_RECEPCION: new Date(body.fechaRecepcion),

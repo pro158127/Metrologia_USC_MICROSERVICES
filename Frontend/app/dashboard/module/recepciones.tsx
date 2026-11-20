@@ -36,6 +36,7 @@ import type {
   FilterBarProps,
   RecepcionCardProps,
   DatosGeneralesSectionProps,
+  SolicitanteRecepcion,
   TablaInstrumentosProps,
   InspeccionYFirmasSectionProps,
   FormFooterActionsProps,
@@ -265,6 +266,7 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
 const DatosGeneralesSection = ({
   // Valores del formulario
   solicitante,
+  idCliente,
   nombreQuienEntrega,
   cotizacionCodigo,
   ordenTrabajoCodigo,
@@ -274,7 +276,9 @@ const DatosGeneralesSection = ({
   nombreQuienRecibe,
   nombreQuienEmpaca,
   // Datos para sugerencias (desde contexto)
-  clientes,
+  solicitantes,
+  cargandoSolicitantes,
+  onSeleccionarSolicitante,
   cotizaciones,
   ordenesTrabajo,
   // Función de actualización
@@ -288,11 +292,7 @@ const DatosGeneralesSection = ({
 }) => {
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
   const camposRaizBloqueados = !isNew;
-  // Listas para datalist
-  const clientesList = useMemo(
-    () => clientes.map((c) => c.razonSocial).filter(Boolean),
-    [clientes]
-  );
+  const altaIndependiente = isNew && !cotizacionCodigo.trim() && !ordenTrabajoCodigo.trim();
   const cotizacionesList = useMemo(
     () => cotizaciones.map((c) => c.codigo).filter(Boolean),
     [cotizaciones]
@@ -309,21 +309,43 @@ const DatosGeneralesSection = ({
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="md:col-span-2">
-          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
+          <label htmlFor="solicitante-recepcion" className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Solicitante
           </label>
-          <input
-            list="clientes-datalist-form"
-            value={solicitante}
-            onChange={(e) => onUpdateGeneral("solicitante", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            placeholder="Razón social o persona solicitante"
-          />
-          <datalist id="clientes-datalist-form">
-            {clientesList.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
+          {altaIndependiente ? (
+            <select
+              id="solicitante-recepcion"
+              value={idCliente ?? ""}
+              onChange={(event) => onSeleccionarSolicitante(
+                solicitantes.find((cliente) => cliente.idCliente === Number(event.target.value)),
+              )}
+              disabled={cargandoSolicitantes}
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
+            >
+              <option value="">{cargandoSolicitantes ? "Cargando solicitantes…" : "Seleccione el solicitante registrado"}</option>
+              {solicitantes.map((cliente) => (
+                <option key={cliente.idCliente} value={cliente.idCliente}>
+                  {cliente.razonSocial} · {cliente.nitCedula}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <>
+              <input
+                id="solicitante-recepcion"
+                list="solicitantes-recepcion"
+                value={solicitante}
+                onChange={(e) => onUpdateGeneral("solicitante", e.target.value)}
+                className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
+                placeholder="Razón social o persona solicitante"
+              />
+              <datalist id="solicitantes-recepcion">
+                {[...new Set(solicitantes.map((cliente) => cliente.razonSocial))].map((nombre) => (
+                  <option key={nombre} value={nombre} />
+                ))}
+              </datalist>
+            </>
+          )}
         </div>
         <div>
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
@@ -906,6 +928,7 @@ const FormFooterActions = ({
 import {
   getRecepcionesEnriquecidas,
   getRecepcionPorId,
+  obtenerSolicitantesDeRecepcion,
   crearRecepcion,
   actualizarRecepcion,
   eliminarInstrumentoRecepcionConMotivo,
@@ -918,7 +941,6 @@ export function MainRenderers() {
   const recepcionesEquipo = useDbTable("recepciones_equipo");
   const cotizacionesStore = useDbTable("cotizaciones");
   const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
-  const clientesStore = useDbTable("clientes");
   const tarifasStore = useDbTable("tarifas");
   const { loadTable } = useDbActions();
   const loadingRecepciones = useDbLoading("recepciones_equipo");
@@ -931,6 +953,8 @@ export function MainRenderers() {
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
   const [cargandoRecepcion, setCargandoRecepcion] = useState(false);
+  const [solicitantes, setSolicitantes] = useState<SolicitanteRecepcion[]>([]);
+  const [cargandoSolicitantes, setCargandoSolicitantes] = useState(false);
   const [formulario, setFormulario] = useState<FormularioRecepcion>({
     solicitante: "",
     nombreQuienEntrega: "",
@@ -991,7 +1015,7 @@ export function MainRenderers() {
   }, []);
 
   useEffect(() => {
-    for (const tabla of ["recepciones_equipo", "clientes", "cotizaciones", "ordenes_trabajo", "tarifas"] as const) {
+    for (const tabla of ["recepciones_equipo", "cotizaciones", "ordenes_trabajo", "tarifas"] as const) {
       void loadTable(tabla);
     }
   }, [loadTable]);
@@ -1068,10 +1092,24 @@ export function MainRenderers() {
 
   // --- Funciones del formulario ---
   const handleUpdateGeneral = useCallback((field: string, value: string | boolean) => {
+    const codigo = typeof value === "string" ? value.trim() : "";
+    const clienteVinculado = field === "cotizacionCodigo"
+      ? cotizacionesStore.find((cotizacion) => cotizacion.codigo === codigo)?.cliente
+      : field === "ordenTrabajoCodigo"
+        ? ordenesTrabajoStore.find((orden) => orden.codigo === codigo)?.cliente
+        : null;
     setFormulario((prev) => ({
       ...prev,
+      ...(field === "solicitante" && { idCliente: undefined }),
+      ...(clienteVinculado && {
+        solicitante: clienteVinculado.razonSocial,
+        idCliente: undefined,
+      }),
       [field]: value,
     }));
+  }, [cotizacionesStore, ordenesTrabajoStore]);
+  const seleccionarSolicitante = useCallback((cliente?: SolicitanteRecepcion) => {
+    setFormulario((prev) => ({ ...prev, idCliente: cliente?.idCliente, solicitante: cliente?.razonSocial ?? "" }));
   }, []);
 
   const handleFilaChange = useCallback(
@@ -1291,7 +1329,11 @@ export function MainRenderers() {
     });
     setRecepcionActual(null);
     setActaGuardada(false);
-    showToast("📋 Nueva recepción creada.");
+    setCargandoSolicitantes(true);
+    void obtenerSolicitantesDeRecepcion()
+      .then(setSolicitantes)
+      .catch(() => showToast("No se pudieron cargar los solicitantes. Vuelva a abrir el formulario para intentar de nuevo."))
+      .finally(() => setCargandoSolicitantes(false));
   }, [showToast, plantillasCompletas]);
 
   // --- Volver a la lista ---
@@ -1299,6 +1341,12 @@ export function MainRenderers() {
 const handleGenerarActa = useCallback(async () => {
     if (!plantillasCompletas) {
       showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      return;
+    }
+    const altaIndependiente = selectedRecepcionId === "NUEVA" &&
+      !formulario.cotizacionCodigo.trim() && !formulario.ordenTrabajoCodigo.trim();
+    if (altaIndependiente && !formulario.idCliente) {
+      showToast("Seleccione un solicitante registrado para guardar la recepción.");
       return;
     }
     const filaSinInstrumento = formulario.instrumentos.findIndex((fila) => !fila.instrumento.trim());
@@ -1351,6 +1399,7 @@ const handleGenerarActa = useCallback(async () => {
         codigoRecepcionActual: recepcionActual?.codigo,
         // Cabecera
         solicitante: formulario.solicitante,
+        idCliente: altaIndependiente ? formulario.idCliente : undefined,
         nombreEntrega: formulario.nombreQuienEntrega || undefined,
         cotizacionCodigo: formulario.cotizacionCodigo || undefined,
         ordenTrabajoCodigo: formulario.ordenTrabajoCodigo || undefined,
@@ -1626,6 +1675,7 @@ const handleGenerarActa = useCallback(async () => {
             bloqueado={esEdicionAtada}
             nombreRecibeBloqueado
             solicitante={formulario.solicitante}
+            idCliente={formulario.idCliente}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}
             ordenTrabajoCodigo={formulario.ordenTrabajoCodigo}
@@ -1634,7 +1684,9 @@ const handleGenerarActa = useCallback(async () => {
             fechaSalida={formulario.fechaSalida}
             nombreQuienRecibe={nombreUsuarioSesion || formulario.nombreQuienRecibe}
             nombreQuienEmpaca={formulario.nombreQuienEmpaca}
-            clientes={clientesStore || []}
+            solicitantes={solicitantes}
+            cargandoSolicitantes={cargandoSolicitantes}
+            onSeleccionarSolicitante={seleccionarSolicitante}
             cotizaciones={cotizaciones}
             ordenesTrabajo={ordenesTrabajo}
             onUpdateGeneral={handleUpdateGeneral}

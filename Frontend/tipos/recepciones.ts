@@ -47,6 +47,7 @@ export interface FilaInstrumento {
 // Estado completo del formulario de recepción
 export interface FormularioRecepcion {
   solicitante: string;
+  idCliente?: number;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
   ordenTrabajoCodigo: string;
@@ -94,8 +95,11 @@ export interface RecepcionCardProps {
   onSelect: (recepcion: RecepcionEquipoModel) => void;
 }
 
+export type SolicitanteRecepcion = Pick<ClienteModel, "idCliente" | "razonSocial" | "nitCedula">;
+
 export interface DatosGeneralesSectionProps {
   solicitante: string;
+  idCliente?: number;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
   ordenTrabajoCodigo: string;
@@ -104,7 +108,9 @@ export interface DatosGeneralesSectionProps {
   fechaSalida: string;
   nombreQuienRecibe: string;
   nombreQuienEmpaca: string;
-  clientes: ClienteModel[];
+  solicitantes: SolicitanteRecepcion[];
+  cargandoSolicitantes: boolean;
+  onSeleccionarSolicitante: (cliente?: SolicitanteRecepcion) => void;
   cotizaciones: CotizacionModel[];
   ordenesTrabajo: OrdenTrabajoModel[];
   onUpdateGeneral: (field: string, value: string) => void;

@@ -2,7 +2,7 @@
 
 import { auth } from '@/app/Login/types/auth';
 import { fastifyRequest } from '@/app/lib/api/fastifyClient';
-import type { RecepcionConInfo } from '@/tipos/recepciones';
+import type { RecepcionConInfo, SolicitanteRecepcion } from '@/tipos/recepciones';
 import type {
   RecepcionEquipoModel,
   ClienteModel,
@@ -88,6 +88,7 @@ export interface RecepcionMutationPayload {
   isNueva?: boolean;
   codigoRecepcionActual?: string;
   solicitante: string;
+  idCliente?: number;
   nombreEntrega?: string;
   cotizacionCodigo?: string;
   ordenTrabajoCodigo?: string;
@@ -102,6 +103,14 @@ export interface RecepcionMutationPayload {
   nombreCalibra?: string;
   nombreRecibeServicio?: string;
   instrumentos: InstrumentoRecepcionPayload[];
+}
+
+export async function obtenerSolicitantesDeRecepcion(): Promise<SolicitanteRecepcion[]> {
+  const session = await auth();
+  const respuesta = await fastifyRequest<{ ok: true; data: SolicitanteRecepcion[] }>(
+    session, '/api/v1/recepciones/solicitantes',
+  );
+  return respuesta.data;
 }
 
 export interface RespuestaRecepcionMutacion {
