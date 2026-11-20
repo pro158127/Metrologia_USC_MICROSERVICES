@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Prisma } from '@prisma/client';
-import { sincronizarOTMaestraDesdeRecepcion } from '../src/services/recepcion-ot-sync.service.js';
+import { sincronizarOTMaestraDesdeRecepcion, verificarGruposOperativos } from '../src/services/recepcion-ot-sync.service.js';
 import { instrumentoRecepcionInputSchema } from '../src/routes/recepciones.schemas.js';
 
 function unidad(id: number, codigo: string, item: number, instrumento = 'Manómetro') {
@@ -54,4 +54,40 @@ test('si queda un solo grupo, la hija conserva el consecutivo y deja de depender
 test('al consolidar, una fila nueva requiere un nombre de instrumento válido', () => {
   assert.equal(instrumentoRecepcionInputSchema.safeParse({ instrumento: '   ' }).success, false);
   assert.equal(instrumentoRecepcionInputSchema.parse({ instrumento: '  Manómetro  ' }).instrumento, 'Manómetro');
+});
+
+const gruposDelCaso = new Map([
+  ['LABORATORIO', ['equipo-lab']],
+  ['INTERNO_USC', ['equipo-interno']],
+] as const);
+
+function cotizacionConDosSitios() {
+  const maestra = {
+    ID_ORDEN_TRABAJO: 10, ID_OT_PADRE_FK: null, SITIO_CALIBRACION: null,
+    orden_trabajo_detalles: [], recepciones_equipo: [],
+  };
+  const operativas = [...gruposDelCaso].map(([sitio, [id]], indice) => ({
+    ID_ORDEN_TRABAJO: 11 + indice, ID_OT_PADRE_FK: 10, SITIO_CALIBRACION: sitio,
+    orden_trabajo_detalles: [{ ID_UNIDAD_FK: id, sitio_calibracion: sitio }],
+    recepciones_equipo: [{ SITIO_CALIBRACION: sitio, recepcion_equipo_detalles: [{ ID_UNIDAD_FK: id }] }],
+  }));
+  return {
+    operativas,
+    tx: { ordenes_trabajo: { findMany: async () => [maestra, ...operativas] } } as unknown as Prisma.TransactionClient,
+  };
+}
+
+test('Laboratorio e Interno USC tienen una OT y una recepción con su propia unidad', async () => {
+  const { tx } = cotizacionConDosSitios();
+  await verificarGruposOperativos(tx, 25, gruposDelCaso);
+});
+
+test('rechaza una OT sin equipos o una recepción marcada con el sitio equivocado', async () => {
+  const { tx, operativas } = cotizacionConDosSitios();
+  const interno = operativas[1];
+  interno.orden_trabajo_detalles.length = 0;
+  await assert.rejects(verificarGruposOperativos(tx, 25, gruposDelCaso), /grupo INTERNO_USC/);
+  interno.orden_trabajo_detalles.push({ ID_UNIDAD_FK: 'equipo-interno', sitio_calibracion: 'INTERNO_USC' });
+  interno.recepciones_equipo[0].SITIO_CALIBRACION = 'LABORATORIO';
+  await assert.rejects(verificarGruposOperativos(tx, 25, gruposDelCaso), /grupo INTERNO_USC/);
 });

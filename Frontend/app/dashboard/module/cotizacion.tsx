@@ -1056,17 +1056,21 @@ export default function Cotizaciones() {
       });
 
       if (res.ok) {
-        showToast(`✅ Versión actualizada para cotización #${selectedQuotation.codigo}`);
+        showToast(`Versión guardada para ${res.data?.codigo ?? selectedQuotation.codigo}.`);
         setIsVersionModalOpen(false);
         setSelectedQuotation(null);
-        cargarCotizaciones();
+        await Promise.all([
+          cargarCotizaciones(),
+          loadTable("ordenes_trabajo", true),
+          loadTable("recepciones_equipo", true),
+        ]);
       } else {
         showToast(`❌ Error al actualizar: ${res.error}`);
       }
     } finally {
       setIsSaving(false);
     }
-  }, [selectedQuotation, codigoBorrador, modalViaticos, modalDescuento, modalItems, showToast, cargarCotizaciones, setSelectedQuotation]);
+  }, [selectedQuotation, codigoBorrador, modalViaticos, modalDescuento, modalItems, showToast, cargarCotizaciones, setSelectedQuotation, loadTable]);
 
   const agregarFila = useCallback((target: "create" | "modal") => {
     const nuevaFila: QuoteItem = {

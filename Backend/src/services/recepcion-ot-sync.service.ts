@@ -1,4 +1,5 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma, sitio_calibracion } from '@prisma/client';
+import { AppError } from '../lib/errors.js';
 import { generarConsecutivo } from './consecutivo.service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -91,4 +92,56 @@ export async function sincronizarOTMaestraDesdeRecepcion(tx: Tx, idMaestra: numb
     data: { CODIGO_OT: await generarConsecutivo(tx, 'OT', maestra.CODIGO_OT) },
   });
   return cambio;
+}
+
+
+/** Comprueba la reconciliación antes de confirmar la nueva versión de la cotización. */
+export async function verificarGruposOperativos(
+  tx: Tx,
+  idCotizacion: number,
+  esperados: ReadonlyMap<sitio_calibracion, readonly string[]>,
+): Promise<void> {
+  const idsEsperados = [...esperados.values()].flat();
+  if (new Set(idsEsperados).size !== idsEsperados.length) {
+    throw new AppError(409, 'Una unidad figura en más de un grupo de la cotización. La versión no se guardó.');
+  }
+  const ordenes = await tx.ordenes_trabajo.findMany({
+    where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true },
+    select: {
+      ID_ORDEN_TRABAJO: true, ID_OT_PADRE_FK: true, SITIO_CALIBRACION: true,
+      orden_trabajo_detalles: {
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+        select: { ID_UNIDAD_FK: true, sitio_calibracion: true },
+      },
+      recepciones_equipo: {
+        where: { VIGENTE: true, activacion: true },
+        select: {
+          SITIO_CALIBRACION: true,
+          recepcion_equipo_detalles: {
+            where: { OR: [{ activacion: true }, { activacion: null }] },
+            select: { ID_UNIDAD_FK: true },
+          },
+        },
+      },
+    },
+  });
+  const padres = new Set(ordenes.flatMap((orden) => orden.ID_OT_PADRE_FK == null ? [] : [orden.ID_OT_PADRE_FK]));
+  const operativas = ordenes.filter((orden) => !padres.has(orden.ID_ORDEN_TRABAJO));
+  const coincide = (esperadas: readonly string[], actuales: { ID_UNIDAD_FK: string | null }[]) =>
+    actuales.length === esperadas.length && new Set(actuales.map((unidad) => unidad.ID_UNIDAD_FK)).size === esperadas.length &&
+    esperadas.every((id) => id != null && actuales.some((unidad) => unidad.ID_UNIDAD_FK === id));
+  for (const [sitio, unidades] of esperados) {
+    const grupo = operativas.filter((orden) => orden.SITIO_CALIBRACION === sitio);
+    const [ot] = grupo;
+    const [recepcion] = ot?.recepciones_equipo ?? [];
+    if (!unidades.length || grupo.length !== 1 || !ot || ot.recepciones_equipo.length !== 1 ||
+        recepcion?.SITIO_CALIBRACION !== sitio || !coincide(unidades, ot.orden_trabajo_detalles) ||
+        ot.orden_trabajo_detalles.some((unidad) => unidad.sitio_calibracion !== sitio) ||
+        !coincide(unidades, recepcion.recepcion_equipo_detalles)) {
+      throw new AppError(409, `No se pudo sincronizar el grupo ${sitio} con la OT y la recepción. La versión no se guardó.`);
+    }
+  }
+  if (operativas.length !== esperados.size) {
+    throw new AppError(409, 'Las órdenes vigentes no coinciden con los sitios de la cotización. La versión no se guardó.');
+  }
 }

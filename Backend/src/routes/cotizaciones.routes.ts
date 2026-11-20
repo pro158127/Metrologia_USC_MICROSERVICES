@@ -1,5 +1,5 @@
 import { diasVigenciaCotizacion, inicioVigenciaCotizacion, fechaVencimientoCotizacion } from '../services/vigencia-cotizacion.service.js';
-import { datosSitioOT } from '../services/recepcion-ot-sync.service.js';
+import { datosSitioOT, verificarGruposOperativos } from '../services/recepcion-ot-sync.service.js';
 import { esPdfGenerado, nombreArchivoDocumento, type TipoDocumentoGenerado } from '../services/documento-generado.service.js';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Estados, Prisma } from '@prisma/client';
@@ -715,11 +715,11 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             const existentePorUnidad = detallesOTActuales.find((detalle) => detalle.ID_UNIDAD_FK === nuevo.ID_UNIDAD_FK);
             if (existentePorUnidad) {
               idsUnidadesPresentes.add(nuevo.ID_UNIDAD_FK);
-              if (existentePorUnidad.ITEM !== nuevo.ITEM || existentePorUnidad.INSTRUMENTO !== nuevo.INSTRUMENTO || existentePorUnidad.TIPO_SERVICIO !== nuevo.TIPO_SERVICIO || existentePorUnidad.activacion === false) {
+              if (existentePorUnidad.ITEM !== nuevo.ITEM || existentePorUnidad.INSTRUMENTO !== nuevo.INSTRUMENTO || existentePorUnidad.TIPO_SERVICIO !== nuevo.TIPO_SERVICIO || existentePorUnidad.sitio_calibracion !== nuevo.sitio_calibracion) {
                 otCambio = true;
                 await tx.orden_trabajo_detalles.update({
                   where: { ID_DETALLE: existentePorUnidad.ID_DETALLE },
-                  data: { ITEM: nuevo.ITEM, INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO, activacion: true },
+                  data: { ITEM: nuevo.ITEM, INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO, sitio_calibracion: nuevo.sitio_calibracion, activacion: true },
                 });
               }
             } else {
@@ -777,19 +777,19 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
               data: { CODIGO_OT: consecutivo_ot },
             });
             otsParaRegenerar.push({ id: update_ot.ID_ORDEN_TRABAJO, codigo: update_ot.CODIGO_OT });
-            await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
           }
         }
 
         // 4.2 Sincronizar cada Recepción según su sitio.
         for (const recep of detallesCambiaron ? recepcionesActivas : []) {
           const otRecepcion = hijosActivos.find((orden) => orden.ID_ORDEN_TRABAJO === recep.ID_ORDEN_TRABAJO_FK);
-          const sitioRec = recep.SITIO_CALIBRACION ?? (otRecepcion ? sitioOT(otRecepcion) : 'LABORATORIO');
-          const dets = detallesPorSitio.get(sitioRec) ?? [];
+          const sitioRec = otRecepcion ? sitioOT(otRecepcion) : recep.SITIO_CALIBRACION ?? 'LABORATORIO';
+          const dets = detallesPorSitio.get(sitioRec);
+          if (!dets || (recep.ID_ORDEN_TRABAJO_FK != null && !otRecepcion)) continue;
           const instrumentosDesdoblados = desdoblarDetalles(dets);
           const detallesRecepActuales = recep.recepcion_equipo_detalles.filter((detalle) => detalle.activacion !== false);
           const idsUnidadesPresentes = new Set<string>();
-          let recepcionGrupoCambio = recep.SITIO_CALIBRACION == null;
+          let recepcionGrupoCambio = recep.SITIO_CALIBRACION !== sitioRec;
           if (recepcionGrupoCambio) {
             await tx.recepciones_equipo.update({ where: { ID_RECEPCION: recep.ID_RECEPCION }, data: { SITIO_CALIBRACION: sitioRec } });
           }
@@ -894,62 +894,66 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             otsParaRegenerar.push({ id: master.ID_ORDEN_TRABAJO, codigo: master.CODIGO_OT });
             await tx.ordenes_trabajo.updateMany({
               where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true, ID_ORDEN_TRABAJO: { in: hijosActivos.map((orden) => orden.ID_ORDEN_TRABAJO) } },
-              data: { ID_OT_PADRE_FK: idMaster },
+              data: { ID_OT_PADRE_FK: idMaster, ID_OT_RAIZ: baseOT.ID_OT_RAIZ ?? baseOT.ID_ORDEN_TRABAJO },
             });
           }
 
-          for (const [sitio, dets] of detallesPorSitio.entries()) {
-            if (hijosActivos.some((orden) => sitioOT(orden) === sitio)) continue;
+          for (const sitio of detallesPorSitio.keys()) {
+            const ordenExistente = hijosActivos.find((orden) => sitioOT(orden) === sitio);
+            if (ordenExistente && recepcionesActivas.some((rec) => rec.ID_ORDEN_TRABAJO_FK === ordenExistente.ID_ORDEN_TRABAJO)) continue;
             const detalleSitio = detallePorUnidad.filter((d) => d.SITIO === sitio);
             const otAnterior = existente.ordenes_trabajo
               .filter((orden) => orden.VIGENTE === false && orden.SITIO_CALIBRACION === sitio)
               .sort((a, b) => (b.VERSION ?? 1) - (a.VERSION ?? 1))[0];
-            const codigoOTNuevo = otAnterior
-              ? await generarConsecutivo(tx, 'OT', otAnterior.CODIGO_OT)
-              : await generarConsecutivo(tx, 'OT');
-            const nuevaOT = await tx.ordenes_trabajo.create({
-              data: {
-                CODIGO_OT: codigoOTNuevo,
-                ID_COTIZACION_FK: idCotizacion,
-                ID_CLIENTE_FK: existente.ID_CLIENTE_FK,
-                ID_OT_PADRE_FK: idMaster ?? baseOT.ID_OT_PADRE_FK,
-                ID_OT_RAIZ: otAnterior?.ID_OT_RAIZ ?? baseOT.ID_OT_RAIZ ?? baseOT.ID_ORDEN_TRABAJO,
-                VERSION: (otAnterior?.VERSION ?? 0) + 1,
-                VIGENTE: true,
-                estado: 'Creada',
-                SITIO_CALIBRACION: sitio,
-                ES_EN_SITIO: sitio === 'CLIENTE',
-                ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
-                ES_INTERNO_USC: sitio === 'INTERNO_USC',
-                Razon_social: baseOT.Razon_social,
-                NIT: baseOT.NIT,
-                dirrecion: baseOT.dirrecion,
-                ciudad: baseOT.ciudad,
-                CORREO_CERTIFICADO: baseOT.CORREO_CERTIFICADO,
-                CORREO_FACTURA: baseOT.CORREO_FACTURA,
-                razon_social_solicitante: baseOT.razon_social_solicitante,
-                NIT_solicitante: baseOT.NIT_solicitante,
-                dirrecion_solcitante: baseOT.dirrecion_solcitante,
-                ciudad_solcitante: baseOT.ciudad_solcitante,
-                orden_trabajo_detalles: { create: detalleSitio.flatMap((d, index) => equiposOTPorUnidad.has(d.ID_UNIDAD_FK) ? [] : [{
-                  ITEM: index + 1,
-                  INSTRUMENTO: d.INSTRUMENTO,
-                  TIPO_SERVICIO: d.TIPO_SERVICIO,
-                  ID_UNIDAD_FK: d.ID_UNIDAD_FK,
-                  sitio_calibracion: sitio,
-                  PUNTOS_CALIBRAR: [],
-                  activacion: true,
-                }]) },
-              },
-            });
-            for (const [indice, unidad] of detalleSitio.entries()) {
-              const anterior = equiposOTPorUnidad.get(unidad.ID_UNIDAD_FK);
-              if (anterior) await tx.orden_trabajo_detalles.update({
-                where: { ID_DETALLE: anterior.ID_DETALLE },
-                data: { ID_ORDEN_TRABAJO_FK: nuevaOT.ID_ORDEN_TRABAJO, ITEM: indice + 1, INSTRUMENTO: unidad.INSTRUMENTO, TIPO_SERVICIO: unidad.TIPO_SERVICIO, sitio_calibracion: sitio, activacion: true },
+            let nuevaOT: Pick<typeof baseOT, 'ID_ORDEN_TRABAJO' | 'CODIGO_OT'> | undefined = ordenExistente;
+            if (!nuevaOT) {
+              const codigoOTNuevo = otAnterior
+                ? await generarConsecutivo(tx, 'OT', otAnterior.CODIGO_OT)
+                : await generarConsecutivo(tx, 'OT');
+              nuevaOT = await tx.ordenes_trabajo.create({
+                data: {
+                  CODIGO_OT: codigoOTNuevo,
+                  ID_COTIZACION_FK: idCotizacion,
+                  ID_CLIENTE_FK: existente.ID_CLIENTE_FK,
+                  ID_OT_PADRE_FK: detallesPorSitio.size > 1 ? idMaster : null,
+                  ID_OT_RAIZ: otAnterior?.ID_OT_RAIZ ?? baseOT.ID_OT_RAIZ ?? baseOT.ID_ORDEN_TRABAJO,
+                  VERSION: (otAnterior?.VERSION ?? 0) + 1,
+                  VIGENTE: true,
+                  estado: 'Creada',
+                  SITIO_CALIBRACION: sitio,
+                  ES_EN_SITIO: sitio === 'CLIENTE',
+                  ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+                  ES_INTERNO_USC: sitio === 'INTERNO_USC',
+                  Razon_social: baseOT.Razon_social,
+                  NIT: baseOT.NIT,
+                  dirrecion: baseOT.dirrecion,
+                  ciudad: baseOT.ciudad,
+                  CORREO_CERTIFICADO: baseOT.CORREO_CERTIFICADO,
+                  CORREO_FACTURA: baseOT.CORREO_FACTURA,
+                  razon_social_solicitante: baseOT.razon_social_solicitante,
+                  NIT_solicitante: baseOT.NIT_solicitante,
+                  dirrecion_solcitante: baseOT.dirrecion_solcitante,
+                  ciudad_solcitante: baseOT.ciudad_solcitante,
+                  orden_trabajo_detalles: { create: detalleSitio.flatMap((d, index) => equiposOTPorUnidad.has(d.ID_UNIDAD_FK) ? [] : [{
+                    ITEM: index + 1,
+                    INSTRUMENTO: d.INSTRUMENTO,
+                    TIPO_SERVICIO: d.TIPO_SERVICIO,
+                    ID_UNIDAD_FK: d.ID_UNIDAD_FK,
+                    sitio_calibracion: sitio,
+                    PUNTOS_CALIBRAR: [],
+                    activacion: true,
+                  }]) },
+                },
               });
+              for (const [indice, unidad] of detalleSitio.entries()) {
+                const anterior = equiposOTPorUnidad.get(unidad.ID_UNIDAD_FK);
+                if (anterior) await tx.orden_trabajo_detalles.update({
+                  where: { ID_DETALLE: anterior.ID_DETALLE },
+                  data: { ID_ORDEN_TRABAJO_FK: nuevaOT.ID_ORDEN_TRABAJO, ITEM: indice + 1, INSTRUMENTO: unidad.INSTRUMENTO, TIPO_SERVICIO: unidad.TIPO_SERVICIO, sitio_calibracion: sitio, activacion: true },
+                });
+              }
+              otsParaRegenerar.push({ id: nuevaOT.ID_ORDEN_TRABAJO, codigo: nuevaOT.CODIGO_OT });
             }
-            otsParaRegenerar.push({ id: nuevaOT.ID_ORDEN_TRABAJO, codigo: nuevaOT.CODIGO_OT });
 
             const recepcionAnterior = otAnterior
               ? existente.recepciones_equipo.find((rec) => rec.ID_ORDEN_TRABAJO_FK === otAnterior.ID_ORDEN_TRABAJO)
@@ -965,7 +969,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
                 ID_RECEPCION_RAIZ: recepcionAnterior?.ID_RECEPCION_RAIZ ?? recepcionAnterior?.ID_RECEPCION,
                 VERSION: (recepcionAnterior?.VERSION ?? 0) + 1,
                 VIGENTE: true,
-                SOLICITANTE: baseOT.Razon_social ?? '',
+                SOLICITANTE: baseOT.razon_social_solicitante ?? baseOT.Razon_social ?? '',
                 SITIO_CALIBRACION: sitio,
                 ESTADO: 'BORRADOR',
                 activacion: true,
@@ -986,6 +990,9 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             }
             recepcionesParaRegenerar.push({ id: nuevaRecepcion.ID_RECEPCION, codigo: nuevaRecepcion.CODIGO_RECEPCION });
           }
+          await verificarGruposOperativos(tx, idCotizacion, new Map(
+            [...detallesPorSitio].map(([sitio, lineas]) => [sitio, desdoblarDetalles(lineas).map((unidad) => unidad.ID_UNIDAD_FK)]),
+          ));
         }
       } else {
         subtotal = existente.cotizacion_detalles
