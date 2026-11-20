@@ -324,6 +324,13 @@ export async function validarAsignacionPermitida(
     );
   }
 
+  if (estado === EstadoOT.Certificado_aprobado || estado === EstadoOT.Certificado_enviado) {
+    throw new AppError(
+      409,
+      'No se puede asignar: todos los certificados de la OT ya fueron aprobados.'
+    );
+  }
+
   const recepcion = await tx.recepciones_equipo.findFirst({
     where: { ID_ORDEN_TRABAJO_FK: idOT, VIGENTE: true, activacion: true },
     include: {

@@ -253,7 +253,9 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   estadoActual, // <-- Nuevo prop
 }) => {
  const todosCertificados = instrumentosCot.length > 0 && instrumentosCot.every((item) => item.certificadoCreado);
- const puedeAsignar = estadoActual !== "Creada" && !todosCertificados;
+ const estadoFinalCertificados = estadoActual === "Certificado_aprobado" || estadoActual === "Certificado_enviado";
+ const asignacionBloqueada = todosCertificados || estadoFinalCertificados;
+ const puedeAsignar = estadoActual !== "Creada" && !asignacionBloqueada;
  const { can } = usePermissions();
  const tienePermisoAsignar = can("ordenes_de_trabajo", "asignar_tecnico");
 
@@ -270,9 +272,9 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
         </div>
         
         {/* Renderizado condicional basado en el estado */}
-        {todosCertificados ? (
+        {asignacionBloqueada ? (
           <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
-            Todos los instrumentos ya tienen certificado
+            {estadoFinalCertificados ? "Todos los certificados están aprobados" : "Todos los instrumentos ya tienen certificado"}
           </span>
         ) : puedeAsignar && tienePermisoAsignar ? (
           <button
