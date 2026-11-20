@@ -406,6 +406,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
   onRemoveInstrument,
   excedioLimite,
   tarifas,
+  readOnly = false,
 }) => {
   const itemOptions = Array.from({ length: instrumentDrafts.length }, (_, i) => i + 1);
 
@@ -449,6 +450,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
    
       </div>
 
+      <fieldset disabled={readOnly} className="contents" aria-label="Instrumentos de la orden de trabajo en solo lectura">
       <div className="overflow-x-auto max-w-full shadow-inner">
         <table className="w-full text-left border-collapse text-sm">
           <thead>
@@ -643,6 +645,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
           </tbody>
         </table>
       </div>
+      </fieldset>
     </>
   );
 };
@@ -787,6 +790,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   onRemoveInstrument={onRemoveInstrument} // implementar similar
   excedioLimite={instrumentDrafts.length > 10}
   tarifas={tarifas}
+  readOnly
 />
             
           </Section>
@@ -811,7 +815,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                         type="radio"
                         name="lugarCalibracionRadio"
                         checked={orderDraft.lugarCalibracion === lugar}
-                        onChange={() => updateOrderDraft('lugarCalibracion', lugar as EditableOrderFields["lugarCalibracion"])}
+                        disabled
                         className="w-4 h-4 text-blue-600 focus:ring-blue-500"
                       />
                       {lugar}

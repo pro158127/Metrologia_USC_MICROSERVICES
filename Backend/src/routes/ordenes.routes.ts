@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { AppError } from '../lib/errors.js';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
   clienteRawToDtoSchema,
@@ -21,6 +22,7 @@ import {
 } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertPermission } from '../lib/permissions.js';
+import { generarConsecutivo } from '../services/consecutivo.service.js';
 
 function parsearFechaHoraCalibracion(fecha?: string | null, hora?: string | null): Date | null {
   if (!fecha) return null;
@@ -183,9 +185,57 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
         let quoteJobId: string | undefined;
         let codigoOT: string | undefined;
         let estadoFinal: string | undefined;
+        let huboCambioDocumento = false;
 
         // 1. Transacción para garantizar integridad de BD
         await fastify.prisma.$transaction(async (tx) => {
+          const otBase = await tx.ordenes_trabajo.findUnique({ where: { ID_ORDEN_TRABAJO: id } });
+          if (!otBase) throw new AppError(404, 'Orden de trabajo no encontrada.');
+          const existentes = await tx.orden_trabajo_detalles.findMany({
+            where: { ID_ORDEN_TRABAJO_FK: id, OR: [{ activacion: true }, { activacion: null }] },
+          });
+          const activos = existentes.filter((detalle) => detalle.activacion !== false);
+          const mismoValor = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+          const sinEdicionInstrumentos = data.instrumentos.length === activos.length && data.instrumentos.every((inst) => {
+            if (inst.idDetalle == null) return false;
+            const actual = activos.find((detalle) => detalle.ID_DETALLE === inst.idDetalle);
+            if (!actual) return false;
+            return actual.ITEM === inst.item && actual.TIPO_SERVICIO === inst.tipoServicio &&
+              actual.INSTRUMENTO === inst.instrumento && actual.FABRICANTE === inst.fabricante &&
+              actual.MODELO === inst.modelo && actual.SERIE === inst.serie &&
+              actual.CODIGO_INVENTARIO === inst.codigoInventario && actual.UBICACION === inst.ubicacion &&
+              mismoValor(actual.PUNTOS_CALIBRAR, inst.puntosCalibrar ?? []) &&
+              actual.UNIDAD === (inst.unidad ?? null) && actual.INTERVALO_RANGO === (inst.intervaloRango ?? null) &&
+              actual.RESOLUCION === (inst.resolucion ?? null) &&
+              actual.DECLARACION_CONFORMIDAD === inst.declaracionConformidad &&
+              actual.LIMITE_CONTROL_EMC === (inst.limiteControlEMC ?? null) &&
+              actual.DOC_ESPECIFICACION === (inst.docEspecificacion ?? null) &&
+              actual.REGLA_DECISION === (inst.reglaDecision ?? null);
+          });
+          if (!sinEdicionInstrumentos) {
+            throw new AppError(409, 'Los instrumentos se administran desde Cotizaciones y Recepciones; no se pueden crear, eliminar ni editar desde OT.');
+          }
+
+          const responsableFinal = data.responsableUsc?.trim() ? data.responsableUsc.trim() : otBase.RESPONSABLE;
+          const fechaDiligenciamientoFinal = data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null;
+          const fechaCalibracionFinal = parsearFechaHoraCalibracion(data.fechaCalibracion);
+          const horaFinal = parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion);
+          const texto = (value: unknown) => String(value ?? '').trim();
+          const fechaMs = (value: Date | null | undefined) => value?.getTime() ?? null;
+          const cambioEscalar = texto(otBase.RESPONSABLE) !== texto(responsableFinal) ||
+            fechaMs(otBase.FECHA_CALIBRACION_DILIGENCIAMENTO) !== fechaMs(fechaDiligenciamientoFinal) ||
+            fechaMs(otBase.FECHA_CALIBRACION) !== fechaMs(fechaCalibracionFinal) ||
+            fechaMs(otBase.hora) !== fechaMs(horaFinal) ||
+            texto(otBase.PERSONA_CONTACTO) !== texto(data.personaContactar?.trim() || null) ||
+            texto(otBase.TELEFONO_CONTACTO) !== texto(data.telefonoCalibracion?.trim() || null) ||
+            Boolean(otBase.REQUIERE_ANEXO) !== (data.requiereAnexo === 'Si') ||
+            texto(otBase.OBSERVACIONES) !== texto(data.observacionesGenerales);
+          const cambioAsignacion = data.instrumentos.some((inst) => {
+            const actual = activos.find((detalle) => detalle.ID_DETALLE === inst.idDetalle);
+            const asignado = Number(inst.asignado) > 0 ? Number(inst.asignado) : null;
+            return actual != null && asignado !== actual.asignado;
+          });
+          huboCambioDocumento = cambioEscalar || cambioAsignacion;
           
           // A. Actualizar cabecera de la OT
           // NOTA: `estado` ya NO se escribe desde el cliente; lo gobierna la FSM.
@@ -196,10 +246,6 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
               FECHA_CALIBRACION_DILIGENCIAMENTO: data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null,
               FECHA_CALIBRACION: parsearFechaHoraCalibracion(data.fechaCalibracion),
               hora: parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion),
-              ES_INTERNO_USC: data.lugarCalibracion === 'Interno USC',
-              ES_EN_SITIO: data.lugarCalibracion === 'En sitio',
-              ES_LAB_PERMANENTE: data.lugarCalibracion === 'Laboratorio permanente',
-              SITIO_CALIBRACION: data.lugarCalibracion === 'En sitio' ? 'CLIENTE' : 'LABORATORIO',
               PERSONA_CONTACTO: data.personaContactar?.trim() || null,
               TELEFONO_CONTACTO: data.telefonoCalibracion?.trim() || null,
               REQUIERE_ANEXO: data.requiereAnexo === 'Si',
@@ -215,9 +261,6 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             where: { ID_ORDEN_TRABAJO_FK: id },
           });
 
-          const existentes = await tx.orden_trabajo_detalles.findMany({
-            where: { ID_ORDEN_TRABAJO_FK: id },
-          });
           const usados = new Set<number>();
 
           // B. Procesar Instrumentos (crear / actualizar) y Sincronizar Recepción
@@ -321,23 +364,37 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           const fsm = await evaluarTransicionesOT(tx, id);
           estadoFinal = fsm.estadoNuevo;
 
-          await registrarBitacora(tx, {
-            action: 'UPDATE',
-            tableName: 'ordenes_trabajo',
-            recordId: id,
-            userId: idUsuario,
-            ip: request.ip,
-            details: {
-              codigo: otActualizada.CODIGO_OT,
-              estadoAnterior: otActualizada.estado,
-              estadoNuevo: estadoFinal,
-            },
-          });
+          if (huboCambioDocumento) {
+            await registrarBitacora(tx, {
+              action: 'UPDATE',
+              tableName: 'ordenes_trabajo',
+              recordId: id,
+              userId: idUsuario,
+              ip: request.ip,
+              details: {
+                codigo: otActualizada.CODIGO_OT,
+                estadoAnterior: otActualizada.estado,
+                estadoNuevo: estadoFinal,
+              },
+            });
+          }
 
           // 2. Registrar el tracker de generación documental (dentro de la tx)
-          const quoteJob = await tx.quote.create({ data: { status: 'PENDING' } });
-          quoteJobId = quoteJob.id;
+          if (huboCambioDocumento) {
+            const nuevoCodigo = await generarConsecutivo(tx, 'OT', otActualizada.CODIGO_OT);
+            const versionada = await tx.ordenes_trabajo.update({
+              where: { ID_ORDEN_TRABAJO: id },
+              data: { CODIGO_OT: nuevoCodigo },
+            });
+            codigoOT = versionada.CODIGO_OT;
+            const quoteJob = await tx.quote.create({ data: { status: 'PENDING' } });
+            quoteJobId = quoteJob.id;
+          }
         });
+
+        if (!huboCambioDocumento || !quoteJobId) {
+          return reply.code(200).send({ ok: true, message: 'No había cambios documentales; no se generó una nueva versión.', estado: estadoFinal });
+        }
 
         // 3. Encolar el Worker de Generación R-CM05 (Tipo 2 = OT) DESPUÉS del commit.
         const excelQueue = getGenerationExcelQueue();

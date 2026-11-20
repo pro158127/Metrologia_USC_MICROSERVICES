@@ -35,7 +35,7 @@ import {
   tarifaRawToDtoSchema,
 } from './recepciones.schemas.js';
 
-type InstrumentoInput = InstrumentoRecepcionInput & { idUnidad?: string };
+type InstrumentoInput = InstrumentoRecepcionInput & { idUnidad?: string | null };
 
 const REC_INCLUDE = {
   recepcion_equipo_detalles: {
@@ -58,12 +58,28 @@ const REC_INCLUDE = {
 } satisfies Prisma.recepciones_equipoInclude;
 
 /** Normaliza el sitio de calibración al enum `sitio_calibracion`. */
-function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' {
+function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC' {
   if (!valor) return 'LABORATORIO';
   const v = valor.toUpperCase();
   if (v.includes('LAB')) return 'LABORATORIO';
   if (v.includes('CLI')) return 'CLIENTE';
+  if (v.includes('INTERNO')) return 'INTERNO_USC';
   return 'LABORATORIO';
+}
+
+function snapshotEstable(valor: unknown): string {
+  const normalizar = (dato: unknown): unknown => {
+    if (dato instanceof Date) return dato.toISOString();
+    if (Array.isArray(dato)) return dato.map(normalizar);
+    if (dato && typeof dato === 'object') {
+      return Object.fromEntries(Object.entries(dato as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([clave, contenido]) => [clave, normalizar(contenido)]));
+    }
+    if (typeof dato === 'string') return dato.trim() || null;
+    return dato ?? null;
+  };
+  return JSON.stringify(normalizar(valor));
 }
 
 function parseVersion(numeroVersion?: string | null): number {
@@ -581,13 +597,72 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         if (!actual) throw new AppError(404, 'Recepción no encontrada');
 
         const detallesActuales = actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false).sort((a, b) => (a.ITEM ?? 0) - (b.ITEM ?? 0));
-        const valorEntrada = JSON.stringify({
-          cabecera: [body.solicitante, body.nombreEntrega ?? null, normalizarSitio(body.sitioCalibracion), new Date(body.fechaRecepcion).toISOString(), body.fechaSalida ? new Date(body.fechaSalida).toISOString() : null, nombreUsuarioActual(request) || body.nombreRecibe || null, body.nombreEmpaca ?? null, body.nombreCalibra ?? null, body.nombreRecibeServicio ?? null, body.accesorios ?? null, body.pruebasCompletas ?? true, body.observacionesPruebas ?? null, estadoCalculado],
-          instrumentos: body.instrumentos.map((inst) => [inst.instrumento, inst.marca ?? null, inst.modelo ?? null, inst.serie ?? null, inst.codigoInventario ?? null, inst.resolucion ?? null, inst.sensorInt ?? false, inst.sensorExt ?? false, inst.estampilla?.trim() || null, inst.observaciones ?? null, JSON.stringify(inst.estadoIBC ?? {})]),
+        const nombreRecibeEfectivo = nombreUsuarioActual(request) || body.nombreRecibe || null;
+        const valorEntrada = snapshotEstable({
+          cabecera: {
+            solicitante: body.solicitante,
+            nombreEntrega: body.nombreEntrega,
+            sitio: normalizarSitio(body.sitioCalibracion),
+            fechaRecepcion: new Date(body.fechaRecepcion),
+            fechaSalida: body.fechaSalida ? new Date(body.fechaSalida) : null,
+            nombreRecibe: nombreRecibeEfectivo,
+            nombreEmpaca: body.nombreEmpaca,
+            nombreCalibra: body.nombreCalibra,
+            nombreRecibeServicio: body.nombreRecibeServicio,
+            accesorios: body.accesorios,
+            pruebasCompletas: body.pruebasCompletas ?? true,
+            observacionesPruebas: body.observacionesPruebas,
+            estado: estadoCalculado,
+          },
+          instrumentos: body.instrumentos.map((inst) => ({
+            idUnidad: inst.idUnidad ?? null,
+            idInstrumento: inst.idInstrumento ?? null,
+            item: inst.item ?? null,
+            instrumento: inst.instrumento,
+            marca: inst.marca,
+            modelo: inst.modelo,
+            serie: inst.serie,
+            codigoInventario: inst.codigoInventario,
+            resolucion: inst.resolucion,
+            sensorInt: inst.sensorInt ?? false,
+            sensorExt: inst.sensorExt ?? false,
+            estampilla: inst.estampilla,
+            observaciones: inst.observaciones,
+            estadoIBC: inst.estadoIBC,
+          })),
         });
-        const valorPersistido = JSON.stringify({
-          cabecera: [actual.SOLICITANTE, actual.NOMBRE_ENTREGA, normalizarSitio(actual.SITIO_CALIBRACION), new Date(actual.FECHA_RECEPCION).toISOString(), actual.FECHA_SALIDA ? new Date(actual.FECHA_SALIDA).toISOString() : null, nombreUsuarioActual(request) || actual.NOMBRE_RECIBE, actual.NOMBRE_EMPACA, actual.NOMBRE_CALIBRA, actual.NOMBRE_RECIBE_SERVICIO, actual.ACCESORIOS, actual.PRUEBAS_COMPLETAS, actual.OBSERVACIONES_PRUEBAS, actual.ESTADO],
-          instrumentos: detallesActuales.map((d) => [d.INSTRUMENTO, null, d.MARCA, d.MODELO, d.SERIE, d.CODIGO_INVENTARIO, d.RESOLUCION, d.TIPO_SENSOR_TEMP_init, d.TIPO_SENSOR_TEMP_ext, d.ESTAMPILLA, d.OBSERVACIONES, JSON.stringify(d.ESTADO_IBC ?? {})]),
+        const valorPersistido = snapshotEstable({
+          cabecera: {
+            solicitante: actual.SOLICITANTE,
+            nombreEntrega: actual.NOMBRE_ENTREGA,
+            sitio: normalizarSitio(actual.SITIO_CALIBRACION),
+            fechaRecepcion: actual.FECHA_RECEPCION,
+            fechaSalida: actual.FECHA_SALIDA,
+            nombreRecibe: actual.NOMBRE_RECIBE,
+            nombreEmpaca: actual.NOMBRE_EMPACA,
+            nombreCalibra: actual.NOMBRE_CALIBRA,
+            nombreRecibeServicio: actual.NOMBRE_RECIBE_SERVICIO,
+            accesorios: actual.ACCESORIOS,
+            pruebasCompletas: actual.PRUEBAS_COMPLETAS,
+            observacionesPruebas: actual.OBSERVACIONES_PRUEBAS,
+            estado: actual.ESTADO,
+          },
+          instrumentos: detallesActuales.map((d) => ({
+            idUnidad: d.ID_UNIDAD_FK,
+            idInstrumento: d.ID_INSTRUMENTO,
+            item: d.ITEM,
+            instrumento: d.INSTRUMENTO,
+            marca: d.MARCA,
+            modelo: d.MODELO,
+            serie: d.SERIE,
+            codigoInventario: d.CODIGO_INVENTARIO,
+            resolucion: d.RESOLUCION,
+            sensorInt: d.TIPO_SENSOR_TEMP_init ?? false,
+            sensorExt: d.TIPO_SENSOR_TEMP_ext ?? false,
+            estampilla: d.ESTAMPILLA,
+            observaciones: d.OBSERVACIONES,
+            estadoIBC: d.ESTADO_IBC,
+          })),
         });
         const recepcionCambio = valorEntrada !== valorPersistido;
 
@@ -860,18 +935,20 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           await cerrarSeguimientoSiCompleto(tx, idCotizacionCierre, idUsuario || null);
         }
 
-        await registrarBitacora(tx, {
-          action: 'UPDATE',
-          tableName: 'recepciones_equipo',
-          recordId: id,
-          userId: idUsuario,
-          ip: request.ip,
-          details: {
-            codigo: final!.CODIGO_RECEPCION,
-            idCotizacion: actual.ID_COTIZACION_FK,
-            idOrdenTrabajo: actual.ID_ORDEN_TRABAJO_FK,
-          },
-        });
+        if (generarRecDoc || generarOtDoc || generarCotDoc || generarMaestroDoc) {
+          await registrarBitacora(tx, {
+            action: 'UPDATE',
+            tableName: 'recepciones_equipo',
+            recordId: id,
+            userId: idUsuario,
+            ip: request.ip,
+            details: {
+              codigo: final!.CODIGO_RECEPCION,
+              idCotizacion: actual.ID_COTIZACION_FK,
+              idOrdenTrabajo: actual.ID_ORDEN_TRABAJO_FK,
+            },
+          });
+        }
 
         return final!;
       });

@@ -270,9 +270,10 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       const { fields, fileBuffer, fileMime, fileName } = await readMultipart(request);
 
       let templatePdfKey = existing.TEMPLATE_PDF_KEY;
+      let uploadedReplacementKey: string | null = null;
       if (fileBuffer) {
         if (!fileMime || !ALLOWED_MIMETYPES.includes(fileMime)) {
-          throw new AppError(415, 'La plantilla base debe ser un PDF (application/pdf)');
+          throw new AppError(415, 'La plantilla base debe ser un PDF o una imagen (PNG/JPG)');
         }
         
         // ✅ SANITIZACIÓN: Elimina espacios y caracteres especiales
@@ -281,13 +282,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         
         await uploadBuffer(newKey, fileBuffer, fileMime, { originalName });
         templatePdfKey = newKey;
-        if (existing.TEMPLATE_PDF_KEY && existing.TEMPLATE_PDF_KEY !== newKey) {
-          try {
-            await deleteObject(existing.TEMPLATE_PDF_KEY);
-          } catch {
-            // no-op
-          }
-        }
+        uploadedReplacementKey = newKey;
       }
 
       const data: Prisma.plantillas_sellosUpdateInput = {
@@ -305,10 +300,24 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         data.WATERMARK_AREAS = (parsed as any) ?? Prisma.DbNull;
       }
 
-      const updated = await fastify.prisma.plantillas_sellos.update({
-        where: { ID_PLANTILLA_SELLO: request.params.id },
-        data,
-      });
+      let updated;
+      try {
+        updated = await fastify.prisma.plantillas_sellos.update({
+          where: { ID_PLANTILLA_SELLO: request.params.id },
+          data,
+        });
+      } catch (error) {
+        if (uploadedReplacementKey) {
+          try { await deleteObject(uploadedReplacementKey); } catch { /* limpieza best effort */ }
+        }
+        throw error;
+      }
+      if (uploadedReplacementKey && existing.TEMPLATE_PDF_KEY && existing.TEMPLATE_PDF_KEY !== uploadedReplacementKey) {
+        try { await deleteObject(existing.TEMPLATE_PDF_KEY); } catch { /* conservar el nuevo aunque la limpieza del anterior falle */ }
+      }
+      if (uploadedReplacementKey) {
+        try { await getRedisConnection().del(`${PAGE_SIZE_CACHE_PREFIX}${request.params.id}`); } catch { /* la caché se recalculará al vencer */ }
+      }
 
       return {
         ok: true as const,

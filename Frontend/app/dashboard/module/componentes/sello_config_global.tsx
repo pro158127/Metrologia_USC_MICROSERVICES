@@ -880,6 +880,22 @@ const handleDownloadBackendPreview = async () => {
 
               {/* Controles Derecha */}
               <div className="w-full lg:w-96 border-l border-slate-200 p-4 flex flex-col gap-4 overflow-y-auto bg-slate-50">
+                <div className="p-3 bg-white border border-slate-200 rounded-lg flex flex-col gap-2">
+                  <span className="text-[11px] font-bold text-slate-700 uppercase">Archivo base del sello</span>
+                  <label className="cursor-pointer flex items-center justify-center gap-2 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold transition-colors">
+                    <Upload size={14} />
+                    {templateFile ? 'Cambiar archivo seleccionado' : hasTemplate ? 'Reemplazar archivo' : 'Seleccionar archivo'}
+                    <input
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg"
+                      onChange={handleTemplateUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    {templateFile?.name ?? (hasTemplate ? 'El archivo actual se conserva si no seleccionas otro.' : 'Formatos permitidos: PDF, PNG o JPG.')}
+                  </span>
+                </div>
                 <div>
                   <label className="text-[11px] font-bold text-slate-700 uppercase">Nombre de la Plantilla</label>
                   <input

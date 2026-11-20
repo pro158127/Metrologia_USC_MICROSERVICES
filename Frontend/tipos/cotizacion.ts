@@ -20,7 +20,7 @@ export interface DetalleInput {
   normaTecnica?: string;
   cantidad: number;
   valorUnitario: number;
-  sitio?: "LABORATORIO" | "CLIENTE";
+  sitio?: "LABORATORIO" | "CLIENTE" | "INTERNO_USC";
 }
 
 export interface CrearCotizacionInput {
@@ -67,7 +67,7 @@ export type QuoteItem = {
   norma: string;
   cantidad: number;
   valorUnitario: number;
-  lugarCalibracion: "Laboratorio" | "Sitio";
+  lugarCalibracion: "Laboratorio" | "Sitio" | "Interno USC";
 };
 
 export type TarifaOption = {

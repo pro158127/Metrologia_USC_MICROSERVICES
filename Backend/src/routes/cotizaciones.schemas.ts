@@ -18,7 +18,7 @@ export const detalleInputSchema = z.object({
   normaTecnica: z.string().nullish(),
   cantidad: z.number().int().min(1),
   valorUnitario: z.number().min(0),
-  sitio: z.enum(['LABORATORIO', 'CLIENTE']).optional(),
+  sitio: z.enum(['LABORATORIO', 'CLIENTE', 'INTERNO_USC']).optional(),
 });
 export type DetalleInput = z.infer<typeof detalleInputSchema>;
 

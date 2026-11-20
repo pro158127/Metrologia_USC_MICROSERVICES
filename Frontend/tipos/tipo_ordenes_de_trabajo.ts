@@ -278,6 +278,7 @@ export interface InstrumentosTableProps {
   onRemoveInstrument: (id: string) => void;
   excedioLimite: boolean;
   tarifas: TarifaOptionBase[];
+  readOnly?: boolean;
 }
 
 export interface OrderFormRCM05Props {

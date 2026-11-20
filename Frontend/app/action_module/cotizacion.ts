@@ -165,7 +165,7 @@ export interface ActualizarCotizacionBody {
     normaTecnica?: string | null;
     cantidad: number;
     valorUnitario: number;
-    sitio?: "LABORATORIO" | "CLIENTE";
+    sitio?: "LABORATORIO" | "CLIENTE" | "INTERNO_USC";
   }>;
   cambios: {
     descripcion: string;

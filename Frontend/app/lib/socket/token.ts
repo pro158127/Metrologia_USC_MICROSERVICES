@@ -14,6 +14,7 @@ export async function obtenerTokenSocket(): Promise<string | null> {
     const id = session.user.id_user ?? session.user.id ?? "";
     return await generarTokenBackend({
       sub: String(id),
+      sessionVersion: session.user.sessionVersion ?? 0,
       email: session.user.email ?? "",
       name: session.user.name ?? "",
       role: session.user.role ?? "",

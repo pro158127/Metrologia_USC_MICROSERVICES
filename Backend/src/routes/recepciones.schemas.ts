@@ -785,6 +785,8 @@ export const estadoIbcInputSchema = z
 export const instrumentoRecepcionInputSchema = z.object({
   idLocal: z.string().optional(),
   idInstrumento: z.number().optional(),
+  idUnidad: z.string().nullish(),
+  item: z.number().nullish(),
   instrumento: z.string().min(1),
   tipoServicio: z.string().trim().min(1).optional(),
   marca: z.string().nullish(),

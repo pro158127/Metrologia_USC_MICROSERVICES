@@ -1738,6 +1738,7 @@ export function Administracion() {
 
     generarTokenBackend({
       sub: session?.user?.id_user ?? "",
+      sessionVersion: session?.user?.sessionVersion ?? 0,
       email: session?.user?.email ?? "",
       user: {
         id: session?.user?.id_user ?? "",

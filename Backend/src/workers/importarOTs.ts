@@ -844,6 +844,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       const normalizarSitio = (raw?: string | null): SitioCalibracion => {
         if (!raw) return 'LABORATORIO';
         const s = String(raw).trim().toUpperCase();
+        if (s.includes('INTERNO USC') || s.includes('INTERNO_USC') || s === 'USC') return 'INTERNO_USC';
         if (
           s.startsWith('CLI') ||
           s.startsWith('SIT') ||

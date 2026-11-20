@@ -113,8 +113,9 @@ export default async function perfilRoutes(fastify: FastifyInstance) {
       const contrasenaHasheada = await hashPassword(nuevaContrasena);
       await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: id },
-        data: { contrase_a: contrasenaHasheada },
+        data: { contrase_a: contrasenaHasheada, UPDATE_AT: new Date() },
       });
+      fastify.io.in(`user_room_${id}`).disconnectSockets(true);
 
       await fastify.prisma.audit_logs.create({
         data: {

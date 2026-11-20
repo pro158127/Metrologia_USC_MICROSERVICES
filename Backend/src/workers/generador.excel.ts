@@ -59,7 +59,7 @@ const LISTA_UNIDADES = [
 
 const LISTAS_DESPLEGABLES_OT: Record<string, string[]> = {
   tipo_servicio: ['Acreditado', 'No_acreditado'],
-  sitio_calibracion: ['Laboratorio permanente', 'En sitio'],
+  sitio_calibracion: ['Laboratorio permanente', 'En sitio', 'Interno USC'],
   unidad: LISTA_UNIDADES,
 };
 
@@ -73,6 +73,7 @@ function mapearTipoServicio(valor?: string | null): string {
 
 function mapearSitioCalibracion(valor?: string | null): string {
   const v = (valor ?? '').toString().trim().toUpperCase();
+  if (v.includes('INTERNO USC') || v.includes('INTERNO_USC')) return 'Interno USC';
   if (v.startsWith('CLI')) return 'En sitio';
   return 'Laboratorio permanente';
 }

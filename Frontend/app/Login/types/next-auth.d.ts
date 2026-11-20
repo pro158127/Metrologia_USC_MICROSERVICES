@@ -11,6 +11,7 @@ declare module "next-auth" {
       id_user: any;
       role: string;
       permissions: any;
+      sessionVersion: number;
     } & DefaultSession["user"];
   }
 
@@ -19,6 +20,7 @@ declare module "next-auth" {
     id_user: any;
     role: string;
     permissions: any;
+    sessionVersion: number;
     accessToken?: string | any; // Opcional por si tu backend ya te entrega un token al hacer Login
   }
 }
@@ -29,6 +31,7 @@ declare module "next-auth/jwt" {
     id_user: any;
     role: string;
     permissions: any;
+    sessionVersion: number;
     accessToken?: string | any; // 👈 Guardamos el token dentro de la payload codificada
   }
 }

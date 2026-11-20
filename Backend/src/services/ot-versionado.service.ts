@@ -175,11 +175,11 @@ export async function reimportarFamiliaOTVersionada(
         ID_OT_RAIZ: raiz,
         VERSION: nuevaVersion,
         VIGENTE: true,
+        ...input.datosOT,
         SITIO_CALIBRACION: null,
         ES_EN_SITIO: false,
         ES_LAB_PERMANENTE: false,
-        ES_INTERNO_USC: Boolean(input.datosOT.ES_INTERNO_USC),
-        ...input.datosOT,
+        ES_INTERNO_USC: false,
         estado: 'Creada',
         orden_trabajo_detalles: {
           create: input.instrumentosResueltos.map((inst, index) => ({
@@ -228,11 +228,11 @@ export async function reimportarFamiliaOTVersionada(
         ID_OT_RAIZ: raiz,
         VERSION: nuevaVersion,
         VIGENTE: true,
+        ...input.datosOT,
         SITIO_CALIBRACION: sitio,
         ES_EN_SITIO: esSitio,
-        ES_LAB_PERMANENTE: !esSitio,
-        ES_INTERNO_USC: Boolean(input.datosOT.ES_INTERNO_USC),
-        ...input.datosOT,
+        ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+        ES_INTERNO_USC: sitio === 'INTERNO_USC',
         estado: 'Creada',
         orden_trabajo_detalles: {
           create: instrumentosSitio.map((inst, index) => ({

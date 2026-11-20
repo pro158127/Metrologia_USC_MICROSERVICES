@@ -40,6 +40,28 @@ import { getEmailQueue, getGenerationExcelQueue } from '../lib/queue/queue.js';
 import { EmailJobData } from '../lib/queue/queue.js';
 const excelquue = getGenerationExcelQueue();
 
+function snapshotCotizacion(detalles: Array<{
+  idDetalle?: number;
+  equipoDescripcion: string;
+  tipoServicio: string;
+  magnitud: string;
+  normaTecnica?: string | null;
+  cantidad: number;
+  valorUnitario: number | string | Prisma.Decimal;
+  sitio?: 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC' | null;
+}>): string {
+  return JSON.stringify(detalles.map((d) => ({
+    id: d.idDetalle ?? null,
+    equipo: d.equipoDescripcion.trim(),
+    servicio: d.tipoServicio.trim(),
+    magnitud: d.magnitud.trim(),
+    norma: d.normaTecnica?.trim() || null,
+    cantidad: d.cantidad,
+    valorUnitario: new Prisma.Decimal(d.valorUnitario).toFixed(2),
+    sitio: d.sitio ?? 'LABORATORIO',
+  })).sort((a, b) => (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER)));
+}
+
 // Esquemas de documentos categorizados por cotización
 const documentoVersionItemSchema = z.object({
   idVersion: z.number(),
@@ -425,12 +447,13 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
     assertPermission(request, 'cotizaciones', 'crear_editar');
     const idCotizacion = Number(request.params.id) || request.body.idCotizacion;
     const idUsuario = Number(request.user?.sub ?? 0);
-    const { viaticos: reqViaticos, descuento: reqDescuento, estado: reqEstado, codigo, detalles, cambios } = request.body;
+    const { viaticos: reqViaticos, descuento: reqDescuento, estado: reqEstado, detalles, cambios } = request.body;
     if (reqEstado === Estados.ENVIADA) {
       assertPermission(request, 'cotizaciones', 'enviar_al_cliente');
     }
     const otsParaRegenerar: Array<{ id: number; codigo: string }> = [];
     const recepcionesParaRegenerar: Array<{ id: number; codigo: string }> = [];
+    let regenerarCotizacionDoc = false;
     const resultado = await fastify.prisma.$transaction(async (tx) => {
       // 1. CONSULTA MAESTRA: Traemos todo el árbol de relaciones de una vez
       const existente = await tx.cotizaciones.findUnique({
@@ -454,6 +477,27 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           `No se puede modificar la cotización ${existente.CODIGO_COTIZACION} mientras esté en estado '${existente.ESTADO}'. Solo se permiten cambios en borrador, enviada o aprobada.`,
         );
       }
+
+      const detallesActivosActuales = existente.cotizacion_detalles
+        .filter((d) => d.activacion !== false)
+        .map((d) => ({
+          idDetalle: d.ID_DETALLE,
+          equipoDescripcion: d.EQUIPO_DESCRIPCION,
+          tipoServicio: d.TIPO_SERVICIO,
+          magnitud: d.MAGNITUD,
+          normaTecnica: d.NORMA_TECNICA,
+          cantidad: d.CANTIDAD,
+          valorUnitario: d.VALOR_UNITARIO,
+          sitio: d.sitio ?? 'LABORATORIO' as const,
+        }));
+      const detallesCambiaron = detalles !== undefined &&
+        snapshotCotizacion(detalles) !== snapshotCotizacion(detallesActivosActuales);
+      const cambiosEscalares =
+        (request.body.idCliente !== undefined && request.body.idCliente !== existente.ID_CLIENTE_FK) ||
+        (reqEstado !== undefined && reqEstado !== existente.ESTADO) ||
+        (reqViaticos !== undefined && !new Prisma.Decimal(reqViaticos).eq(existente.viaticos ?? 0)) ||
+        (reqDescuento !== undefined && reqDescuento !== Number(existente.descuento ?? 0));
+      regenerarCotizacionDoc = detallesCambiaron || Boolean(cambiosEscalares);
 
       let subtotal = new Prisma.Decimal(0);
       
@@ -575,11 +619,13 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           sitio: detalle.sitio,
           ID_UNIDADES: detalle.ID_UNIDADES,
         }));
-        const consecutivo = await generarConsecutivo(fastify.prisma, "COT",existente.CODIGO_COTIZACION);
-      const update_cot=  await tx.cotizaciones.update({
-          where:{CODIGO_COTIZACION:existente.CODIGO_COTIZACION},
-          data:{CODIGO_COTIZACION:consecutivo}
-        })
+        if (detallesCambiaron) {
+          const consecutivo = await generarConsecutivo(tx, 'COT', existente.CODIGO_COTIZACION);
+          await tx.cotizaciones.update({
+            where: { ID_COTIZACION: idCotizacion },
+            data: { CODIGO_COTIZACION: consecutivo },
+          });
+        }
         
         // ==========================================
         // 4. CASCADA: sincronizar TODAS las OTs y recepciones según su sitio.
@@ -600,34 +646,39 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           return out;
         };
 
-        const detallesPorSitio = new Map<'LABORATORIO' | 'CLIENTE', typeof detallesConIdentidad>();
+        const detallesPorSitio = new Map<'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC', typeof detallesConIdentidad>();
         for (const d of detallesConIdentidad) {
-          const sitio = d.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+          const sitio = d.sitio ?? 'LABORATORIO';
           const lista = detallesPorSitio.get(sitio) ?? [];
           lista.push(d);
           detallesPorSitio.set(sitio, lista);
         }
 
         // 4.1 Sincronizar cada OT (Master con todos; hijas con su sitio).
-        for (const ot of existente.ordenes_trabajo) {
+        for (const ot of detallesCambiaron ? existente.ordenes_trabajo.filter((orden) => orden.VIGENTE !== false) : []) {
           const esMaster = ot.SITIO_CALIBRACION == null;
           const dets = esMaster
             ? detallesConIdentidad
-            : (detallesPorSitio.get((ot.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE') ?? []);
+            : (detallesPorSitio.get((ot.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC') ?? []);
           const instrumentosDesdoblados = desdoblarDetalles(dets);
           const detallesOTActuales = ot.orden_trabajo_detalles.filter((detalle) => detalle.activacion !== false);
           const idsUnidadesPresentes = new Set<string>();
+          let otCambio = false;
 
           for (let i = 0; i < instrumentosDesdoblados.length; i++) {
             const nuevo = instrumentosDesdoblados[i];
             const existentePorUnidad = detallesOTActuales.find((detalle) => detalle.ID_UNIDAD_FK === nuevo.ID_UNIDAD_FK);
             if (existentePorUnidad) {
               idsUnidadesPresentes.add(nuevo.ID_UNIDAD_FK);
-              await tx.orden_trabajo_detalles.update({
-                where: { ID_DETALLE: existentePorUnidad.ID_DETALLE },
-                data: { ITEM: nuevo.ITEM, INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO },
-              });
+              if (existentePorUnidad.ITEM !== nuevo.ITEM || existentePorUnidad.INSTRUMENTO !== nuevo.INSTRUMENTO || existentePorUnidad.TIPO_SERVICIO !== nuevo.TIPO_SERVICIO || existentePorUnidad.activacion === false) {
+                otCambio = true;
+                await tx.orden_trabajo_detalles.update({
+                  where: { ID_DETALLE: existentePorUnidad.ID_DETALLE },
+                  data: { ITEM: nuevo.ITEM, INSTRUMENTO: nuevo.INSTRUMENTO, TIPO_SERVICIO: nuevo.TIPO_SERVICIO, activacion: true },
+                });
+              }
             } else {
+              otCambio = true;
               await tx.orden_trabajo_detalles.create({
                 data: {
                   ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
@@ -645,41 +696,64 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             .filter((detalle) => !detalle.ID_UNIDAD_FK || !idsUnidadesPresentes.has(detalle.ID_UNIDAD_FK))
             .map((detalle) => detalle.ID_DETALLE);
           if (idsEliminar.length) {
+            otCambio = true;
             await tx.orden_trabajo_detalles.updateMany({
               where: { ID_DETALLE: { in: idsEliminar } },
               data: { activacion: false },
             });
           }
 
-          const consecutivo_ot = await generarConsecutivo(tx, 'OT', ot.CODIGO_OT);
-          const update_ot = await tx.ordenes_trabajo.update({
-            where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
-            data: { CODIGO_OT: consecutivo_ot },
-          });
+          const grupoDesaparece = !esMaster && instrumentosDesdoblados.length === 0;
+          const masterYaNoSeRequiere = esMaster && detallesPorSitio.size <= 1;
+          if (grupoDesaparece || masterYaNoSeRequiere) {
+            await tx.ordenes_trabajo.update({
+              where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
+              data: { VIGENTE: false },
+            });
+            const recepcionGrupo = existente.recepciones_equipo.find((rec) => rec.ID_ORDEN_TRABAJO_FK === ot.ID_ORDEN_TRABAJO);
+            if (recepcionGrupo) {
+              await tx.recepciones_equipo.update({
+                where: { ID_RECEPCION: recepcionGrupo.ID_RECEPCION },
+                data: { VIGENTE: false, activacion: false },
+              });
+            }
+            continue;
+          }
 
-          otsParaRegenerar.push({ id: update_ot.ID_ORDEN_TRABAJO, codigo: update_ot.CODIGO_OT });
-
-          await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
+          if (otCambio) {
+            const consecutivo_ot = await generarConsecutivo(tx, 'OT', ot.CODIGO_OT);
+            const update_ot = await tx.ordenes_trabajo.update({
+              where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
+              data: { CODIGO_OT: consecutivo_ot },
+            });
+            otsParaRegenerar.push({ id: update_ot.ID_ORDEN_TRABAJO, codigo: update_ot.CODIGO_OT });
+            await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
+          }
         }
 
         // 4.2 Sincronizar cada Recepción según su sitio.
-        for (const recep of existente.recepciones_equipo) {
-          const sitioRec = (recep.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE';
+        for (const recep of detallesCambiaron ? existente.recepciones_equipo.filter((rec) => rec.VIGENTE !== false) : []) {
+          const sitioRec = (recep.SITIO_CALIBRACION ?? 'LABORATORIO') as 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC';
           const dets = detallesPorSitio.get(sitioRec) ?? [];
           const instrumentosDesdoblados = desdoblarDetalles(dets);
           const detallesRecepActuales = recep.recepcion_equipo_detalles.filter((detalle) => detalle.activacion !== false);
           const idsUnidadesPresentes = new Set<string>();
+          let recepcionGrupoCambio = false;
 
           for (let i = 0; i < instrumentosDesdoblados.length; i++) {
             const nuevo = instrumentosDesdoblados[i];
             const existentePorUnidad = detallesRecepActuales.find((detalle) => detalle.ID_UNIDAD_FK === nuevo.ID_UNIDAD_FK);
             if (existentePorUnidad) {
               idsUnidadesPresentes.add(nuevo.ID_UNIDAD_FK);
-              await tx.recepcion_equipo_detalles.update({
-                where: { ID_INSTRUMENTO: existentePorUnidad.ID_INSTRUMENTO },
-                data: { INSTRUMENTO: nuevo.INSTRUMENTO, ITEM: nuevo.ITEM },
-              });
+              if (existentePorUnidad.INSTRUMENTO !== nuevo.INSTRUMENTO || existentePorUnidad.ITEM !== nuevo.ITEM || existentePorUnidad.activacion === false) {
+                recepcionGrupoCambio = true;
+                await tx.recepcion_equipo_detalles.update({
+                  where: { ID_INSTRUMENTO: existentePorUnidad.ID_INSTRUMENTO },
+                  data: { INSTRUMENTO: nuevo.INSTRUMENTO, ITEM: nuevo.ITEM, activacion: true },
+                });
+              }
             } else {
+              recepcionGrupoCambio = true;
               await tx.recepcion_equipo_detalles.create({
                 data: {
                   ID_RECEPCION_FK: recep.ID_RECEPCION,
@@ -695,18 +769,158 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             .filter((detalle) => !detalle.ID_UNIDAD_FK || !idsUnidadesPresentes.has(detalle.ID_UNIDAD_FK))
             .map((detalle) => detalle.ID_INSTRUMENTO);
           if (idsEliminar.length) {
+            recepcionGrupoCambio = true;
             await tx.recepcion_equipo_detalles.updateMany({
               where: { ID_INSTRUMENTO: { in: idsEliminar } },
               data: { activacion: false },
             });
           }
 
-          const consec = await generarConsecutivo(tx, 'REC', recep.CODIGO_RECEPCION);
-          const update_rec = await tx.recepciones_equipo.update({
-            where: { CODIGO_RECEPCION: recep.CODIGO_RECEPCION },
-            data: { CODIGO_RECEPCION: consec },
-          });
-          recepcionesParaRegenerar.push({ id: update_rec.ID_RECEPCION, codigo: update_rec.CODIGO_RECEPCION });
+          if (recepcionGrupoCambio) {
+            const consec = await generarConsecutivo(tx, 'REC', recep.CODIGO_RECEPCION);
+            const update_rec = await tx.recepciones_equipo.update({
+              where: { CODIGO_RECEPCION: recep.CODIGO_RECEPCION },
+              data: { CODIGO_RECEPCION: consec },
+            });
+            recepcionesParaRegenerar.push({ id: update_rec.ID_RECEPCION, codigo: update_rec.CODIGO_RECEPCION });
+          }
+        }
+
+        // Reconciliar sitios nuevos después de sincronizar los grupos que ya
+        // existían. Cada sitio físico recibe una OT operativa y una recepción.
+        const familiaActiva = existente.ordenes_trabajo.filter((orden) => orden.VIGENTE !== false);
+        const hijosActivos = familiaActiva.filter((orden) => orden.SITIO_CALIBRACION != null);
+        if (detallesCambiaron && hijosActivos.length > 0) {
+          const baseOT = familiaActiva.find((orden) => orden.SITIO_CALIBRACION == null) ?? hijosActivos[0];
+          const detallePorUnidad = detallesConIdentidad.flatMap((d) => d.ID_UNIDADES.slice(0, d.cantidad).map((idUnidad, index) => ({
+            ITEM: 0,
+            INSTRUMENTO: d.equipoDescripcion,
+            TIPO_SERVICIO: d.tipoServicio,
+            ID_UNIDAD_FK: idUnidad,
+            SITIO: d.sitio ?? 'LABORATORIO' as const,
+            ORDEN: index,
+          }))).sort((a, b) => a.SITIO.localeCompare(b.SITIO) || a.ID_UNIDAD_FK.localeCompare(b.ID_UNIDAD_FK));
+          detallePorUnidad.forEach((detalle, index) => { detalle.ITEM = index + 1; });
+
+          let idMaster = familiaActiva.find((orden) => orden.SITIO_CALIBRACION == null)?.ID_ORDEN_TRABAJO ?? null;
+          if (detallesPorSitio.size > 1 && idMaster == null) {
+            const codigoMaster = await generarConsecutivo(tx, 'OT');
+            const master = await tx.ordenes_trabajo.create({
+              data: {
+                CODIGO_OT: codigoMaster,
+                ID_COTIZACION_FK: idCotizacion,
+                ID_CLIENTE_FK: existente.ID_CLIENTE_FK,
+                ID_OT_RAIZ: baseOT.ID_OT_RAIZ ?? baseOT.ID_ORDEN_TRABAJO,
+                VERSION: Math.max(1, ...familiaActiva.map((orden) => orden.VERSION ?? 1)) + 1,
+                VIGENTE: true,
+                estado: 'Creada',
+                SITIO_CALIBRACION: null,
+                ES_EN_SITIO: false,
+                ES_LAB_PERMANENTE: false,
+                ES_INTERNO_USC: false,
+                Razon_social: baseOT.Razon_social,
+                NIT: baseOT.NIT,
+                dirrecion: baseOT.dirrecion,
+                ciudad: baseOT.ciudad,
+                CORREO_CERTIFICADO: baseOT.CORREO_CERTIFICADO,
+                CORREO_FACTURA: baseOT.CORREO_FACTURA,
+                razon_social_solicitante: baseOT.razon_social_solicitante,
+                NIT_solicitante: baseOT.NIT_solicitante,
+                dirrecion_solcitante: baseOT.dirrecion_solcitante,
+                ciudad_solcitante: baseOT.ciudad_solcitante,
+                orden_trabajo_detalles: { create: detallePorUnidad.map((d) => ({
+                  ITEM: d.ITEM,
+                  INSTRUMENTO: d.INSTRUMENTO,
+                  TIPO_SERVICIO: d.TIPO_SERVICIO,
+                  ID_UNIDAD_FK: d.ID_UNIDAD_FK,
+                  sitio_calibracion: d.SITIO,
+                  PUNTOS_CALIBRAR: [],
+                  activacion: true,
+                })) },
+              },
+            });
+            idMaster = master.ID_ORDEN_TRABAJO;
+            otsParaRegenerar.push({ id: master.ID_ORDEN_TRABAJO, codigo: master.CODIGO_OT });
+            await tx.ordenes_trabajo.updateMany({
+              where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true, SITIO_CALIBRACION: { not: null } },
+              data: { ID_OT_PADRE_FK: idMaster },
+            });
+          }
+
+          for (const [sitio, dets] of detallesPorSitio.entries()) {
+            if (hijosActivos.some((orden) => orden.SITIO_CALIBRACION === sitio)) continue;
+            const detalleSitio = detallePorUnidad.filter((d) => d.SITIO === sitio);
+            const otAnterior = existente.ordenes_trabajo
+              .filter((orden) => orden.VIGENTE === false && orden.SITIO_CALIBRACION === sitio)
+              .sort((a, b) => (b.VERSION ?? 1) - (a.VERSION ?? 1))[0];
+            const codigoOTNuevo = otAnterior
+              ? await generarConsecutivo(tx, 'OT', otAnterior.CODIGO_OT)
+              : await generarConsecutivo(tx, 'OT');
+            const nuevaOT = await tx.ordenes_trabajo.create({
+              data: {
+                CODIGO_OT: codigoOTNuevo,
+                ID_COTIZACION_FK: idCotizacion,
+                ID_CLIENTE_FK: existente.ID_CLIENTE_FK,
+                ID_OT_PADRE_FK: idMaster ?? baseOT.ID_OT_PADRE_FK,
+                ID_OT_RAIZ: otAnterior?.ID_OT_RAIZ ?? baseOT.ID_OT_RAIZ ?? baseOT.ID_ORDEN_TRABAJO,
+                VERSION: (otAnterior?.VERSION ?? 0) + 1,
+                VIGENTE: true,
+                estado: 'Creada',
+                SITIO_CALIBRACION: sitio,
+                ES_EN_SITIO: sitio === 'CLIENTE',
+                ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+                ES_INTERNO_USC: sitio === 'INTERNO_USC',
+                Razon_social: baseOT.Razon_social,
+                NIT: baseOT.NIT,
+                dirrecion: baseOT.dirrecion,
+                ciudad: baseOT.ciudad,
+                CORREO_CERTIFICADO: baseOT.CORREO_CERTIFICADO,
+                CORREO_FACTURA: baseOT.CORREO_FACTURA,
+                razon_social_solicitante: baseOT.razon_social_solicitante,
+                NIT_solicitante: baseOT.NIT_solicitante,
+                dirrecion_solcitante: baseOT.dirrecion_solcitante,
+                ciudad_solcitante: baseOT.ciudad_solcitante,
+                orden_trabajo_detalles: { create: detalleSitio.map((d, index) => ({
+                  ITEM: index + 1,
+                  INSTRUMENTO: d.INSTRUMENTO,
+                  TIPO_SERVICIO: d.TIPO_SERVICIO,
+                  ID_UNIDAD_FK: d.ID_UNIDAD_FK,
+                  sitio_calibracion: sitio,
+                  PUNTOS_CALIBRAR: [],
+                  activacion: true,
+                })) },
+              },
+            });
+            otsParaRegenerar.push({ id: nuevaOT.ID_ORDEN_TRABAJO, codigo: nuevaOT.CODIGO_OT });
+
+            const recepcionAnterior = otAnterior
+              ? existente.recepciones_equipo.find((rec) => rec.ID_ORDEN_TRABAJO_FK === otAnterior.ID_ORDEN_TRABAJO)
+              : undefined;
+            const codigoRec = recepcionAnterior
+              ? await generarConsecutivo(tx, 'REC', recepcionAnterior.CODIGO_RECEPCION)
+              : await generarConsecutivo(tx, 'REC');
+            const nuevaRecepcion = await tx.recepciones_equipo.create({
+              data: {
+                CODIGO_RECEPCION: codigoRec,
+                ID_COTIZACION_FK: idCotizacion,
+                ID_ORDEN_TRABAJO_FK: nuevaOT.ID_ORDEN_TRABAJO,
+                ID_RECEPCION_RAIZ: recepcionAnterior?.ID_RECEPCION_RAIZ ?? recepcionAnterior?.ID_RECEPCION,
+                VERSION: (recepcionAnterior?.VERSION ?? 0) + 1,
+                VIGENTE: true,
+                SOLICITANTE: baseOT.Razon_social ?? '',
+                SITIO_CALIBRACION: sitio,
+                ESTADO: 'BORRADOR',
+                activacion: true,
+                recepcion_equipo_detalles: { create: detalleSitio.map((d, index) => ({
+                  ITEM: index + 1,
+                  INSTRUMENTO: d.INSTRUMENTO,
+                  ID_UNIDAD_FK: d.ID_UNIDAD_FK,
+                  activacion: true,
+                })) },
+              },
+            });
+            recepcionesParaRegenerar.push({ id: nuevaRecepcion.ID_RECEPCION, codigo: nuevaRecepcion.CODIGO_RECEPCION });
+          }
         }
       } else {
         subtotal = existente.cotizacion_detalles
@@ -723,6 +937,16 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         : existente.viaticos ?? new Prisma.Decimal(0);
       const descuento = reqDescuento !== undefined ? reqDescuento : Number(existente.descuento || 0);
       const montoTotal = calcularMontoTotalCotizacion(subtotal, viaticos, descuento);
+
+      // Una modificación real en campos comerciales también versiona la
+      // cotización; las modificaciones de líneas ya se versionaron en la cascada.
+      if (regenerarCotizacionDoc && !detallesCambiaron) {
+        const nuevoCodigo = await generarConsecutivo(tx, 'COT', existente.CODIGO_COTIZACION);
+        await tx.cotizaciones.update({
+          where: { ID_COTIZACION: idCotizacion },
+          data: { CODIGO_COTIZACION: nuevoCodigo },
+        });
+      }
 
       if (reqEstado && reqEstado !== existente.ESTADO) {
         const permitidos = transicionesValidas[existente.ESTADO] || [];
@@ -742,7 +966,6 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       const cotizacionActualizada = await tx.cotizaciones.update({
         where: { ID_COTIZACION: idCotizacion },
         data: {
-          ...(codigo && { CODIGO_COTIZACION: codigo }),
           ...(request.body.idCliente && { ID_CLIENTE_FK: request.body.idCliente }),
           ...(reqEstado && { ESTADO: reqEstado }),
           UPDATED_AT: new Date(),
@@ -800,20 +1023,21 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
 const trackingJobs: Record<string, string[]> = {};
 
-    // 7.1. SIEMPRE generamos el Excel de la Cotización actualizada
-    const quoteTracker_Cot = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
-    await excelquue.add('actualizacion_cotizacion', {
-      id_job: quoteTracker_Cot.id, 
-      tipo_entry: 'prod', 
-      id_registro: resultado.ID_COTIZACION,
-      action: 'cot_update',
-      codigo_actual: resultado.CODIGO_COTIZACION,
-      tipo: 1,
-      id_usuario: idUsuario,
-      id_cotizacion: resultado.ID_COTIZACION,
-      force_regenerate: true,
-    });
-    trackingJobs.cot = [quoteTracker_Cot.id];
+    if (regenerarCotizacionDoc) {
+      const quoteTracker = await fastify.prisma.quote.create({ data: { status: 'PENDING' } });
+      await excelquue.add('actualizacion_cotizacion', {
+        id_job: quoteTracker.id,
+        tipo_entry: 'prod',
+        id_registro: resultado.ID_COTIZACION,
+        action: 'cot_update',
+        codigo_actual: resultado.CODIGO_COTIZACION,
+        tipo: 1,
+        id_usuario: idUsuario,
+        id_cotizacion: resultado.ID_COTIZACION,
+        force_regenerate: true,
+      });
+      trackingJobs.cot = [quoteTracker.id];
+    }
 
     // 7.2. SOLO generamos el Excel de OT si realmente existe una OT vinculada
     for (const otActualizada of otsParaRegenerar) {

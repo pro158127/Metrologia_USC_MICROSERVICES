@@ -3,7 +3,7 @@ import { AppError } from '../lib/errors.js';
 import { calcularMontoTotalCotizacion, calcularValorDetalle } from './cotizacion-money.service.js';
 
 type Tx = Prisma.TransactionClient;
-type Sitio = 'LABORATORIO' | 'CLIENTE';
+type Sitio = 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC';
 
 interface TarifaInfo {
   magnitud: string;

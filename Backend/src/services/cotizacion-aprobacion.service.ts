@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { generarConsecutivo } from './consecutivo.service.js';
 
 type Tx = Prisma.TransactionClient;
+type Sitio = 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC';
 
 interface DetalleCotizacion {
   ID_DETALLE: number;
@@ -10,7 +11,7 @@ interface DetalleCotizacion {
   MAGNITUD: string;
   CANTIDAD: number;
   ID_UNIDADES: string[];
-  sitio: 'LABORATORIO' | 'CLIENTE' | null;
+  sitio: Sitio | null;
   activacion: boolean | null;
 }
 
@@ -51,7 +52,7 @@ export async function upsertRecepcion(
   input: {
     idCotizacion: number;
     idOrdenTrabajo: number;
-    sitio: 'LABORATORIO' | 'CLIENTE';
+    sitio: Sitio;
     solicitante: string;
     detalles: DetalleCotizacion[];
   },
@@ -129,9 +130,9 @@ export async function generarOrdenesTrabajoAprobacion(
 
   const solicitante = cotizacion.clientes?.RAZON_SOCIAL ?? '';
 
-  const grupos = new Map<'LABORATORIO' | 'CLIENTE', DetalleCotizacion[]>();
+  const grupos = new Map<Sitio, DetalleCotizacion[]>();
   for (const detalle of detalles) {
-    const sitio = detalle.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+    const sitio: Sitio = detalle.sitio ?? 'LABORATORIO';
     const lista = grupos.get(sitio) ?? [];
     lista.push(detalle);
     grupos.set(sitio, lista);
@@ -141,7 +142,7 @@ export async function generarOrdenesTrabajoAprobacion(
 
   const desdoblarDetallesOT = (
     dets: DetalleCotizacion[],
-    sitio: 'LABORATORIO' | 'CLIENTE',
+    sitio: Sitio,
   ) => {
     const result: any[] = [];
     let itemCounter = 1;
@@ -178,7 +179,7 @@ export async function generarOrdenesTrabajoAprobacion(
     const detallesOT: any[] = [];
     let itemCounter = 1;
     for (const detalle of detalles) {
-      const sitioFila = detalle.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+      const sitioFila: Sitio = detalle.sitio ?? 'LABORATORIO';
       for (let i = 0; i < (detalle.CANTIDAD || 1); i++) {
         detallesOT.push({
           ITEM: itemCounter,
@@ -245,7 +246,8 @@ export async function generarOrdenesTrabajoAprobacion(
           data: {
             SITIO_CALIBRACION: sitio,
             ES_EN_SITIO: esSitio,
-            ES_LAB_PERMANENTE: !esSitio,
+            ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+            ES_INTERNO_USC: sitio === 'INTERNO_USC',
             ID_CLIENTE_FK: cotizacion.ID_CLIENTE_FK,
             ID_OT_PADRE_FK: master.ID_ORDEN_TRABAJO,
           },
@@ -269,8 +271,8 @@ export async function generarOrdenesTrabajoAprobacion(
             estado: 'Creada',
             SITIO_CALIBRACION: sitio,
             ES_EN_SITIO: esSitio,
-            ES_LAB_PERMANENTE: !esSitio,
-            ES_INTERNO_USC: false,
+            ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+            ES_INTERNO_USC: sitio === 'INTERNO_USC',
             orden_trabajo_detalles: { create: detallesOT },
           },
         });
@@ -306,7 +308,8 @@ export async function generarOrdenesTrabajoAprobacion(
         data: {
           SITIO_CALIBRACION: sitio,
           ES_EN_SITIO: esSitio,
-          ES_LAB_PERMANENTE: !esSitio,
+          ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+          ES_INTERNO_USC: sitio === 'INTERNO_USC',
           ID_CLIENTE_FK: cotizacion.ID_CLIENTE_FK,
         },
       });
@@ -328,8 +331,8 @@ export async function generarOrdenesTrabajoAprobacion(
           estado: 'Creada',
           SITIO_CALIBRACION: sitio,
           ES_EN_SITIO: esSitio,
-          ES_LAB_PERMANENTE: !esSitio,
-          ES_INTERNO_USC: false,
+          ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+          ES_INTERNO_USC: sitio === 'INTERNO_USC',
           orden_trabajo_detalles: { create: detallesOT },
         },
       });
