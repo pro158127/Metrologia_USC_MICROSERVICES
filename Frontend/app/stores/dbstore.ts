@@ -208,12 +208,21 @@ updateTable: (table, updater) =>
           data = [];
       }
       const cambioDuranteLaCarga = revisionAlIniciar !== obtenerRevisionRealtime(String(table));
-      if (force && snapshotValido && !cambioDuranteLaCarga) {
+      // Para OT el snapshot es la fuente autoritativa de campos derivados
+      // (p. ej. tieneHijas). Conservar extras de eventos parciales deja OT
+      // maestras fantasma en el tablero aunque ya no vengan del backend.
+      // Si hubo eventos durante la consulta, reemplazamos y repetimos la carga
+      // para converger al estado posterior a la última transacción.
+      const snapshotOTAutoritativo = force && snapshotValido && table === 'ordenes_trabajo';
+      if ((force && snapshotValido && !cambioDuranteLaCarga) || snapshotOTAutoritativo) {
         set((s) => ({
           ...s,
           [table]: data,
           loading: { ...s.loading, [table]: false },
         }));
+        if (snapshotOTAutoritativo && cambioDuranteLaCarga) {
+          setTimeout(() => { void get().loadTable(table, true); }, 0);
+        }
       } else {
         get().mergeTable(table, data);
         set((s) => ({ loading: { ...s.loading, [table]: false } }));
