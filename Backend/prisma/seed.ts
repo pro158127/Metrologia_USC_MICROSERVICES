@@ -165,6 +165,7 @@ const schemaRecepcion = {
   "description": "Contrato de entrada para la plantilla de Recepción, Reporte y Entrega de Instrumentos del Laboratorio de Metrología (R-CM010 Versión 004)",
   "fields": {
     "scalars": [
+      { "key": "solicitante", "label": "Solicitante", "dataType": "STRING", "required": true },
       { "key": "nombre_quien_entrega", "label": "Nombre quién entrega", "dataType": "STRING", "required": true },
       { "key": "no_cotizacion", "label": "No. Cotización de Referencia (Cot)", "dataType": "STRING", "required": false },
       { "key": "sitio_laboratorio_permanente", "label": "Sitio de calibración - Laboratorio permanente", "dataType": "BOOLEAN", "required": false },
@@ -394,6 +395,38 @@ async function main() {
         }
       });
       console.log(`✅ "version_plantillas" (V1) y "INPUT_SCHEMA" inyectados para: ${p.nombre}`);
+    }
+
+    // Mantiene el contrato de recepción sincronizado en instalaciones donde V1
+    // ya existe, sin reemplazar el mapeo de celdas configurado en Administración.
+    if (p.modulo === 'RECEPCION') {
+      const ultimaVersion = await prisma.version_plantillas.findFirst({
+        where: { ID_PLANTILLA_FK: plantilla.ID_PLANTILLA },
+        orderBy: { VERSION: 'desc' },
+      });
+      if (ultimaVersion) {
+        const esquemaActual = ultimaVersion.INPUT_SCHEMA as any;
+        const camposActuales: Array<{ key?: string }> = Array.isArray(esquemaActual?.fields?.scalars)
+          ? esquemaActual.fields.scalars
+          : [];
+        if (!camposActuales.some((campo) => campo.key === 'solicitante')) {
+          const campoSolicitante = schemaRecepcion.fields.scalars.find((campo) => campo.key === 'solicitante');
+          const esquemaActualizado = esquemaActual
+            ? {
+                ...esquemaActual,
+                fields: {
+                  ...esquemaActual.fields,
+                  scalars: [...camposActuales, campoSolicitante],
+                },
+              }
+            : schemaRecepcion;
+          await prisma.version_plantillas.update({
+            where: { ID_VERSION_PLANTILLA: ultimaVersion.ID_VERSION_PLANTILLA },
+            data: { INPUT_SCHEMA: esquemaActualizado },
+          });
+          console.log('✅ Campo "solicitante" agregado al contrato activo de recepción.');
+        }
+      }
     }
   }
 

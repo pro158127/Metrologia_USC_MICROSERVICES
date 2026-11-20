@@ -46,8 +46,6 @@ export interface FilaInstrumento {
 
 // Estado completo del formulario de recepción
 export interface FormularioRecepcion {
-  idCliente: number | null;
-  clienteNombre: string;
   solicitante: string;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
@@ -69,7 +67,7 @@ export interface FormularioRecepcion {
 export interface RecepcionConInfo {
   idRecepcion: number;
   codigo: string;
-  clienteNombre: string;
+  solicitante: string;
   fecha: string;
   cantidadInstrumentos: number;
   codigoCotizacion?: string;
@@ -78,13 +76,13 @@ export interface RecepcionConInfo {
 }
 
 export interface FilterBarProps {
-  filtroCliente: string;
+  filtroSolicitante: string;
   filtroAnio: string;
   filtroMes: string;
   filtroDia: string;
-  clientesUnicos: string[];
+  solicitantesUnicos: string[];
   aniosDisponibles: string[];
-  onClienteChange: (val: string) => void;
+  onSolicitanteChange: (val: string) => void;
   onAnioChange: (val: string) => void;
   onMesChange: (val: string) => void;
   onDiaChange: (val: string) => void;
@@ -97,8 +95,6 @@ export interface RecepcionCardProps {
 }
 
 export interface DatosGeneralesSectionProps {
-  idCliente: number | null;
-  clienteNombre: string;
   solicitante: string;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;

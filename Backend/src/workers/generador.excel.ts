@@ -410,7 +410,8 @@ export function resolverDatosRecepcionConCeldas(recepcion: any, mappingConfig: M
   )].join(', ');
 
   const scalarMap: Record<string, any> = {
-    nombre_quien_entrega: recepcion.NOMBRE_ENTREGA || recepcion.SOLICITANTE,
+    solicitante: recepcion.SOLICITANTE,
+    nombre_quien_entrega: recepcion.NOMBRE_ENTREGA,
     no_cotizacion: recepcion.cotizaciones?.CODIGO_COTIZACION || '', 
     sitio_laboratorio_permanente: recepcion.SITIO_CALIBRACION === 'LABORATORIO' ? 'X' : '',
     sitio_instalaciones_cliente: recepcion.SITIO_CALIBRACION === 'CLIENTE' ? 'X' : '',

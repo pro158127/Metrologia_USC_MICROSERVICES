@@ -121,13 +121,13 @@ const HeaderSection = ({
 
 // 3.3 FilterBar
 const FilterBar = ({
-  filtroCliente,
+  filtroSolicitante,
   filtroAnio,
   filtroMes,
   filtroDia,
-  clientesUnicos,
+  solicitantesUnicos,
   aniosDisponibles,
-  onClienteChange,
+  onSolicitanteChange,
   onAnioChange,
   onMesChange,
   onDiaChange,
@@ -162,20 +162,20 @@ const FilterBar = ({
         <div className="relative">
           <input
             type="text"
-            list="clientes-datalist"
-            value={filtroCliente}
-            onChange={(e) => onClienteChange(e.target.value)}
-            placeholder="Buscar o selec. cliente..."
+            list="solicitantes-datalist"
+            value={filtroSolicitante}
+            onChange={(e) => onSolicitanteChange(e.target.value)}
+            placeholder="Buscar por solicitante..."
             className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-3 py-1.5 outline-none font-medium text-slate-700 w-48 placeholder:text-slate-400"
           />
-          <datalist id="clientes-datalist">
-            {clientesUnicos.map((cliente) => (
-              <option key={cliente} value={cliente} />
+          <datalist id="solicitantes-datalist">
+            {solicitantesUnicos.map((solicitante) => (
+              <option key={solicitante} value={solicitante} />
             ))}
           </datalist>
-          {filtroCliente && (
+          {filtroSolicitante && (
             <button
-              onClick={() => onClienteChange("")}
+              onClick={() => onSolicitanteChange("")}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[10px] font-bold border-none bg-transparent cursor-pointer"
             >
               ✕
@@ -248,7 +248,7 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
           </span>
         </div>
         <div className="text-xs font-medium text-slate-600">
-          {recepcionInfo.clienteNombre}
+          {recepcionInfo.solicitante || "Solicitante no especificado"}
         </div>
         <div className="text-[10px] text-slate-400 font-medium mt-1">
           {recepcionInfo.codigoCotizacion && (
@@ -269,8 +269,6 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
 // 3.5 DatosGeneralesSection (con búsqueda de cotización y OT)
 const DatosGeneralesSection = ({
   // Valores del formulario
-  idCliente,
-  clienteNombre,
   solicitante,
   nombreQuienEntrega,
   cotizacionCodigo,
@@ -289,15 +287,12 @@ const DatosGeneralesSection = ({
   bloqueado = false,
   nombreRecibeBloqueado = false,
   onUpdateGeneral,
-  onUpdateCliente,
 }: DatosGeneralesSectionProps & {
   isNew: boolean;
   nombreRecibeBloqueado?: boolean;
-  onUpdateCliente: (id: number | null) => void;
 }) => {
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
   const camposRaizBloqueados = isNew || bloqueado;
-  const clienteBloqueado = bloqueado;
   // Listas para datalist
   const clientesList = useMemo(
     () => clientes.map((c) => c.razonSocial).filter(Boolean),
@@ -320,31 +315,6 @@ const DatosGeneralesSection = ({
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
-            Cliente
-          </label>
-          {clienteBloqueado ? (
-            <input
-              value={clienteNombre || solicitante}
-              disabled
-              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-100 text-slate-400 text-xs cursor-not-allowed font-medium"
-            />
-          ) : (
-            <select
-              value={idCliente ?? ""}
-              onChange={(e) => onUpdateCliente(e.target.value ? Number(e.target.value) : null)}
-              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            >
-              <option value="">Seleccionar cliente...</option>
-              {clientes.map((c) => (
-                <option key={c.idCliente} value={c.idCliente}>
-                  {c.razonSocial} — {c.nitCedula}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-        <div className="md:col-span-2">
-          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Solicitante
           </label>
           <input
@@ -352,7 +322,7 @@ const DatosGeneralesSection = ({
             value={solicitante}
             onChange={(e) => onUpdateGeneral("solicitante", e.target.value)}
             className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            placeholder="Nombre de la empresa o cliente"
+            placeholder="Razón social o persona solicitante"
           />
           <datalist id="clientes-datalist-form">
             {clientesList.map((c) => (
@@ -958,8 +928,6 @@ export function MainRenderers() {
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
   const [cargandoRecepcion, setCargandoRecepcion] = useState(false);
   const [formulario, setFormulario] = useState<FormularioRecepcion>({
-    idCliente: null,
-    clienteNombre: "",
     solicitante: "",
     nombreQuienEntrega: "",
     cotizacionCodigo: "",
@@ -978,7 +946,7 @@ export function MainRenderers() {
   });
 
   // Filtros
-  const [filtroCliente, setFiltroCliente] = useState<string>("");
+  const [filtroSolicitante, setFiltroSolicitante] = useState<string>("");
   const [filtroMes, setFiltroMes] = useState<string>("all");
   const [filtroAnio, setFiltroAnio] = useState<string>(new Date().getFullYear().toString());
   const [filtroDia, setFiltroDia] = useState<string>("");
@@ -1124,11 +1092,11 @@ useEffect(() => {
     return Array.from(set).sort((a, b) => Number(b) - Number(a));
   }, [recepcionesEquipo]);
 
-  // Clientes únicos para filtro
-  const clientesUnicos = useMemo(() => {
+  // Solicitantes persistidos para filtro y búsqueda.
+  const solicitantesUnicos = useMemo(() => {
     const set = new Set<string>();
     recepcionesEnriquecidas.forEach((r) => {
-      if (r.clienteNombre) set.add(r.clienteNombre);
+      if (r.solicitante) set.add(r.solicitante);
     });
     return Array.from(set);
   }, [recepcionesEnriquecidas]);
@@ -1145,7 +1113,7 @@ useEffect(() => {
   // --- Filtrado de recepciones ---
   const recepcionesFiltradas = useMemo(() => {
     return recepcionesEnriquecidas.filter((r) => {
-      if (filtroCliente && !r.clienteNombre.toLowerCase().includes(filtroCliente.toLowerCase())) {
+      if (filtroSolicitante && !(r.solicitante ?? "").toLowerCase().includes(filtroSolicitante.toLowerCase())) {
         return false;
       }
       if (filtroDia) {
@@ -1156,7 +1124,7 @@ useEffect(() => {
       const coincideMes = filtroMes === "all" || mes === filtroMes;
       return coincideAnio && coincideMes;
     });
-  }, [recepcionesEnriquecidas, filtroCliente, filtroDia, filtroAnio, filtroMes]);
+  }, [recepcionesEnriquecidas, filtroSolicitante, filtroDia, filtroAnio, filtroMes]);
 
   // --- Funciones del formulario ---
   const handleUpdateGeneral = useCallback((field: string, value: string | boolean) => {
@@ -1165,15 +1133,6 @@ useEffect(() => {
       [field]: value,
     }));
   }, []);
-
-  const handleUpdateCliente = useCallback((idCliente: number | null) => {
-    setFormulario((prev) => ({
-      ...prev,
-      idCliente,
-      clienteNombre:
-        clientesStore.find((c) => c.idCliente === idCliente)?.razonSocial ?? "",
-    }));
-  }, [clientesStore]);
 
   const handleFilaChange = useCallback(
     (index: number, propiedad: keyof FilaInstrumento, valor: FilaInstrumento[keyof FilaInstrumento]) => {
@@ -1353,8 +1312,6 @@ useEffect(() => {
       // Mapear a formulario
       const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
       const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
-      const clienteVinculado =
-        recepcion.cotizacion?.cliente ?? recepcion.ordenTrabajo?.cliente ?? null;
       // Instrumentos
      const instrumentos = (recepcion.instrumentos || []).map((det) => {
         // Parseamos el JSON asumiendo que tiene la nueva estructura { entrada: {}, salida: {} }
@@ -1404,8 +1361,6 @@ useEffect(() => {
       });
 
       setFormulario({
-        idCliente: clienteVinculado?.idCliente ?? null,
-        clienteNombre: clienteVinculado?.razonSocial ?? "",
         solicitante: recepcion.solicitante || "",
         nombreQuienEntrega: recepcion.nombreEntrega || "",
         cotizacionCodigo,
@@ -1448,8 +1403,6 @@ useEffect(() => {
     const hoy = new Date().toISOString().split("T")[0];
     setSelectedRecepcionId("NUEVA");
     setFormulario({
-      idCliente: null,
-      clienteNombre: "",
       solicitante: "",
       nombreQuienEntrega: "",
       cotizacionCodigo: "",
@@ -1475,8 +1428,6 @@ useEffect(() => {
   const volverALista = useCallback(() => {
     setSelectedRecepcionId(null);
     setFormulario({
-      idCliente: null,
-      clienteNombre: "",
       solicitante: "",
       nombreQuienEntrega: "",
       cotizacionCodigo: "",
@@ -1549,8 +1500,6 @@ const handleGenerarActa = useCallback(async () => {
         // Indicador dinámico para tu Backend
         estado: estadoCalculado, 
         isNueva: selectedRecepcionId === "NUEVA",
-        idCliente: formulario.idCliente,
-        
         // Cabecera
         solicitante: formulario.solicitante,
         nombreEntrega: formulario.nombreQuienEntrega || undefined,
@@ -1736,13 +1685,13 @@ const handleGenerarActa = useCallback(async () => {
         // --- VISTA DE LISTA ---
         <div className="flex flex-col gap-5">
           <FilterBar
-            filtroCliente={filtroCliente}
+            filtroSolicitante={filtroSolicitante}
             filtroAnio={filtroAnio}
             filtroMes={filtroMes}
             filtroDia={filtroDia}
-            clientesUnicos={clientesUnicos}
+            solicitantesUnicos={solicitantesUnicos}
             aniosDisponibles={aniosDisponibles}
-            onClienteChange={setFiltroCliente}
+            onSolicitanteChange={setFiltroSolicitante}
             onAnioChange={(anio) => {
               setFiltroAnio(anio);
               setFiltroDia("");
@@ -1814,8 +1763,6 @@ const handleGenerarActa = useCallback(async () => {
              isNew={selectedRecepcionId === "NUEVA"}
             bloqueado={esEdicionAtada}
             nombreRecibeBloqueado
-            idCliente={formulario.idCliente}
-            clienteNombre={formulario.clienteNombre}
             solicitante={formulario.solicitante}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}
@@ -1829,7 +1776,6 @@ const handleGenerarActa = useCallback(async () => {
             cotizaciones={cotizaciones}
             ordenesTrabajo={ordenesTrabajo}
             onUpdateGeneral={handleUpdateGeneral}
-            onUpdateCliente={handleUpdateCliente}
           />
 
           <TablaInstrumentos

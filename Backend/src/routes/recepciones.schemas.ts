@@ -254,7 +254,7 @@ export type RecepcionEquipoDto = z.infer<typeof recepcionEquipoDtoSchema>;
 export const recepcionEnriquecidaDtoSchema = z.object({
   idRecepcion: z.number(),
   codigo: z.string(),
-  clienteNombre: z.string(),
+  solicitante: z.string(),
   fecha: z.string(),
   cantidadInstrumentos: z.number(),
   codigoCotizacion: z.string(),

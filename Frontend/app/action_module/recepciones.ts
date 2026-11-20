@@ -81,7 +81,6 @@ export interface InstrumentoRecepcionPayload {
 export interface RecepcionMutationPayload {
   estado?: string;
   isNueva?: boolean;
-  idCliente?: number | null;
   solicitante: string;
   nombreEntrega?: string;
   cotizacionCodigo?: string;

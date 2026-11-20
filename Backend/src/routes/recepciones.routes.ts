@@ -223,24 +223,13 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       });
 
       return recepciones.map((rec) => {
-        let clienteNombre = 'Cliente no especificado';
-        if (rec.cotizaciones?.clientes?.RAZON_SOCIAL) {
-          clienteNombre = rec.cotizaciones.clientes.RAZON_SOCIAL;
-        } else if (rec.ordenes_trabajo?.clientes?.RAZON_SOCIAL) {
-          clienteNombre = rec.ordenes_trabajo.clientes.RAZON_SOCIAL;
-        } else if (rec.ID_COTIZACION_FK && rec.cotizaciones?.clientes) {
-          clienteNombre = rec.cotizaciones.clientes.RAZON_SOCIAL || 'Sin razón social';
-        } else if (rec.ID_ORDEN_TRABAJO_FK && rec.ordenes_trabajo?.clientes) {
-          clienteNombre = rec.ordenes_trabajo.clientes.RAZON_SOCIAL || 'Sin razón social';
-        }
-
         const codigoCotizacion = rec.cotizaciones?.CODIGO_COTIZACION || '';
         const codigoOT = rec.ordenes_trabajo?.CODIGO_OT || '';
 
         return {
           idRecepcion: rec.ID_RECEPCION,
           codigo: rec.CODIGO_RECEPCION || `REC-${rec.ID_RECEPCION}`,
-          clienteNombre,
+          solicitante: rec.SOLICITANTE,
           fecha: rec.FECHA_RECEPCION
             ? new Date(rec.FECHA_RECEPCION).toISOString().split('T')[0]
             : '',
