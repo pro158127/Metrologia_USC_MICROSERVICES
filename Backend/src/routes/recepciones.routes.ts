@@ -562,6 +562,28 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
   );
 
   // ==========================================================================
+  // GET /api/v1/recepciones/:id — Lectura autoritativa para abrir el formulario
+  // ==========================================================================
+  app.get(
+    '/api/v1/recepciones/:id',
+    {
+      preHandler: [fastify.authenticate],
+      schema: { params: recepcionParamsSchema },
+    },
+    async (request) => {
+      const recepcion = await fastify.prisma.recepciones_equipo.findUnique({
+        where: { ID_RECEPCION: request.params.id },
+        include: REC_INCLUDE,
+      });
+      if (!recepcion) throw new AppError(404, 'Recepción no encontrada');
+      return {
+        ok: true as const,
+        data: recepcionEquipoRawToDtoSchema.parse(recepcion),
+      };
+    }
+  );
+
+  // ==========================================================================
   // PUT /api/v1/recepciones/:id — Actualización con sincronización y versionado
   // ==========================================================================
   app.put(

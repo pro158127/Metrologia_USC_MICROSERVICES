@@ -37,6 +37,16 @@ export async function getRecepcionesEnriquecidas(): Promise<RecepcionConInfo[]> 
   }
 }
 
+/** Lee una recepción puntual desde la base de datos antes de abrir su formulario. */
+export async function getRecepcionPorId(idRecepcion: number): Promise<RecepcionEquipoModel> {
+  const session = await auth();
+  const res = await fastifyRequest<{ ok: boolean; data: RecepcionEquipoModel }>(
+    session,
+    `/api/v1/recepciones/${idRecepcion}`
+  );
+  return res.data;
+}
+
 export async function getInitialData(): Promise<InitialDataResponse> {
   try {
     const session = await auth();

@@ -930,6 +930,7 @@ const FormFooterActions = ({
 // ============================================================
 import {
   getRecepcionesEnriquecidas,
+  getRecepcionPorId,
   getInitialData,
   crearRecepcion,
   actualizarRecepcion,
@@ -955,6 +956,7 @@ export function MainRenderers() {
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
+  const [cargandoRecepcion, setCargandoRecepcion] = useState(false);
   const [formulario, setFormulario] = useState<FormularioRecepcion>({
     idCliente: null,
     clienteNombre: "",
@@ -1334,8 +1336,20 @@ useEffect(() => {
 
   // --- Cargar una recepción existente para editar ---
   const cargarRecepcion = useCallback(
-    (recepcion: RecepcionEquipoModel) => {
-      setSelectedRecepcionId(recepcion.codigo || `REC-${recepcion.idRecepcion}`);
+    async (recepcionLista: RecepcionEquipoModel) => {
+      setSelectedRecepcionId(recepcionLista.codigo || `REC-${recepcionLista.idRecepcion}`);
+      setRecepcionActual(null);
+      setCargandoRecepcion(true);
+      let recepcion: RecepcionEquipoModel;
+      try {
+        recepcion = await getRecepcionPorId(recepcionLista.idRecepcion);
+      } catch (error) {
+        console.error('No se pudo cargar la recepción seleccionada:', error);
+        setSelectedRecepcionId(null);
+        showToast('❌ No se pudo cargar la recepción completa. Intenta de nuevo.');
+        setCargandoRecepcion(false);
+        return;
+      }
       // Mapear a formulario
       const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
       const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
@@ -1420,8 +1434,9 @@ useEffect(() => {
 
       setRecepcionActual(recepcion);
       setActaGuardada(false);
+      setCargandoRecepcion(false);
     },
-    [cotizaciones]
+    [cotizaciones, showToast]
   );
 
   // --- Inicializar nueva recepción ---
@@ -1763,6 +1778,12 @@ const handleGenerarActa = useCallback(async () => {
       ) : (
         // --- VISTA DE FORMULARIO ---
         <div className="flex flex-col gap-5">
+          {cargandoRecepcion ? (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800" role="status" aria-live="polite">
+              Cargando los datos completos de la recepción… No edites ni guardes hasta que termine.
+            </div>
+          ) : (
+          <>
           {recepcionActual && (
             <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-2.5">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
@@ -1834,6 +1855,8 @@ const handleGenerarActa = useCallback(async () => {
             onGenerarActa={handleGenerarActa}
             guardando={guardando}
           />
+          </>
+          )}
         </div>
       )}
 
