@@ -295,7 +295,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
                 detalleActual != null && asignadoFinal !== detalleActual.asignado;
               if (tecnicoCambia) {
                 assertPermission(request, 'ordenes_de_trabajo', 'asignar_tecnico');
-                await validarAsignacionPermitida(tx, id);
+                await validarAsignacionPermitida(tx, id, detalleActual?.ID_UNIDAD_FK);
               }
 
               await tx.orden_trabajo_detalles.update({

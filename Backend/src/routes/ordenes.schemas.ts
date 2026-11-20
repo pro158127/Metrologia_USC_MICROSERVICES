@@ -109,6 +109,9 @@ export type CotizacionDto = z.infer<typeof cotizacionDtoSchema>;
 export const ordenTrabajoDetalleDtoSchema = z.object({
   idDetalle: z.number(),
   idOrdenTrabajo: z.number(),
+  idUnidad: z.string().nullable(),
+  calibracionIniciada: z.boolean(),
+  certificadoCreado: z.boolean(),
   item: z.number(),
   tipoServicio: z.string(),
   instrumento: z.string(),
@@ -380,6 +383,7 @@ export const ordenTrabajoDetalleRawToDtoSchema = z
   .object({
     ID_DETALLE: z.number(),
     ID_ORDEN_TRABAJO_FK: z.number(),
+    ID_UNIDAD_FK: z.string().nullish(),
     ITEM: z.number(),
     TIPO_SERVICIO: z.string(),
     INSTRUMENTO: z.string(),
@@ -401,6 +405,9 @@ export const ordenTrabajoDetalleRawToDtoSchema = z
   .transform((raw): OrdenTrabajoDetalleDto => ({
     idDetalle: raw.ID_DETALLE,
     idOrdenTrabajo: raw.ID_ORDEN_TRABAJO_FK,
+    idUnidad: raw.ID_UNIDAD_FK ?? null,
+    calibracionIniciada: false,
+    certificadoCreado: false,
     item: raw.ITEM,
     tipoServicio: raw.TIPO_SERVICIO,
     instrumento: raw.INSTRUMENTO,
@@ -468,8 +475,9 @@ export const ordenTrabajoRawToDtoSchema = z
     orden_trabajo_detalles: z.array(ordenTrabajoDetalleRawToDtoSchema).nullish(),
     recepciones_equipo: z.array(z.object({
       recepcion_equipo_detalles: z.array(z.object({
+        ID_UNIDAD_FK: z.string().nullish(),
         calibraciones: z.object({
-          certificados: z.object({ ESTADO_REVISION: z.string().nullish() }).nullish(),
+          certificados: z.object({ ID_CERTIFICADO: z.number(), ESTADO_REVISION: z.string().nullish() }).nullish(),
         }).nullish(),
       }).passthrough()).nullish(),
     }).passthrough()).nullish(),
@@ -526,7 +534,17 @@ export const ordenTrabajoRawToDtoSchema = z
     alertamessag: raw.alertamessag ?? 'sin novedades',
     cliente: raw.clientes ?? null,
     cotizacion: raw.cotizaciones ?? null,
-    instrumentos: raw.orden_trabajo_detalles ?? [],
+    instrumentos: (raw.orden_trabajo_detalles ?? []).map((detalle) => {
+      const detalleRecepcion = (raw.recepciones_equipo ?? [])
+        .flatMap((recepcion) => recepcion.recepcion_equipo_detalles ?? [])
+        .find((instrumento) => instrumento.ID_UNIDAD_FK === detalle.ID_UNIDAD_FK);
+      const instrumento = ordenTrabajoDetalleRawToDtoSchema.parse(detalle);
+      return {
+        ...instrumento,
+        calibracionIniciada: detalleRecepcion?.calibraciones != null,
+        certificadoCreado: detalleRecepcion?.calibraciones?.certificados != null,
+      };
+    }),
   }));
 export type OrdenTrabajoRaw = z.input<typeof ordenTrabajoRawToDtoSchema>;
 

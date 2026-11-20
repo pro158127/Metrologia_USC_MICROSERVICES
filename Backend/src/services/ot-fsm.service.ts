@@ -295,37 +295,69 @@ export async function transicionarOT(
   return { estadoAnterior: actual, estadoNuevo: nuevoEstado };
 }
 
-/** Bloquea la asignación de técnico si la OT no pasó recepción o ya está calibrada. */
+/**
+ * La asignación queda abierta después de recepción mientras la unidad no tenga
+ * calibración y no exista certificado para todos los instrumentos de la OT.
+ * El estado de revisión/aprobación del certificado de otra unidad no bloquea.
+ */
 export async function validarAsignacionPermitida(
   tx: Prisma.TransactionClient,
-  idOT: number
+  idOT: number,
+  idUnidad: string | null | undefined
 ): Promise<void> {
   const ot = await tx.ordenes_trabajo.findUnique({
     where: { ID_ORDEN_TRABAJO: idOT },
-    select: { estado: true },
+    select: {
+      estado: true,
+      orden_trabajo_detalles: {
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+        select: { ID_UNIDAD_FK: true },
+      },
+    },
   });
 
   const estado = ot?.estado ?? EstadoOT.Creada;
-  if (estado !== EstadoOT.En_recepción && estado !== EstadoOT.Asignada) {
+  if (!ot || estado === EstadoOT.Creada) {
     throw new AppError(
       409,
-      'Solo se puede asignar o cambiar el técnico después de la recepción y antes de la calibración.'
+      'La asignación de técnicos se habilita después de completar la recepción.'
     );
   }
 
-  const conCalibracion = await tx.calibraciones.findFirst({
-    where: {
+  const recepcion = await tx.recepciones_equipo.findFirst({
+    where: { ID_ORDEN_TRABAJO_FK: idOT, VIGENTE: true, activacion: true },
+    include: {
       recepcion_equipo_detalles: {
-        recepciones_equipo: { ID_ORDEN_TRABAJO_FK: idOT },
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+        include: { calibraciones: { include: { certificados: true } } },
       },
     },
-    select: { ID_CALIBRACION: true },
   });
 
-  if (conCalibracion) {
+  const unidadesActivas = (ot.orden_trabajo_detalles ?? [])
+    .map((detalle) => detalle.ID_UNIDAD_FK)
+    .filter((unidad): unidad is string => Boolean(unidad));
+  const unidadesConCertificado = new Set(
+    (recepcion?.recepcion_equipo_detalles ?? [])
+      .filter((detalle) => detalle.calibraciones?.certificados != null)
+      .map((detalle) => detalle.ID_UNIDAD_FK)
+      .filter((unidad): unidad is string => Boolean(unidad))
+  );
+
+  if (unidadesActivas.length > 0 && unidadesActivas.every((unidad) => unidadesConCertificado.has(unidad))) {
     throw new AppError(
       409,
-      'No se puede asignar o cambiar el técnico: la orden ya tiene instrumentos calibrados.'
+      'No se puede asignar: todos los instrumentos de la OT ya tienen certificado generado.'
     );
+  }
+
+  if (!idUnidad) {
+    throw new AppError(409, 'No se pudo identificar la unidad para validar su asignación.');
+  }
+  const instrumentoCalibrado = (recepcion?.recepcion_equipo_detalles ?? []).some(
+    (detalle) => detalle.ID_UNIDAD_FK === idUnidad && detalle.calibraciones != null
+  );
+  if (instrumentoCalibrado) {
+    throw new AppError(409, 'No se puede cambiar la asignación: este instrumento ya tiene una calibración iniciada.');
   }
 }

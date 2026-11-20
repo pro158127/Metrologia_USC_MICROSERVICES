@@ -238,7 +238,8 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   onAssignTechnician,
   estadoActual, // <-- Nuevo prop
 }) => {
- const puedeAsignar = ["En_recepción", "Asignada"].includes(estadoActual);
+ const todosCertificados = instrumentosCot.length > 0 && instrumentosCot.every((item) => item.certificadoCreado);
+ const puedeAsignar = estadoActual !== "Creada" && !todosCertificados;
  const { can } = usePermissions();
  const tienePermisoAsignar = can("ordenes_de_trabajo", "asignar_tecnico");
 
@@ -255,7 +256,11 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
         </div>
         
         {/* Renderizado condicional basado en el estado */}
-        {puedeAsignar && tienePermisoAsignar ? (
+        {todosCertificados ? (
+          <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+            Todos los instrumentos ya tienen certificado
+          </span>
+        ) : puedeAsignar && tienePermisoAsignar ? (
           <button
             onClick={() => setEditingTechnician(!editingTechnician)}
             className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-700 transition cursor-pointer border-none shadow-sm"
@@ -283,6 +288,7 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
                 value={item.asignado || ""}
                 // 🟢 CORRECCIÓN: Usar Number(e.target.value) en lugar del viejo item.asignado
                 onChange={(e) => onAssignTechnician(Number(e.target.value), item.id_instrumento)}
+                disabled={item.calibracionIniciada}
                 className="text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">-- Sin Asignar --</option>
@@ -292,6 +298,9 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
                   </option>
                 ))}
               </select>
+              {item.calibracionIniciada && (
+                <span className="text-[10px] text-amber-700">Instrumento ya calibrado</span>
+              )}
             </div>
           ))}
         </div>
@@ -1472,6 +1481,8 @@ const instrumentos_cot = useMemo(() => {
       // Usamos directamente el ID del draft (que es un string seguro)
       id_instrumento: inst.id, 
       instrumento: inst.instrumento,
+      calibracionIniciada: inst.calibracionIniciada ?? false,
+      certificadoCreado: inst.certificadoCreado ?? false,
     }));
   }, [instrumentDrafts]); // La UI ahora reaccionará a los cambios del Draft
 
@@ -1508,6 +1519,8 @@ const instrumentos_cot = useMemo(() => {
         intervaloRango: detalle.intervaloRango ?? null,
         resolucion: detalle.resolucion ?? null,
         asignado: detalle.asignado ?? 0,
+        calibracionIniciada: detalle.calibracionIniciada ?? false,
+        certificadoCreado: detalle.certificadoCreado ?? false,
         declaracionConformidad: detalle.declaracionConformidad ?? false,
         limiteControlEMC: detalle.limiteControlEMC ?? null,
         docEspecificacion: detalle.docEspecificacion ?? null,

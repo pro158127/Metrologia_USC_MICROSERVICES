@@ -134,6 +134,9 @@ export type Warning = {
 export type Instrument = Omit<OrdenTrabajoDetalleBase, "idOrdenTrabajo" | "idDetalle"> & {
   /** Identificador temporal solo para la UI (row key). */
   id: string;
+  idUnidad?: string | null;
+  calibracionIniciada?: boolean;
+  certificadoCreado?: boolean;
 };
 
 /** Vista resumida de una OT para Kanban/Lista, alineada a `OrdenTrabajo`. */
@@ -357,6 +360,8 @@ export interface OTasiignemet {
   // 🟢 Permitir string (para los UUIDs) o number (para la BD)
   id_instrumento: string | number; 
   instrumento: string;
+  calibracionIniciada: boolean;
+  certificadoCreado: boolean;
 }
 export interface Tecnico {
   idUsuario: number;

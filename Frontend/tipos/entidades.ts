@@ -195,6 +195,9 @@ export interface CotizacionModel {
 export interface OrdenTrabajoDetalleModel {
   idDetalle: number;
   idOrdenTrabajo: number;
+  idUnidad: string | null;
+  calibracionIniciada: boolean;
+  certificadoCreado: boolean;
   item: number;
   tipoServicio: string;
   instrumento: string;
