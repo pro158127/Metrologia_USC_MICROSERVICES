@@ -108,7 +108,7 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
     solicitudCreadaEn = solicitud.createdAt;
 
     if (tipo === 1) {
-      cotizacion = await tx.cotizaciones.findFirst({ where: { ID_COTIZACION: Number(id_registro) }, include: { cotizacion_detalles: { where: { activacion: true } }, clientes: true, ordenes_trabajo: true } });
+      cotizacion = await tx.cotizaciones.findFirst({ where: { ID_COTIZACION: Number(id_registro) }, include: { cotizacion_detalles: { where: { activacion: true } }, clientes: true, ordenes_trabajo: { where: { VIGENTE: true }, orderBy: { ID_ORDEN_TRABAJO: 'asc' } } } });
     }
     if (tipo === 2) {
       ordenTrabajo = await tx.ordenes_trabajo.findFirst({ where: { ID_ORDEN_TRABAJO: Number(id_registro) }, include: { cotizaciones: { select: { CODIGO_COTIZACION: true } }, orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } }, clientes: true } });
@@ -169,9 +169,12 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
     const fechaEmisionStr = cotizacion.CREATED_AT.toLocaleDateString('es-CO');
     const fechaVencimientoObj = fechaVencimientoCotizacion(await inicioVigenciaCotizacion(prisma, cotizacion), await diasVigenciaCotizacion(prisma));
     const totalEquipos = cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0) || 0;
-    const codigoOT = cotizacion.ordenes_trabajo && cotizacion.ordenes_trabajo.length > 0 ? cotizacion.ordenes_trabajo[0].CODIGO_OT : 'Pendiente de asignación';
+    const ordenes = (cotizacion.ordenes_trabajo ?? []) as Array<{ ID_ORDEN_TRABAJO: number; ID_OT_PADRE_FK: number | null; CODIGO_OT: string }>;
+    const idsMaestras = new Set(ordenes.map((orden) => orden.ID_OT_PADRE_FK));
+    const codigoOT = (ordenes.find((orden) => idsMaestras.has(orden.ID_ORDEN_TRABAJO)) ?? ordenes[0])?.CODIGO_OT ??
+      'Pendiente de asignación';
     const segundosRestantes = Math.max(0, Math.ceil((fechaVencimientoObj.getTime() - Date.now()) / 1000));
-    const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION, segundosRestantes);
+    const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION, segundosRestantes, cotizacion.CODIGO_COTIZACION);
     const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
     datosPlantillaCorreo = {
@@ -220,9 +223,16 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
       const excel = (contentJson as { excel?: string } | null)?.excel ?? null;
       const urls = { excel, url_pdf: ultimaVersion.RUTA_URL };
 
-      await prisma.quote.update({
-        where: { id: id_job },
-        data: { status: 'COMPLETED', data: urls }
+      await prisma.$transaction(async (tx) => {
+        if (tipo_entry === 'prod' && tipo === 1) {
+          const [vigente] = await tx.$queryRaw<{ codigo: string; estado: string }[]>
+            `SELECT "CODIGO_COTIZACION" AS codigo, "ESTADO"::text AS estado
+              FROM cotizaciones WHERE "ID_COTIZACION" = ${id_registro} FOR UPDATE`;
+          if (vigente?.codigo !== codigoDocumento || vigente.estado !== cotizacion?.ESTADO) {
+            throw new UnrecoverableError('La cotización cambió antes de reutilizar el documento.');
+          }
+        }
+        await tx.quote.update({ where: { id: id_job }, data: { status: 'COMPLETED', data: urls } });
       });
 
       // Retornamos instantáneamente, sin procesar nada más

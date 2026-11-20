@@ -290,7 +290,7 @@ const DatosGeneralesSection = ({
   isNew: boolean;
   nombreRecibeBloqueado?: boolean;
 }) => {
-  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
+  // Los campos raíz identifican el grupo aunque la OT esté pendiente.
   const camposRaizBloqueados = !isNew;
   const altaIndependiente = isNew && !cotizacionCodigo.trim() && !ordenTrabajoCodigo.trim();
   const cotizacionesList = useMemo(
@@ -383,7 +383,7 @@ const DatosGeneralesSection = ({
           <input
             list={!camposRaizBloqueados ? "ordenes-datalist" : undefined}
             value={ordenTrabajoCodigo}
-            placeholder="Automático"
+            placeholder={camposRaizBloqueados ? "Pendiente de aprobación" : "Automático"}
             disabled={camposRaizBloqueados}
             onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
@@ -1007,11 +1007,11 @@ export function MainRenderers() {
   const [errorRetiro, setErrorRetiro] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
+  // Los campos raíz identifican el grupo aunque la OT esté pendiente.
   const esEdicionAtada =
     selectedRecepcionId !== null &&
     selectedRecepcionId !== "NUEVA" &&
-    !!recepcionActual?.idOrdenTrabajo;
+    Boolean(recepcionActual?.idOrdenTrabajo || recepcionActual?.idCotizacion);
   const tecnicosInstrumentos = recepcionActual?.ordenTrabajo?.tecnicosInstrumentos ?? [];
   const nombresTecnicosAsignados = [...new Set(
     tecnicosInstrumentos.map((asignacion) => asignacion.nombreTecnico.trim()).filter(Boolean)
@@ -1508,7 +1508,9 @@ const handleGenerarActa = useCallback(async () => {
         if (esNueva) setSelectedRecepcionId(String(guardada.idRecepcion));
       }
       setActaGuardada(true);
-      showToast(habilitaAsignacion && !cumpleRequisitosCompletos
+      showToast(response.data && !response.data.idOrdenTrabajo
+        ? response.message || "Recepción guardada. La OT está pendiente de aprobación."
+        : habilitaAsignacion && !cumpleRequisitosCompletos
         ? "Recepción guardada. Puedes asignar los instrumentos con estampilla e IBC de entrada completos."
         : estadoCalculado === "ENTREGADO"
           ? "Salida registrada como entregada."
@@ -1663,7 +1665,7 @@ const handleGenerarActa = useCallback(async () => {
             <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-2.5">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 {esEdicionAtada
-                  ? "Edición atada a OT — campos raíz bloqueados"
+                  ? "Edición de recepción vinculada · campos de referencia bloqueados"
                   : `Editando recepción ${recepcionActual.codigo}`}
               </span>
               <div className="flex items-center gap-2">

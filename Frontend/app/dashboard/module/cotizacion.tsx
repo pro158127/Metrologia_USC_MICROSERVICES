@@ -244,8 +244,6 @@ const QuotationListTable = ({
   updatingId,
 }: QuotationListTableProps) => {
   const { can } = usePermissions();
-  const puedeGestionarEstado =
-    can("cotizaciones", "aprobar_rechazar") || can("cotizaciones", "enviar_al_cliente");
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-x-auto">
       <table className="w-full text-left text-xs">
@@ -258,17 +256,21 @@ const QuotationListTable = ({
         </thead>
         <tbody>
           {filtered.map((c) => {
-            const posiblesTransiciones = transicionesValidas[c.estado] || [];
+            const posiblesTransiciones = (transicionesValidas[c.estado] || []).filter((estado) =>
+              estado === Estados.ENVIADA ? can("cotizaciones", "enviar_al_cliente")
+                : estado === Estados.EN_SEGUIMIENTO ? can("cotizaciones", "crear_editar")
+                  : can("cotizaciones", "aprobar_rechazar"),
+            );
             return (
               <tr key={c.idCotizacion} className="border-b border-slate-200 hover:bg-slate-50 transition-colors group">
                 <td className="py-3 px-4 font-mono font-bold text-slate-700">{c.codigo}</td>
                 <td className="py-3 px-4 text-slate-600 font-medium">{c.cliente?.razonSocial || "N/A"}</td>
                 <td className="py-3 px-4 font-mono font-bold text-slate-700">{formatCurrency(c.montoTotal)}</td>
                 <td className="py-3 px-4">
-                  {puedeGestionarEstado && posiblesTransiciones.length > 0 ? (
+                  {posiblesTransiciones.length > 0 ? (
                     <select
                       value={c.estado}
-                      onChange={(e) => onEstadoChange(c.idCotizacion, e.target.value as Estados)}
+                      onChange={(e) => onEstadoChange(c.idCotizacion, e.target.value as Estados, c.codigo)}
                       disabled={updatingId === c.idCotizacion}
                       className="px-2 py-1 rounded-full text-[10px] font-bold border bg-transparent focus:outline-none focus:ring-1 focus:ring-[#5680F9] disabled:opacity-60"
                       style={{
@@ -980,7 +982,7 @@ export default function Cotizaciones() {
     }
   }, [idClienteSeleccionado, viaticos, descuento, items, showToast, cargarCotizaciones, plantillasCompletas]);
 
-  const handleEstadoChange = useCallback(async (id: number, nuevoEstado: Estados) => {
+  const handleEstadoChange = useCallback(async (id: number, nuevoEstado: Estados, codigo: string) => {
     if (nuevoEstado === Estados.RECHAZADA) {
       setRejectTargetId(id);
       setRejectMotivo("");
@@ -988,9 +990,9 @@ export default function Cotizaciones() {
     }
     setUpdatingId(id);
     try {
-      const res = await cambiarEstadoCotizacion(id, nuevoEstado);
+      const res = await cambiarEstadoCotizacion(id, nuevoEstado, undefined, codigo);
       if (res.ok) {
-        showToast(`✅ Estado actualizado a ${nuevoEstado}`);
+        showToast(nuevoEstado === Estados.ENVIADA ? "Cotización en cola para enviar al cliente." : `✅ Estado actualizado a ${nuevoEstado}`);
         cargarCotizaciones(); // refrescar para obtener historial actualizado
       } else {
         showToast(`❌ Error: ${res.error}`);

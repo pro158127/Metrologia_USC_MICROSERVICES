@@ -168,6 +168,7 @@ const schemaRecepcion = {
       { "key": "solicitante", "label": "Solicitante", "dataType": "STRING", "required": true },
       { "key": "nombre_quien_entrega", "label": "Nombre quién entrega", "dataType": "STRING", "required": true },
       { "key": "no_cotizacion", "label": "No. Cotización de Referencia (Cot)", "dataType": "STRING", "required": false },
+      { "key": "no_orden_trabajo", "label": "No. Orden de Trabajo", "dataType": "STRING", "required": false },
       { "key": "sitio_interno_usc", "label": "Sitio de calibración - Interno USC", "dataType": "BOOLEAN", "required": false },
       { "key": "sitio_laboratorio_permanente", "label": "Sitio de calibración - Laboratorio permanente", "dataType": "BOOLEAN", "required": false },
       { "key": "sitio_instalaciones_cliente", "label": "Sitio de calibración - Instalaciones del cliente", "dataType": "BOOLEAN", "required": false },

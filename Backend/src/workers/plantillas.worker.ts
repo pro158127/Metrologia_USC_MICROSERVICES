@@ -164,7 +164,7 @@ generador_excel.on('completed', async(job,returnvalue) => {
     modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
   });
     }}
-    if (returnvalue.action === "cot_update") {
+    if (returnvalue.action === "cot_update" && returnvalue.estado !== "BORRADOR") {
       await encolarCorreoConRegistro(prisma, {
         to: returnvalue.datos_correo.emailDestino,
         // Cambiamos el Asunto para reflejar la aprobación

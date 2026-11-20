@@ -63,7 +63,7 @@ export async function reintentarEnvioCorreoCotizacion(
 // VALIDACIÓN DE PERMISOS (sin cambios)
 // ==========================================
 async function validarPermiso(
-  accion: 'consultar' | 'desactivar' | 'crear_editar' | 'ver_historial' | 'aprobar_rechazar'
+  accion: 'consultar' | 'desactivar' | 'crear_editar' | 'ver_historial' | 'aprobar_rechazar' | 'enviar_al_cliente'
 ) {
   const session = await auth();
   if (!session?.user) {
@@ -222,9 +222,12 @@ export async function actualizarCotizacion(
 export async function cambiarEstadoCotizacion(
   idCotizacion: number,
   nuevoEstado: Estados,
-  motivoRechazo?: string
+  motivoRechazo?: string,
+  codigo?: string,
 ): Promise<ActionResponse<CotizacionConDetalles>> {
-  const perm = await validarPermiso('aprobar_rechazar');
+  const accion = nuevoEstado === Estados.ENVIADA ? 'enviar_al_cliente'
+    : nuevoEstado === Estados.EN_SEGUIMIENTO ? 'crear_editar' : 'aprobar_rechazar';
+  const perm = await validarPermiso(accion);
   if (!perm.autorizado) return { ok: false, error: perm.error };
 
   const session = await auth();
@@ -235,7 +238,7 @@ export async function cambiarEstadoCotizacion(
     const res = await fastifyRequest<ActionResponse<CotizacionConDetalles>>(
       session,
       `/api/v1/cotizaciones/${idCotizacion}/estado`,
-      { method: 'PATCH', body: { nuevoEstado, motivoRechazo: motivoRechazo ?? null } }
+      { method: 'PATCH', body: { nuevoEstado, motivoRechazo: motivoRechazo ?? null, codigo } }
     );
     return res;
   } catch (error) {

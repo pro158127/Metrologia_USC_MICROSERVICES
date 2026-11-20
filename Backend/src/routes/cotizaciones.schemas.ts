@@ -52,6 +52,7 @@ export type CrearCotizacionBody = z.infer<typeof crearCotizacionBodySchema>;
 
 export const cambiarEstadoBodySchema = z.object({
   nuevoEstado: estadosEnum,
+  codigo: z.string().trim().min(1).optional(),
   motivoRechazo: z.string().nullish(),
 });
 export type CambiarEstadoBody = z.infer<typeof cambiarEstadoBodySchema>;

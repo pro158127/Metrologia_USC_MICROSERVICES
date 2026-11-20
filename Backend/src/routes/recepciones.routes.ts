@@ -15,7 +15,7 @@ import {
 } from '../services/ot-edit-lock.service.js';
 import { registrarGeneracionPendiente } from '../services/generacion-pendiente.service.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
-import { pendientesEntregaSalida } from '../services/recepcion-entrega.service.js';
+import { calcularEstadoRecepcion } from '../services/recepcion-entrega.service.js';
 import { datosSitioOT, sincronizarOTMaestraDesdeRecepcion } from '../services/recepcion-ot-sync.service.js';
 import { cabeceraSolicitanteOT, datosClienteRecepcion, resolverClienteAltaRecepcion } from '../services/recepcion-cliente.service.js';
 import { cerrarSeguimientoSiCompleto, cotizacionListaParaSeguimiento } from '../services/seguimiento-cierre.service.js';
@@ -68,7 +68,7 @@ function normalizarSitio(valor?: string | null): 'LABORATORIO' | 'CLIENTE' | 'IN
   if (!valor) return 'LABORATORIO';
   const v = valor.toUpperCase();
   if (v.includes('LAB')) return 'LABORATORIO';
-  if (v.includes('CLI')) return 'CLIENTE';
+  if (v.includes('CLI') || v.trim() === 'EN SITIO') return 'CLIENTE';
   if (v.includes('INTERNO')) return 'INTERNO_USC';
   return 'LABORATORIO';
 }
@@ -181,56 +181,17 @@ function cambioDeCodigo(anterior: string | null | undefined, actual: string | nu
   return anterior ? `${anterior} → ${actual}` : actual;
 }
 
-function validarRecepcionDefinitiva(body: InstrumentoInput[], cabecera: { nombreEntrega?: string | null; fechaRecepcion?: string | null }) {
-  return Boolean(
-    cabecera.nombreEntrega?.trim() && cabecera.fechaRecepcion && body.length > 0 &&
-    body.every((inst) => {
-      const entrada = (inst.estadoIBC as any)?.entrada;
-      return [inst.instrumento, inst.marca, inst.modelo, inst.serie, inst.codigoInventario, inst.resolucion]
-        .every((v) => v != null && String(v).trim() !== '') &&
-        ['E', 'T', 'D', 'A'].every((k) => typeof entrada?.[k] === 'boolean');
-    })
-  );
-}
-
-function calcularEstadoRecepcion(
-  instrumentos: InstrumentoInput[],
-  cabecera: {
-    estado?: string;
-    nombreEntrega?: string | null;
-    fechaRecepcion?: string | null;
-    fechaSalida?: string | null;
-    nombreRecibe?: string | null;
-    nombreEmpaca?: string | null;
-    accesorios?: string | null;
-    nombreRecibeServicio?: string | null;
-  },
-  nombreRecibeSesion: string,
-): 'BORRADOR' | 'RECIBIDO' | 'ENTREGADO' {
-  const entradaCompleta = validarRecepcionDefinitiva(instrumentos, cabecera);
-  const pendientesSalida = pendientesEntregaSalida({
-    fechaSalida: cabecera.fechaSalida,
-    nombreRecibe: nombreRecibeSesion || cabecera.nombreRecibe,
-    nombreEmpaca: cabecera.nombreEmpaca,
-    accesorios: cabecera.accesorios,
-    nombreRecibeServicio: cabecera.nombreRecibeServicio,
-    instrumentos: instrumentos.map((instrumento) => ({
-      instrumento: instrumento.instrumento,
-      estadoIBC: instrumento.estadoIBC as { salida?: Record<string, unknown> } | null,
-      activacion: true,
-    })),
+async function generarCotizacionDesdeRecepcion(tx: Prisma.TransactionClient, idCotizacion: number, idUsuario: number) {
+  const cotizacion = await tx.cotizaciones.findUniqueOrThrow({
+    where: { ID_COTIZACION: idCotizacion },
+    select: { ESTADO: true, cotizacion_detalles: {
+      where: { activacion: true, CANTIDAD: { gt: 0 } }, select: { ID_DETALLE: true }, take: 1,
+    } },
   });
-  const salidaCompleta = entradaCompleta && pendientesSalida.length === 0;
-
-  if (cabecera.estado === 'ENTREGADO' && !salidaCompleta) {
-    throw new AppError(409, 'No se puede cerrar la recepción: faltan datos de salida de uno o más instrumentos.');
-  }
-  if (cabecera.estado === 'RECIBIDO' && !entradaCompleta) {
-    throw new AppError(409, 'No se puede marcar RECIBIDO: complete datos de entrada de todos los instrumentos.');
-  }
-
-  if (!entradaCompleta) return 'BORRADOR';
-  return salidaCompleta ? 'ENTREGADO' : 'RECIBIDO';
+  return registrarGeneracionPendiente(tx, 'generar_cotizacion_desde_recepcion', {
+    tipo: 1, id_registro: idCotizacion, tipo_entry: 'prod', id_usuario: idUsuario,
+    action: cotizacion.ESTADO === 'ENVIADA' && cotizacion.cotizacion_detalles.length ? 'cot_create' : undefined,
+  });
 }
 
 /** Nombre del usuario autenticado (para autocompletar NOMBRE_RECIBE). */
@@ -476,6 +437,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               MONTO_TOTAL: 0,
             },
           });
+          await tx.historial_estado_cotizacion.create({ data: {
+            ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
+            ESTADO_NUEVO: 'BORRADOR',
+            ID_USUARIO_FK: idUsuario || null,
+            MOTIVO: 'Creada desde Recepciones.',
+          } });
         }
 
         await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${cotizacion.ID_COTIZACION} FOR UPDATE`;
@@ -535,8 +502,9 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           throw new AppError(409, 'La OT tiene calibraciones en su historial y no admite otra recepción desde este formulario.');
         }
 
-        const otNueva = !ot;
-        if (!ot) {
+        // Una recepción independiente solo materializa su OT al aprobar.
+        const otNueva = !ot && (cotizacion.ESTADO === 'APROBADA' || familia.length > 0);
+        if (otNueva) {
           ot = await tx.ordenes_trabajo.create({
             data: {
               CODIGO_OT: await generarConsecutivo(tx, 'OT'),
@@ -554,10 +522,17 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         // la OT creada al aprobar una cotización). En ese caso también hay que
         // sincronizar sus instrumentos: crear solo la recepción dejaba la OT sin
         // detalles y la FSM no podía avanzar a En_recepción.
-        const detallesOT = await tx.orden_trabajo_detalles.findMany({
+        const detallesOT = ot ? await tx.orden_trabajo_detalles.findMany({
           where: { ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO, OR: [{ activacion: true }, { activacion: null }] },
           orderBy: [{ ITEM: 'asc' }, { ID_DETALLE: 'asc' }],
-        });
+        }) : [];
+        const lineasSinOT = !ot && !cotizacionNueva ? await tx.cotizacion_detalles.findMany({
+          where: { ID_COTIZACION_FK: cotizacion.ID_COTIZACION, activacion: true,
+            ...(sitio === 'LABORATORIO' ? { OR: [{ sitio }, { sitio: null }] } : { sitio }) },
+          orderBy: { ID_DETALLE: 'asc' },
+        }) : [];
+        const unidadesCotizadas = lineasSinOT.flatMap((linea) => linea.ID_UNIDADES.map((id) => ({ id, linea })));
+        const usadasCotizadas = new Set<string>();
         const usados = new Set<number>();
         const emparejados = instrumentosConId.map((instrumento, indice) => {
           const nombre = instrumento.instrumento.trim().toLowerCase();
@@ -570,9 +545,13 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             throw new AppError(409, `No se pudo identificar de forma inequívoca la unidad de «${instrumento.instrumento}» en la OT.`);
           }
           if (anterior) usados.add(anterior.ID_DETALLE);
+          const cotizada = unidadesCotizadas.find(({ id, linea }) => !usadasCotizadas.has(id) &&
+            linea.EQUIPO_DESCRIPCION.trim().toLowerCase() === nombre &&
+            (!instrumento.tipoServicio || normalizarServicioCotizado(linea.TIPO_SERVICIO) === normalizarServicioCotizado(instrumento.tipoServicio)));
+          if (cotizada) usadasCotizadas.add(cotizada.id);
           return { instrumento: {
-            ...instrumento, idUnidad: anterior?.ID_UNIDAD_FK ?? instrumento.idUnidad,
-            tipoServicio: instrumento.tipoServicio ?? anterior?.TIPO_SERVICIO,
+            ...instrumento, idUnidad: anterior?.ID_UNIDAD_FK ?? cotizada?.id ?? instrumento.idUnidad,
+            tipoServicio: instrumento.tipoServicio ?? anterior?.TIPO_SERVICIO ?? cotizada?.linea.TIPO_SERVICIO,
           }, anterior };
         });
         instrumentosConId = emparejados.map(({ instrumento }) => instrumento);
@@ -580,71 +559,73 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         generarCotizacion = cotizacionNueva || comercial.cambio;
         if (comercial.cambio && !cotizacionNueva) {
           await tx.cotizaciones.update({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION }, data: {
-            CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotizacion.CODIGO_COTIZACION),
+            CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotizacion.CODIGO_COTIZACION), UPDATED_AT: new Date(),
           } });
         }
 
-        let otCambio = ot.SITIO_CALIBRACION !== sitio;
-        for (const [indice, { instrumento, anterior }] of emparejados.entries()) {
-          const item = indice + 1;
-          const datos = {
-            ITEM: item,
-            INSTRUMENTO: instrumento.instrumento,
-            TIPO_SERVICIO: comercial.serviciosPorUnidad.get(instrumento.idUnidad!) ?? instrumento.tipoServicio ?? 'Calibración',
-            FABRICANTE: instrumento.marca ?? null,
-            MODELO: instrumento.modelo ?? null,
-            SERIE: instrumento.serie ?? null,
-            CODIGO_INVENTARIO: instrumento.codigoInventario ?? null,
-            RESOLUCION: instrumento.resolucion ?? null,
-            ID_UNIDAD_FK: instrumento.idUnidad,
-            sitio_calibracion: sitio,
-            activacion: true,
-          };
-          if (!anterior) {
-            await tx.orden_trabajo_detalles.create({ data: { ...datos, ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO } });
-            otCambio = true;
-          } else {
-            if (Object.entries(datos).some(([campo, valor]) => anterior[campo as keyof typeof datos] !== valor)) {
-              await tx.orden_trabajo_detalles.update({ where: { ID_DETALLE: anterior.ID_DETALLE }, data: datos });
+        if (ot) {
+          let otCambio = ot.SITIO_CALIBRACION !== sitio;
+          for (const [indice, { instrumento, anterior }] of emparejados.entries()) {
+            const item = indice + 1;
+            const datos = {
+              ITEM: item,
+              INSTRUMENTO: instrumento.instrumento,
+              TIPO_SERVICIO: comercial.serviciosPorUnidad.get(instrumento.idUnidad!) ?? instrumento.tipoServicio ?? 'Calibración',
+              FABRICANTE: instrumento.marca ?? null,
+              MODELO: instrumento.modelo ?? null,
+              SERIE: instrumento.serie ?? null,
+              CODIGO_INVENTARIO: instrumento.codigoInventario ?? null,
+              RESOLUCION: instrumento.resolucion ?? null,
+              ID_UNIDAD_FK: instrumento.idUnidad,
+              sitio_calibracion: sitio,
+              activacion: true,
+            };
+            if (!anterior) {
+              await tx.orden_trabajo_detalles.create({ data: { ...datos, ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO } });
               otCambio = true;
+            } else {
+              if (Object.entries(datos).some(([campo, valor]) => anterior[campo as keyof typeof datos] !== valor)) {
+                await tx.orden_trabajo_detalles.update({ where: { ID_DETALLE: anterior.ID_DETALLE }, data: datos });
+                otCambio = true;
+              }
             }
           }
-        }
-        const retirar = detallesOT.filter((detalle) => !usados.has(detalle.ID_DETALLE));
-        if (retirar.length) {
-          await tx.orden_trabajo_detalles.updateMany({
-            where: { ID_DETALLE: { in: retirar.map((detalle) => detalle.ID_DETALLE) } },
-            data: { activacion: false },
-          });
-          otCambio = true;
-        }
-        if (otNueva || otCambio) {
-          if (!otNueva) await tx.ordenes_trabajo.update({
-            where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
-            data: { ...datosSitioOT(sitio), CODIGO_OT: await generarConsecutivo(tx, 'OT', ot.CODIGO_OT) },
-          });
-          documentosOT.add(ot.ID_ORDEN_TRABAJO);
-        }
-
-        const otrosGrupos = familia.filter((orden) => orden.ID_ORDEN_TRABAJO !== ot?.ID_ORDEN_TRABAJO &&
-          (orden.SITIO_CALIBRACION != null || !familia.some((hija) => hija.ID_OT_PADRE_FK === orden.ID_ORDEN_TRABAJO)));
-        if (otrosGrupos.length > 0 && (otNueva || ot.ID_OT_PADRE_FK != null)) {
-          const maestraVigente = familia.find((orden) => maestros.has(orden.ID_ORDEN_TRABAJO));
-          const maestra = maestraVigente ?? await tx.ordenes_trabajo.create({
-              data: {
-                CODIGO_OT: await generarConsecutivo(tx, 'OT'),
-                ID_CLIENTE_FK: cotizacion.ID_CLIENTE_FK,
-                ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
-                no_cotizacion: cotizacion.CODIGO_COTIZACION,
-                ...cabeceraSolicitanteOT(clienteCotizacion),
-              },
+          const retirar = detallesOT.filter((detalle) => !usados.has(detalle.ID_DETALLE));
+          if (retirar.length) {
+            await tx.orden_trabajo_detalles.updateMany({
+              where: { ID_DETALLE: { in: retirar.map((detalle) => detalle.ID_DETALLE) } },
+              data: { activacion: false },
             });
-          await tx.ordenes_trabajo.updateMany({
-            where: { ID_ORDEN_TRABAJO: { in: [ot.ID_ORDEN_TRABAJO, ...otrosGrupos.map((orden) => orden.ID_ORDEN_TRABAJO)] } },
-            data: { ID_OT_PADRE_FK: maestra.ID_ORDEN_TRABAJO, ID_OT_RAIZ: maestra.ID_ORDEN_TRABAJO },
-          });
-          if (await sincronizarOTMaestraDesdeRecepcion(tx, maestra.ID_ORDEN_TRABAJO, !maestraVigente)) {
-            documentosOT.add(maestra.ID_ORDEN_TRABAJO);
+            otCambio = true;
+          }
+          if (otNueva || otCambio) {
+            if (!otNueva) await tx.ordenes_trabajo.update({
+              where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
+              data: { ...datosSitioOT(sitio), CODIGO_OT: await generarConsecutivo(tx, 'OT', ot.CODIGO_OT) },
+            });
+            documentosOT.add(ot.ID_ORDEN_TRABAJO);
+          }
+
+          const otrosGrupos = familia.filter((orden) => orden.ID_ORDEN_TRABAJO !== ot?.ID_ORDEN_TRABAJO &&
+            (orden.SITIO_CALIBRACION != null || !familia.some((hija) => hija.ID_OT_PADRE_FK === orden.ID_ORDEN_TRABAJO)));
+          if (otrosGrupos.length > 0 && (otNueva || ot.ID_OT_PADRE_FK != null)) {
+            const maestraVigente = familia.find((orden) => maestros.has(orden.ID_ORDEN_TRABAJO));
+            const maestra = maestraVigente ?? await tx.ordenes_trabajo.create({
+                data: {
+                  CODIGO_OT: await generarConsecutivo(tx, 'OT'),
+                  ID_CLIENTE_FK: cotizacion.ID_CLIENTE_FK,
+                  ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
+                  no_cotizacion: cotizacion.CODIGO_COTIZACION,
+                  ...cabeceraSolicitanteOT(clienteCotizacion),
+                },
+              });
+            await tx.ordenes_trabajo.updateMany({
+              where: { ID_ORDEN_TRABAJO: { in: [ot.ID_ORDEN_TRABAJO, ...otrosGrupos.map((orden) => orden.ID_ORDEN_TRABAJO)] } },
+              data: { ID_OT_PADRE_FK: maestra.ID_ORDEN_TRABAJO, ID_OT_RAIZ: maestra.ID_ORDEN_TRABAJO },
+            });
+            if (await sincronizarOTMaestraDesdeRecepcion(tx, maestra.ID_ORDEN_TRABAJO, !maestraVigente)) {
+              documentosOT.add(maestra.ID_ORDEN_TRABAJO);
+            }
           }
         }
 
@@ -654,7 +635,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           data: {
             CODIGO_RECEPCION: codigoRec,
             ID_COTIZACION_FK: cotizacion.ID_COTIZACION,
-            ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO,
+            ID_ORDEN_TRABAJO_FK: ot?.ID_ORDEN_TRABAJO,
             SOLICITANTE: clienteSeleccionado?.RAZON_SOCIAL ?? body.solicitante,
             NOMBRE_ENTREGA: body.nombreEntrega ?? null,
             SITIO_CALIBRACION: sitio,
@@ -675,7 +656,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           include: REC_INCLUDE,
         });
 
-        await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
+        if (ot) await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
         await cerrarSeguimientoSiCompleto(tx, cotizacion.ID_COTIZACION, idUsuario || null);
 
         await registrarBitacora(tx, {
@@ -687,7 +668,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           details: {
             codigo: nueva.CODIGO_RECEPCION,
             idCotizacion: cotizacion.ID_COTIZACION,
-            idOrdenTrabajo: ot.ID_ORDEN_TRABAJO,
+            idOrdenTrabajo: ot?.ID_ORDEN_TRABAJO ?? null,
           },
         });
 
@@ -704,10 +685,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           });
         }
         if (generarCotizacion && nueva.ID_COTIZACION_FK) {
-          await registrarGeneracionPendiente(tx, 'generar_cotizacion_desde_recepcion', {
-            tipo: 1, id_registro: nueva.ID_COTIZACION_FK, codigo_actual: null,
-            tipo_entry: 'prod', id_usuario: idUsuario,
-          });
+          await generarCotizacionDesdeRecepcion(tx, nueva.ID_COTIZACION_FK, idUsuario);
         }
 
         const vigente = await tx.recepciones_equipo.findUniqueOrThrow({ where: { ID_RECEPCION: nueva.ID_RECEPCION }, include: REC_INCLUDE });
@@ -726,7 +704,8 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       return {
         ok: true as const,
         data: recepcionEquipoRawToDtoSchema.parse(recepcion),
-        message: 'Recepción creada y enlazada a su cotización/OT.',
+        message: recepcion.ID_ORDEN_TRABAJO_FK ? 'Recepción creada y vinculada a su cotización y OT.'
+          : 'Recepción guardada. La OT se generará al aprobar la cotización.',
         id_job: job.id,
       };
     }
@@ -1016,7 +995,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               const cot = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: idCotizacion } });
               await tx.cotizaciones.update({
                 where: { ID_COTIZACION: idCotizacion },
-                data: { CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cot.CODIGO_COTIZACION) },
+                data: { CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cot.CODIGO_COTIZACION), UPDATED_AT: new Date() },
               });
               generarCotDoc = true;
             }
@@ -1239,7 +1218,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           }
         }
         if (generarCotDoc && final!.ID_COTIZACION_FK) {
-          await registrarGeneracionPendiente(tx, 'actualizacion_cotizacion', { tipo: 1, id_registro: final!.ID_COTIZACION_FK, codigo_actual: null, tipo_entry: 'prod', id_usuario: idUsuario });
+          await generarCotizacionDesdeRecepcion(tx, final!.ID_COTIZACION_FK, idUsuario);
         }
 
         return final!;
@@ -1413,7 +1392,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           if (cambioCotizacion) {
             codigoCotizacion = await generarConsecutivo(tx, 'COT', codigoCotizacion);
             await tx.cotizaciones.update({
-              where: { ID_COTIZACION: cotizacionId }, data: { CODIGO_COTIZACION: codigoCotizacion },
+              where: { ID_COTIZACION: cotizacionId }, data: { CODIGO_COTIZACION: codigoCotizacion, UPDATED_AT: new Date() },
             });
           }
           const cambios = [
@@ -1435,13 +1414,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         idCotizacionFinal = cambioCotizacion ? cotizacionId : null;
         idOrdenTrabajoFinal = rec.ID_ORDEN_TRABAJO_FK ?? null;
         if (idCotizacionFinal) {
-          await registrarGeneracionPendiente(tx, 'actualizacion_cotizacion', {
-            tipo: 1,
-            id_registro: idCotizacionFinal,
-            codigo_actual: null,
-            tipo_entry: 'prod',
-            id_usuario: idUsuario,
-          });
+          await generarCotizacionDesdeRecepcion(tx, idCotizacionFinal, idUsuario);
         }
         if (idOrdenTrabajoFinal) {
           await registrarGeneracionPendiente(tx, 'actualizacion_orden', {
@@ -1553,7 +1526,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       const cotizacion = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: rec.ID_COTIZACION_FK } });
       await tx.cotizaciones.update({
         where: { ID_COTIZACION: cotizacion.ID_COTIZACION },
-        data: { CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotizacion.CODIGO_COTIZACION) },
+        data: { CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotizacion.CODIGO_COTIZACION), UPDATED_AT: new Date() },
       });
       cotizacionActualizada = cotizacion.ID_COTIZACION;
     }
@@ -1601,6 +1574,10 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     for (const { tipo, id } of pendientes) {
       if (!id) continue;
 
+      if (tipo === 1) {
+        await generarCotizacionDesdeRecepcion(tx, id, idUsuario);
+        continue;
+      }
       await registrarGeneracionPendiente(tx, 'actualizar_documento_al_desactivar_grupo', {
         tipo, id_registro: id, tipo_entry: 'prod', id_usuario: idUsuario,
       });

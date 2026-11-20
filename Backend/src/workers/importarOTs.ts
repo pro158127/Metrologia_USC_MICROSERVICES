@@ -17,7 +17,7 @@ import {
   SitioCalibracion,
 } from '../services/ot-split.service.js';
 import { reimportarFamiliaOTVersionada } from '../services/ot-versionado.service.js';
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, UnrecoverableError } from 'bullmq';
 import { getRedisConnection, IMPORTAR_QUEUE } from '../lib/queue/queue.js';
 import { registrarGeneracionPendiente, type SolicitudGeneracion } from '../services/generacion-pendiente.service.js';
 import { normalizarServicioCotizado } from '../services/cotizacion-sync.service.js';
@@ -957,6 +957,10 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       // ==============================================================
       // 5. COTIZACIÓN
       // ==============================================================
+      const sitiosCabecera: SitioCalibracion[] = [];
+      if (getBoolean(datosExtraidos, 'calib_interno_usc', false)) sitiosCabecera.push('INTERNO_USC');
+      if (getBoolean(datosExtraidos, 'calib_en_sitio', false)) sitiosCabecera.push('CLIENTE');
+      if (getBoolean(datosExtraidos, 'calib_laboratorio_permanente', false)) sitiosCabecera.push('LABORATORIO');
       const normalizarSitio = (raw?: string | null): SitioCalibracion => {
         if (!raw) return 'LABORATORIO';
         const s = String(raw).trim().toUpperCase();
@@ -964,6 +968,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         if (
           s.startsWith('CLI') ||
           s.startsWith('SIT') ||
+          s === 'EN SITIO' ||
           s.includes('CAMPO') ||
           s.includes('IN SITU') ||
           s.includes('CLIENTE')
@@ -983,7 +988,10 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         const itemsAgrupados = new Map<string, any>();
 
         for (const item of datosExtraidos.tablas) {
-          const sitio = normalizarSitio(item.sitio);
+          if (!item.sitio?.trim() && sitiosCabecera.length > 1) {
+            throw new Error(`Fila ${item.item ?? '?'} (${item.instrumento}): indica el sitio de calibración de este instrumento.`);
+          }
+          const sitio = item.sitio?.trim() ? normalizarSitio(item.sitio) : sitiosCabecera[0] ?? 'LABORATORIO';
           item.sitio = sitio;
           item.idUnidad = randomUUID();
           // Agrupa por tarifa resuelta (filas distintas de una familia = líneas distintas);
@@ -1054,6 +1062,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         });
 
         idCotizacionFinal = nuevaCotizacion.ID_COTIZACION;
+        await tx.historial_estado_cotizacion.create({ data: {
+          ID_COTIZACION_FK: idCotizacionFinal,
+          ESTADO_NUEVO: 'BORRADOR',
+          ID_USUARIO_FK: idUsuario,
+          MOTIVO: 'Creada al importar una orden de trabajo.',
+        } });
       } else {
         // ==============================================================
         // FLUJO 2: importación ligada a una cotización existente.
@@ -1074,6 +1088,16 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
         if (!cotizacionExistente) {
           throw new Error(`La cotización '${idCotizacionFinal}' no existe.`);
+        }
+
+        if (cotizacionExistente.ESTADO === 'BORRADOR' || cotizacionExistente.ESTADO === 'ENVIADA') {
+          const recepcionPendiente = await tx.recepciones_equipo.findFirst({
+            where: { ID_COTIZACION_FK: idCotizacionFinal, ID_ORDEN_TRABAJO_FK: null, VIGENTE: true, activacion: true },
+            select: { ID_RECEPCION: true },
+          });
+          if (recepcionPendiente) {
+            throw new UnrecoverableError('La cotización tiene una recepción pendiente de aprobación. Aprueba la cotización antes de importar su OT.');
+          }
         }
 
         // 1. NIT del cliente.
@@ -1224,7 +1248,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           'solicitante_telefono',
         ) || cliente.TELEFONO,
         no_orden_trabajo: getString(datosExtraidos, 'no_orden_trabajo'),
-        no_cotizacion: getString(datosExtraidos, 'no_cotizacion'),
+        no_cotizacion: codigoCotizacionFinal,
         RESPONSABLE: getString(datosExtraidos, 'responsable'),
         FECHA_CALIBRACION_DILIGENCIAMENTO: getDate(
           datosExtraidos,

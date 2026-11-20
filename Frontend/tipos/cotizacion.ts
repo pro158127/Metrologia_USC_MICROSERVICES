@@ -202,7 +202,7 @@ export interface QuotationListTableProps {
   filtered: CotizacionVista[];
   setSelectedQuotation: (c: CotizacionVista | null) => void;
   formatCurrency: (v: number) => string;
-  onEstadoChange: (id: number, nuevoEstado: Estados) => void;
+  onEstadoChange: (id: number, nuevoEstado: Estados, codigo: string) => void;
   updatingId: number | null;
 }
 

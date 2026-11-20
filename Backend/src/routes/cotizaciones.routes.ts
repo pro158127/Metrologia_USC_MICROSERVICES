@@ -24,7 +24,7 @@ import {
   resolverUsuarioCreadorCotizacion,
   notificarUsuario,
 } from '../services/notificacion.service.js';
-import { generarOrdenesTrabajoAprobacion } from '../services/cotizacion-aprobacion.service.js';
+import { generarOrdenesTrabajoAprobacion, reconciliarRecepcionesPendientes } from '../services/cotizacion-aprobacion.service.js';
 import { ajustarIdsUnidades, crearIdsUnidades, obtenerIdsUnidadesEnCalibracion } from '../services/instrument-identity.service.js';
 import { calcularMontoTotalCotizacion, calcularValorDetalle, normalizarDinero } from '../services/cotizacion-money.service.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
@@ -43,6 +43,19 @@ import { getEmailQueue } from '../lib/queue/queue.js';
 import { registrarGeneracionPendiente } from '../services/generacion-pendiente.service.js';
 import { EmailJobData } from '../lib/queue/queue.js';
 
+
+async function validarCotizacionParaEnvio(
+  tx: Prisma.TransactionClient, idCotizacion: number, idCliente: number | null,
+) {
+  const [cantidad, cliente] = await Promise.all([
+    tx.cotizacion_detalles.count({ where: { ID_COTIZACION_FK: idCotizacion, CANTIDAD: { gt: 0 }, activacion: true } }),
+    idCliente != null ? tx.clientes.findUnique({ where: { ID_CLIENTE: idCliente }, select: { CORREO: true } }) : null,
+  ]);
+  if (!cantidad) throw new AppError(409, 'Agrega al menos un instrumento antes de enviar la cotización.');
+  if (!z.email().safeParse(cliente?.CORREO).success) {
+    throw new AppError(409, 'Actualiza el correo del cliente antes de enviar la cotización.');
+  }
+}
 
 function snapshotCotizacion(detalles: Array<{
   idDetalle?: number;
@@ -190,9 +203,14 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
       const cotizacion = await fastify.prisma.cotizaciones.findUnique({
         where: { ID_COTIZACION: idCotizacion },
-        select: { ID_COTIZACION: true, ID_CLIENTE_FK: true, ESTADO: true, CREATED_AT: true, UPDATED_AT: true, clientes: { select: { CORREO: true } } },
+        select: { ID_COTIZACION: true, ID_CLIENTE_FK: true, CODIGO_COTIZACION: true, ESTADO: true, CREATED_AT: true, UPDATED_AT: true, clientes: { select: { CORREO: true } } },
       });
       if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
+      const contextData = { ...(envio.CONTEXTO as Record<string, unknown> | null) };
+      if (envio.TEMPLATE_TYPE === 'crear_cotizacion' &&
+          (cotizacion.ESTADO !== Estados.ENVIADA || contextData.numeroCotizacion !== cotizacion.CODIGO_COTIZACION)) {
+        throw new AppError(409, 'La cotización ya no admite aprobación mediante ese enlace. Consulte su versión vigente.');
+      }
       if (correoNuevo && cotizacion.ID_CLIENTE_FK) {
         const correoAnterior = cotizacion.clientes?.CORREO ?? null;
         if (correoAnterior !== correoNuevo) {
@@ -216,7 +234,6 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       const minioLinks = Array.isArray(envio.MINIO_LINKS)
         ? envio.MINIO_LINKS.filter((link): link is string => typeof link === 'string')
         : [];
-      const contextData = { ...(envio.CONTEXTO as Record<string, unknown> | null) };
       if (cotizacion.ESTADO === Estados.ENVIADA && typeof contextData.linkAprobacion === 'string') {
         const fecha = fechaVencimientoCotizacion(await inicioVigenciaCotizacion(fastify.prisma, cotizacion),
           await diasVigenciaCotizacion(fastify.prisma));
@@ -225,7 +242,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           throw new AppError(409, 'El plazo de aprobación venció. Actualiza y envía la cotización de nuevo.');
         }
         const link = new URL(contextData.linkAprobacion);
-        link.searchParams.set('token', firmarTokenAprobacion(idCotizacion, segundos));
+        link.searchParams.set('token', firmarTokenAprobacion(idCotizacion, segundos, cotizacion.CODIGO_COTIZACION));
         contextData.linkAprobacion = link.toString();
         contextData.fechaVencimiento = fecha.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' });
       }
@@ -519,7 +536,6 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         snapshotCotizacion(detalles) !== snapshotCotizacion(detallesActivosActuales);
       const cambiosEscalares =
         (request.body.idCliente !== undefined && request.body.idCliente !== existente.ID_CLIENTE_FK) ||
-        (reqEstado !== undefined && reqEstado !== existente.ESTADO) ||
         (reqViaticos !== undefined && !new Prisma.Decimal(reqViaticos).eq(existente.viaticos ?? 0)) ||
         (reqDescuento !== undefined && reqDescuento !== Number(existente.descuento ?? 0));
       regenerarCotizacionDoc = detallesCambiaron || Boolean(cambiosEscalares);
@@ -783,7 +799,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         }
 
         // 4.2 Sincronizar cada Recepción según su sitio.
-        for (const recep of detallesCambiaron ? recepcionesActivas : []) {
+        for (const recep of detallesCambiaron && hijosActivos.length ? recepcionesActivas : []) {
           const otRecepcion = hijosActivos.find((orden) => orden.ID_ORDEN_TRABAJO === recep.ID_ORDEN_TRABAJO_FK);
           const sitioRec = otRecepcion ? sitioOT(otRecepcion) : recep.SITIO_CALIBRACION ?? 'LABORATORIO';
           const dets = detallesPorSitio.get(sitioRec);
@@ -1046,13 +1062,24 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         data: {
           ...(request.body.idCliente && { ID_CLIENTE_FK: request.body.idCliente }),
           ...(reqEstado && { ESTADO: reqEstado }),
-          UPDATED_AT: new Date(),
+          ...(regenerarCotizacionDoc ? { UPDATED_AT: new Date() } : {}),
           viaticos,
           descuento,
           MONTO_TOTAL: montoTotal,
         },
         include: { clientes: true, cotizacion_detalles: true },
       });
+
+      const primerEnvio = reqEstado === Estados.ENVIADA && existente.ESTADO === Estados.BORRADOR;
+      if (primerEnvio) await validarCotizacionParaEnvio(tx, idCotizacion, cotizacionActualizada.ID_CLIENTE_FK);
+
+      if (detallesCambiaron && !existente.ordenes_trabajo.some((orden) => orden.VIGENTE) &&
+          existente.recepciones_equipo.some((rec) => rec.VIGENTE && rec.activacion && rec.ID_ORDEN_TRABAJO_FK == null)) {
+        const recepciones = await reconciliarRecepcionesPendientes(tx, cotizacionActualizada);
+        for (const rec of recepciones) {
+          recepcionesParaRegenerar.push({ id: rec.ID_RECEPCION, codigo: rec.CODIGO_RECEPCION });
+        }
+      }
 
       // 6. REGISTRO DE AUDITORÍA (VERSIONAMIENTO)
       if (cambios && regenerarCotizacionDoc) {
@@ -1098,17 +1125,17 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
       const trackingJobs: Record<string, string[]> = {};
 
-      if (regenerarCotizacionDoc) {
+      if (regenerarCotizacionDoc || primerEnvio) {
         const quoteTracker = await registrarGeneracionPendiente(tx, 'actualizacion_cotizacion', {
 
           tipo_entry: 'prod',
           id_registro: cotizacionActualizada.ID_COTIZACION,
-          action: 'cot_update',
+          action: cotizacionActualizada.ESTADO === Estados.ENVIADA ? 'cot_create' : 'cot_update',
           codigo_actual: cotizacionActualizada.CODIGO_COTIZACION,
           tipo: 1,
           id_usuario: idUsuario,
           id_cotizacion: cotizacionActualizada.ID_COTIZACION,
-          force_regenerate: true,
+          force_regenerate: regenerarCotizacionDoc,
         });
         trackingJobs.cot = [quoteTracker.id];
       }
@@ -1168,14 +1195,17 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
   async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
     const idCotizacion = Number(id);
-    const { nuevoEstado, motivoRechazo } = request.body as {
+    const { nuevoEstado, motivoRechazo, codigo } = request.body as {
       nuevoEstado: Estados;
+      codigo?: string;
       motivoRechazo?: string | null;
     };
     const idUsuario = Number(request.user?.sub ?? 0);
 
     if (nuevoEstado === Estados.RECHAZADA || nuevoEstado === Estados.APROBADA) {
       assertPermission(request, 'cotizaciones', 'aprobar_rechazar');
+    } else if (nuevoEstado === Estados.ENVIADA) {
+      assertPermission(request, 'cotizaciones', 'enviar_al_cliente');
     } else if (nuevoEstado === Estados.EN_SEGUIMIENTO) {
       assertPermission(request, 'cotizaciones', 'crear_editar');
     } else {
@@ -1189,6 +1219,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
     try {
       const resultado = await fastify.prisma.$transaction(async (tx) => {
         // 1. Obtener estado actual
+        await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${idCotizacion} FOR UPDATE`;
         const actual = await tx.cotizaciones.findUnique({ where: { ID_COTIZACION: idCotizacion } });
         if (!actual) throw new AppError(404, 'Cotización no encontrada');
 
@@ -1204,6 +1235,13 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         if (nuevoEstado === Estados.EN_SEGUIMIENTO && actual.ESTADO === Estados.APROBADA &&
             !(await cotizacionListaParaSeguimiento(tx, idCotizacion))) {
           throw new AppError(409, 'La cotización solo pasa a seguimiento cuando todas las OT están pagadas, los certificados enviados y las recepciones entregadas.');
+        }
+
+        if (nuevoEstado === Estados.ENVIADA) {
+          if (codigo && codigo !== actual.CODIGO_COTIZACION) {
+            throw new AppError(409, 'La cotización tiene una versión más reciente. Revísala antes de enviarla.');
+          }
+          await validarCotizacionParaEnvio(tx, idCotizacion, actual.ID_CLIENTE_FK);
         }
 
         // 2. Actualizar estado
@@ -1293,7 +1331,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
           tipo_entry: 'prod',
           id_registro: cotizacionActualizada.ID_COTIZACION,
-          action: cotizacionActualizada.ESTADO === 'APROBADA' ? 'aprove' : 'estado_cambio',
+          action: nuevoEstado === Estados.ENVIADA ? 'cot_create' : nuevoEstado === Estados.APROBADA ? 'aprove' : 'estado_cambio',
           codigo_actual: cotizacionActualizada.CODIGO_COTIZACION,
           tipo: 1,
           id_usuario: idUsuario,
@@ -1430,12 +1468,20 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           );
       }
 
-      let ots: any[] = [];
-      let recs: any[] = [];
-
       const resultado = await fastify.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${cotizacion.ID_COTIZACION} FOR UPDATE`;
-        const [inicio, dias] = await Promise.all([inicioVigenciaCotizacion(tx, cotizacion), diasVigenciaCotizacion(tx)]);
+        const vigente = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION } });
+        if (vigente.ESTADO !== Estados.ENVIADA) {
+          return { aprobadaAhora: false as const, estadoVigente: vigente.ESTADO, cotizacion: null, creador: null };
+        }
+        const [inicio, dias] = await Promise.all([inicioVigenciaCotizacion(tx, vigente), diasVigenciaCotizacion(tx)]);
+        // Los enlaces anteriores al versionado siguen válidos si la cotización no cambió desde su envío.
+        const coincideVersion = verificado.codigo != null ? verificado.codigo === vigente.CODIGO_COTIZACION
+          : (vigente.UPDATED_AT ?? vigente.CREATED_AT).getTime() <= (verificado.iat + 1) * 1000 &&
+            Math.floor(inicio.getTime() / 1000) <= verificado.iat;
+        if (!coincideVersion) {
+          return { aprobadaAhora: false as const, desactualizada: true, cotizacion: null, creador: null };
+        }
         if (fechaVencimientoCotizacion(inicio, dias).getTime() <= Date.now()) {
           return { aprobadaAhora: false as const, vencida: true, cotizacion: null, creador: null };
         }
@@ -1458,14 +1504,12 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             ID_COTIZACION_FK: actualizada.ID_COTIZACION,
             ESTADO_ANTERIOR: Estados.ENVIADA,
             ESTADO_NUEVO: Estados.APROBADA,
-            ID_USUARIO_FK:1,
+            ID_USUARIO_FK: null,
             MOTIVO: "aprobación por enlace de correo",
           },
         });
 
-        const generacion = await generarOrdenesTrabajoAprobacion(tx, actualizada);
-        ots = generacion.ots;
-        recs = generacion.recs;
+        const { ots, recs } = await generarOrdenesTrabajoAprobacion(tx, actualizada);
 
         await registrarBitacora(tx, {
           action: 'APROBACION_ENLACE',
@@ -1530,11 +1574,32 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         }
 
         return { aprobadaAhora: true as const, cotizacion: actualizada, creador };
+      }).catch((error: unknown) => {
+        if (error instanceof AppError && error.statusCode === 409) {
+          request.log.warn({ idCotizacion: cotizacion.ID_COTIZACION, motivo: error.message }, 'Aprobación pendiente de revisión');
+          return { aprobadaAhora: false as const, conflicto: error.message, cotizacion: null, creador: null };
+        }
+        throw error;
       });
 
       if ('vencida' in resultado && resultado.vencida) {
         return reply.type('text/html').code(200)
           .send(renderHtmlAprobacion('Cotización vencida', 'El plazo de aprobación terminó. Por favor contacte al laboratorio.', false));
+      }
+
+      if ('conflicto' in resultado && resultado.conflicto) {
+        return reply.type('text/html').code(409).send(renderHtmlAprobacion('Aprobación pendiente',
+          'Contacta al laboratorio para revisar los instrumentos de la cotización.', false));
+      }
+
+      if ('desactualizada' in resultado && resultado.desactualizada) {
+        return reply.type('text/html').code(409).send(renderHtmlAprobacion('Cotización actualizada',
+          'Usa el enlace del correo de la versión vigente o solicita al laboratorio que lo reenvíe.', false));
+      }
+
+      if ('estadoVigente' in resultado && resultado.estadoVigente !== Estados.APROBADA) {
+        return reply.type('text/html').code(409).send(renderHtmlAprobacion('Cotización ya procesada',
+          'La cotización dejó de estar disponible para aprobación. Contacta al laboratorio.', false));
       }
 
       if (!resultado.aprobadaAhora || !resultado.cotizacion) {
