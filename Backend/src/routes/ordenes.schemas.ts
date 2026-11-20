@@ -538,9 +538,8 @@ export const ordenTrabajoRawToDtoSchema = z
       const detalleRecepcion = (raw.recepciones_equipo ?? [])
         .flatMap((recepcion) => recepcion.recepcion_equipo_detalles ?? [])
         .find((instrumento) => instrumento.ID_UNIDAD_FK === detalle.idUnidad);
-      const instrumento = ordenTrabajoDetalleRawToDtoSchema.parse(detalle);
       return {
-        ...instrumento,
+        ...detalle,
         calibracionIniciada: detalleRecepcion?.calibraciones != null,
         certificadoCreado: detalleRecepcion?.calibraciones?.certificados != null,
       };
