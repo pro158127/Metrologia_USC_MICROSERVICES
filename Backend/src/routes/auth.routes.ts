@@ -60,7 +60,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
           await fastify.prisma.notificaciones.create({
             data: {
               ID_USUARIO_FK: 1,
-              MENSAJE: `La cuenta del usuario ${user.CORREO_INSTITUCION} ha sido bloqueada tras 5 intentos fallidos de contraseña. IP de origen: ${ip ?? 'n/a'}`,
+              MENSAJE: `La cuenta del usuario ${user.CORREO_INSTITUCION} ha sido bloqueada tras 3 intentos fallidos de contraseña. IP de origen: ${ip ?? 'n/a'}`,
               MODULO: 'Sistema',
               NIVEL_PRIORIDAD: 'ALTA',
               VISTO: false,

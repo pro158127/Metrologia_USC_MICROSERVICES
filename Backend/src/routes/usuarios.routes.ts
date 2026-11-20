@@ -163,6 +163,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       if (datos.estado !== undefined) data.ESTADO = datos.estado;
       if (datos.intentos !== undefined) data.intentos = datos.intentos;
       if (datos.elminado !== undefined) data.elminado = datos.elminado;
+      // Reactivar desde Administración también debe liberar el bloqueo por
+      // intentos fallidos; de lo contrario el login la seguirá rechazando.
+      if (datos.estado === true) data.intentos = 0;
       if (Object.keys(data).length > 0) data.UPDATE_AT = new Date();
 
       const actualizado = await fastify.prisma.usuarios.update({
