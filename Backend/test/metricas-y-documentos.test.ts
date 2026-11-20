@@ -123,3 +123,32 @@ test('las métricas del dashboard abarcan todas las cotizaciones y conservan la 
     await app.close();
   }
 });
+
+test('Seguimiento Comercial carga todas las cotizaciones cerradas con el origen registrado', async () => {
+  const app = Fastify();
+  app.decorate('authenticate', async () => {});
+  app.decorate('prisma', {
+    cotizaciones: { findMany: async (query: { take?: number; where: { ESTADO: string } }) => {
+      assert.equal(query.take, undefined);
+      assert.equal(query.where.ESTADO, 'EN_SEGUIMIENTO');
+      return Array.from({ length: 12 }, (_, indice) => ({
+        ID_COTIZACION: indice + 1, CODIGO_COTIZACION: `COT-26-${String(indice + 1).padStart(4, '0')}B`,
+        ESTADO: 'EN_SEGUIMIENTO', CREATED_AT: fecha, enviar: false,
+        historial_estado_cotizacion: [{
+          ID_HISTORIAL: indice + 1, ID_COTIZACION_FK: indice + 1,
+          ESTADO_ANTERIOR: 'APROBADA', ESTADO_NUEVO: 'EN_SEGUIMIENTO', CREATED_AT: fecha,
+        }],
+      }));
+    } },
+  });
+  await app.register(cotizacionesRoutes);
+  try {
+    const respuesta = await app.inject('/api/v1/cotizaciones/en-seguimiento');
+    assert.equal(respuesta.statusCode, 200, respuesta.body);
+    const { data } = respuesta.json();
+    assert.equal(data.length, 12);
+    assert.equal(data[11].historialEstados[0].estadoAnterior, 'APROBADA');
+  } finally {
+    await app.close();
+  }
+});

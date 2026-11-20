@@ -291,3 +291,11 @@ export async function obtenerMetricasCotizacionesDashboard(): Promise<{
     return null;
   }
 }
+
+export async function obtenerCotizacionesEnSeguimiento(): Promise<ActionResponse<CotizacionModel[]>> {
+  try {
+    return await fastifyRequest(await auth(), '/api/v1/cotizaciones/en-seguimiento');
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'No se pudo cargar Seguimiento Comercial.' };
+  }
+}

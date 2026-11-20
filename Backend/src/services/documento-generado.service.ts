@@ -19,3 +19,13 @@ export function esPdfGenerado(ruta: string, tipo: TipoDocumentoGenerado, codigo:
   const codigoArchivo = archivo.toUpperCase().match(/^([A-Z]+-\d{2}-\d{4,})[A-Z]\.PDF$/)?.[1];
   return raiz != null && raiz === codigoArchivo;
 }
+
+export function esPdfSelladoVigente(
+  archivo: { rutaUrl: string; createdAt: Date | null },
+  codigoCertificado: string,
+  revisadoAt: Date | null,
+): boolean {
+  return archivo.rutaUrl.startsWith('certificados-generados/') &&
+    nombreArchivoDocumento(archivo.rutaUrl).replace(/^\d+_/, '') === `${codigoCertificado}.pdf` &&
+    (!revisadoAt || !archivo.createdAt || archivo.createdAt >= revisadoAt);
+}

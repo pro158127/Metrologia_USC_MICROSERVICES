@@ -191,7 +191,8 @@ const GestionPanel: React.FC<{
   const todosAprobados = docs?.todosAprobados ?? false;
   const entregaCompleta = docs?.entregaCompleta ?? false;
   const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
-  const puedeEnviar = todosAprobados && tieneComprobante && !!docs?.correo;
+  const selladoPendiente = docs?.selladoPendiente ?? [];
+  const puedeEnviar = todosAprobados && selladoPendiente.length === 0 && tieneComprobante && !!docs?.correo;
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
@@ -260,9 +261,15 @@ const GestionPanel: React.FC<{
                 }`}
               >
                 {entregaCompleta
-                  ? "La salida de todos los instrumentos quedó registrada. La recepción está cerrada."
-                  : `Salida pendiente en Recepciones: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}. Puede completarse después del envío y no lo bloquea.`}
+                  ? "Todas las recepciones están en Entregado. El proceso finaliza al confirmar el pago y el envío de certificados."
+                  : `Recepción pendiente de completar: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}. Puede completarse después del envío y no lo bloquea.`}
               </div>
+
+              {selladoPendiente.length > 0 && (
+                <p className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800" role="status">
+                  PDF sellado pendiente de publicación · {selladoPendiente.join(", ")}
+                </p>
+              )}
 
               {/* Certificados */}
               <section>

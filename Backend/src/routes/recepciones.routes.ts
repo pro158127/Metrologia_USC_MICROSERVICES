@@ -1120,11 +1120,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
 
         generarRecDoc = recepcionCambio;
 
-        const final = await tx.recepciones_equipo.findUnique({
-          where: { ID_RECEPCION: id },
-          include: REC_INCLUDE,
-        });
-
         const idCotizacionCierre = actual.ID_COTIZACION_FK ?? (actual.ID_ORDEN_TRABAJO_FK
           ? (await tx.ordenes_trabajo.findUnique({
               where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
@@ -1134,6 +1129,11 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         if (idCotizacionCierre) {
           await cerrarSeguimientoSiCompleto(tx, idCotizacionCierre, idUsuario || null);
         }
+
+        const final = await tx.recepciones_equipo.findUniqueOrThrow({
+          where: { ID_RECEPCION: id },
+          include: REC_INCLUDE,
+        });
 
         if (generarRecDoc || generarOtDoc || generarCotDoc || generarMaestroDoc) {
           const codigos = [

@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Search, Plus, Trash2, Phone, Mail, Users, CalendarClock, CheckCircle, XCircle } from "lucide-react";
-import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useRevisionTablas } from "@/app/componets/tables_recharge";
+import { obtenerCotizacionesEnSeguimiento } from "@/app/action_module/cotizacion";
 import { Estados } from "@/tipos/enums";
 import type { CotizacionModel, SeguimientoComercialModel } from "@/tipos/entidades";
 import { TIPOS_SEGUIMIENTO, type TipoSeguimiento } from "@/tipos/seguimiento";
@@ -42,10 +43,12 @@ function origenSeguimiento(cotizacion: CotizacionModel): string {
 }
 
 export default function SeguimientoComercial() {
-  const cotizaciones = useDbTable("cotizaciones") as unknown as CotizacionModel[];
+  const [enSeguimiento, setEnSeguimiento] = useState<CotizacionModel[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
+  const revision = useRevisionTablas("cotizaciones", "historial_estado_cotizacion", "seguimientos_comerciales");
   const seguimientos = useDbTable("seguimientos_comerciales") as unknown as SeguimientoComercialModel[];
   const { loadTable } = useDbActions();
-  const loading = useDbLoading("cotizaciones");
   const { data: session } = useSession();
   const { can } = usePermissions();
   const puedeGestionar = can("cotizaciones", "crear_editar");
@@ -62,13 +65,19 @@ export default function SeguimientoComercial() {
   const [local, setLocal] = useState<SeguimientoComercialModel[]>([]);
 
   useEffect(() => {
-    loadTable("cotizaciones");
-    loadTable("seguimientos_comerciales");
+    void loadTable("seguimientos_comerciales");
   }, [loadTable]);
 
-  const enSeguimiento = useMemo(() => {
-    return (cotizaciones ?? []).filter((c) => c.estado === Estados.EN_SEGUIMIENTO);
-  }, [cotizaciones]);
+  useEffect(() => {
+    let vigente = true;
+    obtenerCotizacionesEnSeguimiento().then((respuesta) => {
+      if (!vigente) return;
+      if (respuesta.ok && respuesta.data) setEnSeguimiento(respuesta.data);
+      setErrorCarga(respuesta.ok ? null : respuesta.error ?? "No se pudo cargar Seguimiento Comercial.");
+      setLoading(false);
+    });
+    return () => { vigente = false; };
+  }, [revision]);
 
   const filtered = useMemo(() => {
     return enSeguimiento.filter(
@@ -133,6 +142,7 @@ export default function SeguimientoComercial() {
 
   return (
     <div className="w-full p-4">
+      {errorCarga && <p role="alert" className="mb-3 text-xs text-rose-700">{errorCarga}</p>}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="relative flex-1 min-w-56">
           <Search size={15} color="#9CA3AF" className="absolute left-3 top-1/2 -translate-y-1/2" />

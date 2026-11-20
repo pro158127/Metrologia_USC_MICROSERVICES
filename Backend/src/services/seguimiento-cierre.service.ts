@@ -42,10 +42,11 @@ export async function cerrarSeguimientoSiCompleto(
   });
   if (!cotizacion || cotizacion.ESTADO !== 'APROBADA') return false;
 
-  await tx.cotizaciones.update({
-    where: { ID_COTIZACION: idCotizacion },
+  const cierre = await tx.cotizaciones.updateMany({
+    where: { ID_COTIZACION: idCotizacion, ESTADO: 'APROBADA' },
     data: { ESTADO: 'EN_SEGUIMIENTO' },
   });
+  if (cierre.count !== 1) return false;
   await tx.historial_estado_cotizacion.create({
     data: {
       ID_COTIZACION_FK: idCotizacion,

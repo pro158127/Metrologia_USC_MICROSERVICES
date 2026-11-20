@@ -1,10 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT, Prisma } from '@prisma/client';
 import { PDFDocument } from 'pdf-lib';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
-import { uploadBuffer } from '../lib/minioClient.js';
+import { deleteObject, uploadBuffer } from '../lib/minioClient.js';
+import { esPdfSelladoVigente } from '../services/documento-generado.service.js';
 import { enviarCorreoYEsperar } from '../services/email-delivery.service.js';
 import { transicionarOT, evaluarTransicionesOT, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
@@ -33,6 +35,7 @@ const respuestaDocumentosEnvioSchema = z.object({
     cliente: z.string(),
     correo: z.string().nullable(),
     todosAprobados: z.boolean(),
+    selladoPendiente: z.array(z.string()),
     entregaCompleta: z.boolean(),
     entregasPendientes: z.array(z.string()),
     certificados: z.array(
@@ -61,6 +64,7 @@ const respuestaDocumentosEnvioCotizacionSchema = z.object({
     cliente: z.string(),
     correo: z.string().nullable(),
     todosAprobados: z.boolean(),
+    selladoPendiente: z.array(z.string()),
     entregaCompleta: z.boolean(),
     entregasPendientes: z.array(z.string()),
     ots: z.array(
@@ -98,12 +102,16 @@ const datosOrdenEnvio = {
   recepciones_equipo: {
     where: { VIGENTE: true, activacion: true },
     orderBy: [{ VERSION: 'desc' }, { ID_RECEPCION: 'desc' }],
-    take: 1,
     include: {
       recepcion_equipo_detalles: {
         where: { OR: [{ activacion: true }, { activacion: null }] },
         include: {
-          calibraciones: { include: { certificados: { include: { documentos: true } } } },
+          calibraciones: { include: { certificados: { include: {
+            documentos: { include: { version_documentos: {
+              orderBy: [{ VERSION: 'desc' }, { ID_VERSION: 'desc' }],
+              select: { CREATED_AT: true, RUTA_URL: true },
+            } } },
+          } } } },
         },
       },
     },
@@ -112,41 +120,47 @@ const datosOrdenEnvio = {
 
 type OrdenEnvio = Prisma.ordenes_trabajoGetPayload<{ include: typeof datosOrdenEnvio }>;
 
-async function cargarContextoOT(fastify: FastifyInstance, idOT: number) {
-  const ot = await fastify.prisma.ordenes_trabajo.findUnique({
+type LecturaEnvio = Pick<Prisma.TransactionClient, 'ordenes_trabajo' | 'documentos'>;
+
+async function cargarContextoOT(db: LecturaEnvio, idOT: number) {
+  const ot = await db.ordenes_trabajo.findUnique({
     where: { ID_ORDEN_TRABAJO: idOT },
     include: datosOrdenEnvio,
   });
   if (!ot) throw new AppError(404, 'Orden de trabajo no encontrada');
 
-  const { certificados, todosAprobados } = evaluarCertificadosParaEnvio([ot]);
+  const { certificados, todosAprobados, selladoPendiente } = evaluarCertificadosParaEnvio([ot]);
 
-  const comprobantes = await fastify.prisma.documentos.findMany({
+  const comprobantes = await db.documentos.findMany({
     where: { ordenPagoId: idOT },
     orderBy: { ID_DOCUMENTO: 'desc' },
   });
 
   const entregasPendientes = pendientesEntrega(ot.recepciones_equipo);
 
-  return { ot, certificados, comprobantes, todosAprobados, entregaCompleta: entregasPendientes.length === 0, entregasPendientes };
+  return { ot, certificados, comprobantes, todosAprobados, selladoPendiente, entregaCompleta: entregasPendientes.length === 0, entregasPendientes };
 }
 
-function pendientesEntrega(recepciones: Array<any>): string[] {
+function pendientesEntrega(recepciones: OrdenEnvio["recepciones_equipo"]): string[] {
   const faltantes = new Set<string>();
   for (const recepcion of recepciones) {
+    if (recepcion.ESTADO === 'ENTREGADO') continue;
     const pendientes = pendientesEntregaSalida({
       fechaSalida: recepcion.FECHA_SALIDA,
       nombreRecibe: recepcion.NOMBRE_RECIBE,
       nombreEmpaca: recepcion.NOMBRE_EMPACA,
       accesorios: recepcion.ACCESORIOS,
       nombreRecibeServicio: recepcion.NOMBRE_RECIBE_SERVICIO,
-      instrumentos: recepcion.recepcion_equipo_detalles.map((equipo: any) => ({
+      instrumentos: recepcion.recepcion_equipo_detalles.map((equipo) => ({
         instrumento: equipo.INSTRUMENTO,
         estadoIBC: equipo.ESTADO_IBC as { salida?: Record<string, unknown> } | null,
         activacion: equipo.activacion,
       })),
     });
     pendientes.forEach((pendiente) => faltantes.add(pendiente));
+    if (pendientes.length === 0) {
+      faltantes.add(`${recepcion.CODIGO_RECEPCION}: verifique los datos de entrada y consolide la recepción`);
+    }
   }
   if (recepciones.length === 0) faltantes.add('recepción de equipos');
   return [...faltantes];
@@ -154,8 +168,7 @@ function pendientesEntrega(recepciones: Array<any>): string[] {
 
 function agruparOrdenesEnvio(ordenesVigentes: OrdenEnvio[]) {
   const padresConHijasVigentes = new Set(ordenesVigentes.map((ot) => ot.ID_OT_PADRE_FK));
-  const esMaestra = (ot: OrdenEnvio) =>
-    ot.SITIO_CALIBRACION == null && padresConHijasVigentes.has(ot.ID_ORDEN_TRABAJO);
+  const esMaestra = (ot: OrdenEnvio) => padresConHijasVigentes.has(ot.ID_ORDEN_TRABAJO);
   return {
     hijas: ordenesVigentes.filter((ot) => !esMaestra(ot)),
     maestra: ordenesVigentes.find(esMaestra),
@@ -169,6 +182,13 @@ function evaluarCertificadosParaEnvio(ordenes: OrdenEnvio[]) {
       const detalle = vincularUnidadRecepcion(unidad, recibidos);
       const cert = detalle?.calibraciones?.certificados;
       if (!detalle || !cert) return null;
+      const versiones = cert.documentos?.version_documentos ?? [];
+      const archivos: { rutaUrl: string; createdAt: Date | null }[] = versiones.map((version) => ({ rutaUrl: version.RUTA_URL, createdAt: version.CREATED_AT }));
+      if (!versiones.length && cert.documentos?.RUTA_URL) {
+        archivos.push({ rutaUrl: cert.documentos.RUTA_URL, createdAt: null });
+      }
+      const rutaSellada = archivos.find((archivo) =>
+        esPdfSelladoVigente(archivo, cert.CODIGO_CERTIFICADO, cert.REVISADO_AT))?.rutaUrl ?? null;
       return {
         idCertificado: cert.ID_CERTIFICADO,
         codigo: cert.CODIGO_CERTIFICADO,
@@ -176,7 +196,7 @@ function evaluarCertificadosParaEnvio(ordenes: OrdenEnvio[]) {
         instrumento: detalle.INSTRUMENTO,
         estampilla: detalle.ESTAMPILLA,
         estadoRevision: cert.ESTADO_REVISION,
-        rutaUrl: cert.documentos?.RUTA_URL ?? null,
+        rutaUrl: cert.ESTADO_REVISION === 'APROBADO' ? rutaSellada : null,
         idDocumento: cert.ID_DOCUMENTO_FK,
       };
     });
@@ -186,11 +206,13 @@ function evaluarCertificadosParaEnvio(ordenes: OrdenEnvio[]) {
   const todosAprobados = ordenes.length > 0 && ids.size === certificados.length &&
     unidadesPorOrden.every((unidades) => unidades.length > 0 &&
       unidades.every((certificado) => certificado?.estadoRevision === 'APROBADO'));
-  return { certificados, todosAprobados };
+  const selladoPendiente = certificados.filter((cert) => cert.estadoRevision === 'APROBADO' && !cert.rutaUrl)
+    .map((cert) => cert.codigo);
+  return { certificados, todosAprobados, selladoPendiente };
 }
 
-async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: number) {
-  const ordenesVigentes = await fastify.prisma.ordenes_trabajo.findMany({
+async function cargarContextoCotizacion(db: LecturaEnvio, idCotizacion: number) {
+  const ordenesVigentes = await db.ordenes_trabajo.findMany({
     where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true },
     include: datosOrdenEnvio,
   });
@@ -200,15 +222,15 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
     throw new AppError(404, 'La cotización no tiene órdenes de trabajo hijas vigentes');
   }
 
-  const { certificados, todosAprobados } = evaluarCertificadosParaEnvio(hijas);
+  const { certificados, todosAprobados, selladoPendiente } = evaluarCertificadosParaEnvio(hijas);
 
   const hijaIds = hijas.map((h) => h.ID_ORDEN_TRABAJO);
-  const comprobantes = await fastify.prisma.documentos.findMany({
+  const comprobantes = await db.documentos.findMany({
     where: { ordenPagoId: { in: hijaIds } },
     orderBy: { ID_DOCUMENTO: 'desc' },
   });
 
-  const entregasPendientes = pendientesEntrega(hijas.flatMap((h) => h.recepciones_equipo));
+  const entregasPendientes = [...new Set(hijas.flatMap((h) => pendientesEntrega(h.recepciones_equipo)))];
 
   const masterHomogenea = hijas.length === 1 && hijas[0]?.SITIO_CALIBRACION == null
     ? hijas[0]
@@ -224,9 +246,14 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
     certificados,
     comprobantes,
     todosAprobados,
+    selladoPendiente,
     entregaCompleta: entregasPendientes.length === 0,
     entregasPendientes,
   };
+}
+
+async function bloquearCotizacionParaEntrega(tx: Prisma.TransactionClient, idCotizacion: number) {
+  await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${idCotizacion} FOR UPDATE`;
 }
 
 async function convertirImagenAPdf(buffer: Buffer, mime: string): Promise<Buffer> {
@@ -307,8 +334,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         ['entrega_y_envio', 'enviar_certificados_lotes'],
         ['entrega_y_envio', 'previsualizar_antes_de_envio'],
       ]);
-      const { ot, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } = await cargarContextoOT(
-        fastify,
+      const { ot, certificados, comprobantes, todosAprobados, selladoPendiente, entregaCompleta, entregasPendientes } = await cargarContextoOT(
+        fastify.prisma,
         request.params.id
       );
 
@@ -320,6 +347,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           cliente: ot.clientes?.RAZON_SOCIAL ?? ot.Razon_social ?? '—',
           correo: ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null,
           todosAprobados,
+          selladoPendiente,
           entregaCompleta,
           entregasPendientes,
           certificados,
@@ -346,7 +374,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idOT = request.params.id;
-      const { ot, certificados, todosAprobados } = await cargarContextoOT(fastify, idOT);
+      const { ot, todosAprobados } = await cargarContextoOT(fastify.prisma, idOT);
+      if (!ot.VIGENTE) throw new AppError(409, 'La orden dejó de estar vigente.');
 
       const destinoPago = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
       if (!destinoPago) {
@@ -382,17 +411,19 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
 
       // En BD solo se registran comprobantes tipo PDF. Cada subida crea un
       // documento nuevo: se admiten uno o más comprobantes por OT.
-      const key = `comprobantes/${ot.CODIGO_OT}_${Date.now()}.pdf`;
+      const key = `comprobantes/${ot.CODIGO_OT}_${randomUUID()}.pdf`;
       const nombre = `Comprobante_${ot.CODIGO_OT}.pdf`;
       await uploadBuffer(key, buffer, 'application/pdf', { originalName: nombre });
 
       // Transacción atómica: documento + pago + FSM + seguimiento comercial.
       const resultado = await fastify.prisma.$transaction(async (tx) => {
-        const otActual = await tx.ordenes_trabajo.findUnique({
-          where: { ID_ORDEN_TRABAJO: idOT },
-          select: { estado_pago: true },
-        });
-        const yaPagada = otActual?.estado_pago === 'PAGADO';
+        if (ot.ID_COTIZACION_FK != null) await bloquearCotizacionParaEntrega(tx, ot.ID_COTIZACION_FK);
+        await tx.$queryRaw`SELECT "ID_ORDEN_TRABAJO" FROM ordenes_trabajo WHERE "ID_ORDEN_TRABAJO" = ${idOT} FOR UPDATE`;
+        const contextoActual = await cargarContextoOT(tx, idOT);
+        if (!contextoActual.ot.VIGENTE || !contextoActual.todosAprobados) {
+          throw new AppError(409, 'La orden cambió mientras se cargaba el comprobante. Consulte su estado vigente.');
+        }
+        const yaPagada = contextoActual.ot.estado_pago === 'PAGADO';
 
         const documento = await tx.documentos.create({
           data: {
@@ -453,12 +484,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
               nombreCliente: ot.clientes?.NOMBRE_CONTACTO ?? ot.clientes?.RAZON_SOCIAL ?? 'Cliente',
               numeroOT: ot.CODIGO_OT,
               numeroCotizacion: ot.no_cotizacion ?? null,
-              totalCertificados: certificados.length,
-              certificados: certificados.map((c, i) => ({
-                item: i + 1, codigo: c.codigo, instrumento: c.instrumento, estampilla: c.estampilla ?? '—',
-              })),
             },
-            minio_links: [...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v), key],
+            minio_links: [key],
             id_registro: idOT,
             notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
             modulo_origen: 'entrega_y_envio',
@@ -472,7 +499,10 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         }
 
         return { idDocumento: documento.ID_DOCUMENTO, rutaUrl: documento.RUTA_URL, yaPagada };
-      }, { timeout: 180_000 });
+      }, { timeout: 180_000 }).catch(async (error) => {
+        await deleteObject(key).catch((err) => request.log.warn({ err, key }, 'Error al retirar el comprobante no registrado'));
+        throw error;
+      });
 
       return {
         ok: true as const,
@@ -497,53 +527,63 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idOT = request.params.id;
-      const { ot, certificados, comprobantes, todosAprobados } = await cargarContextoOT(
-        fastify,
-        idOT
-      );
+      const { destino, jobId } = await fastify.prisma.$transaction(async (tx) => {
+        const referencia = await tx.ordenes_trabajo.findUnique({
+          where: { ID_ORDEN_TRABAJO: idOT }, select: { ID_COTIZACION_FK: true },
+        });
+        if (referencia?.ID_COTIZACION_FK != null) {
+          await bloquearCotizacionParaEntrega(tx, referencia.ID_COTIZACION_FK);
+        }
+        await tx.$queryRaw`SELECT "ID_ORDEN_TRABAJO" FROM ordenes_trabajo WHERE "ID_ORDEN_TRABAJO" = ${idOT} FOR UPDATE`;
+        const { ot, certificados, comprobantes, todosAprobados, selladoPendiente } = await cargarContextoOT(tx, idOT);
 
-      if (comprobantes.length === 0) {
-        throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
-      }
-      if (!todosAprobados) {
-        throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
-      }
+        if (!ot.VIGENTE || ot.estado === EstadoOT.Certificado_enviado) {
+          throw new AppError(409, 'La orden dejó de estar disponible para envío o ya se envió.');
+        }
+        if (ot.estado_pago !== 'PAGADO') throw new AppError(409, 'Registre el pago de la OT antes de enviar.');
+        if (comprobantes.length === 0) {
+          throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
+        }
+        if (!todosAprobados) {
+          throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
+        }
+        if (selladoPendiente.length) {
+          throw new AppError(409, `PDF sellado pendiente de publicación: ${selladoPendiente.join(', ')}.`);
+        }
 
-      const destino = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
-      if (!destino) {
-        throw new AppError(409, 'La OT no tiene correo de certificados configurado.');
-      }
+        const destino = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
+        if (!destino) {
+          throw new AppError(409, 'La OT no tiene correo de certificados configurado.');
+        }
 
-      const links = [
-        ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
-        ...comprobantes.map((c) => c.RUTA_URL),
-      ];
+        const links = [
+          ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
+          ...comprobantes.map((c) => c.RUTA_URL),
+        ];
 
-      const emailData = {
-        to: destino,
-        subject: `Certificados de calibración — OT ${ot.CODIGO_OT}`,
-        template_type: 'envia_certifiados',
-        context_data: {
-          nombreCliente: ot.clientes?.NOMBRE_CONTACTO ?? ot.clientes?.RAZON_SOCIAL ?? 'Cliente',
-          numeroOT: ot.CODIGO_OT,
-          numeroCotizacion: ot.no_cotizacion ?? null,
-          totalCertificados: certificados.length,
-          certificados: certificados.map((c, i) => ({
-            item: i + 1,
-            codigo: c.codigo,
-            instrumento: c.instrumento,
-            estampilla: c.estampilla ?? '—',
-          })),
-        },
-        minio_links: links,
-        id_registro: idOT,
-        notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
-        modulo_origen: 'entrega_y_envio',
-        tabla_origen: 'ordenes_trabajo',
-        tipo_entry: 'prod',
-      } as const;
-
-      const jobId = await fastify.prisma.$transaction(async (tx) => {
+        const emailData = {
+          to: destino,
+          subject: `Certificados de calibración — OT ${ot.CODIGO_OT}`,
+          template_type: 'envia_certifiados',
+          context_data: {
+            nombreCliente: ot.clientes?.NOMBRE_CONTACTO ?? ot.clientes?.RAZON_SOCIAL ?? 'Cliente',
+            numeroOT: ot.CODIGO_OT,
+            numeroCotizacion: ot.no_cotizacion ?? null,
+            totalCertificados: certificados.length,
+            certificados: certificados.map((c, i) => ({
+              item: i + 1,
+              codigo: c.codigo,
+              instrumento: c.instrumento,
+              estampilla: c.estampilla ?? '—',
+            })),
+          },
+          minio_links: links,
+          id_registro: idOT,
+          notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+          modulo_origen: 'entrega_y_envio',
+          tabla_origen: 'ordenes_trabajo',
+          tipo_entry: 'prod',
+        } as const;
         await transicionarOT(tx, idOT, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
         await registrarBitacora(tx, {
             action: 'ENVIAR_CERTIFICADOS', tableName: 'ordenes_trabajo', recordId: idOT,
@@ -554,7 +594,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         if (ot.ID_COTIZACION_FK) {
           await cerrarSeguimientoSiCompleto(tx, ot.ID_COTIZACION_FK, Number(request.user?.sub ?? 0) || null);
         }
-        return jobId;
+        return { destino, jobId };
       }, { timeout: 180_000 });
 
       return {
@@ -584,8 +624,8 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         ['entrega_y_envio', 'previsualizar_antes_de_envio'],
       ]);
       const idCotizacion = request.params.id;
-      const { hijas, master, cotizacion, certificados, comprobantes, todosAprobados, entregaCompleta, entregasPendientes } =
-        await cargarContextoCotizacion(fastify, idCotizacion);
+      const { hijas, master, cotizacion, certificados, comprobantes, todosAprobados, selladoPendiente, entregaCompleta, entregasPendientes } =
+        await cargarContextoCotizacion(fastify.prisma, idCotizacion);
 
       const cliente = hijas[0]?.clientes?.RAZON_SOCIAL ?? '—';
       const correo = hijas[0]?.CORREO_CERTIFICADO ?? master?.CORREO_CERTIFICADO ?? hijas[0]?.clientes?.CORREO ?? null;
@@ -599,6 +639,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           cliente,
           correo,
           todosAprobados,
+          selladoPendiente,
           entregaCompleta,
           entregasPendientes,
           ots: hijas.map((h) => ({
@@ -629,8 +670,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idCotizacion = request.params.id;
-      const { hijas, master, cotizacion, certificados, todosAprobados } =
-        await cargarContextoCotizacion(fastify, idCotizacion);
+      const { todosAprobados } = await cargarContextoCotizacion(fastify.prisma, idCotizacion);
 
       if (!todosAprobados) {
         throw new AppError(
@@ -652,13 +692,18 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         throw new AppError(415, 'Formato no permitido. Use PDF, PNG o JPG.');
       }
 
-      const key = `comprobantes/cotizacion_${idCotizacion}_${Date.now()}.pdf`;
+      const key = `comprobantes/cotizacion_${idCotizacion}_${randomUUID()}.pdf`;
       const nombre = `Comprobante_${idCotizacion}.pdf`;
       await uploadBuffer(key, buffer, 'application/pdf', { originalName: nombre });
 
-      const idVinculo = hijas[0].ID_ORDEN_TRABAJO;
-
       await fastify.prisma.$transaction(async (tx) => {
+        await bloquearCotizacionParaEntrega(tx, idCotizacion);
+        const contextoActual = await cargarContextoCotizacion(tx, idCotizacion);
+        if (!contextoActual.todosAprobados) {
+          throw new AppError(409, 'La cotización cambió mientras se cargaba el comprobante. Consulte sus órdenes vigentes.');
+        }
+        const { hijas, master, cotizacion } = contextoActual;
+        const idVinculo = hijas[0].ID_ORDEN_TRABAJO;
         await tx.documentos.create({
           data: {
             NOMBRE: nombre,
@@ -709,6 +754,9 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           ip: request.ip,
           details: { idCotizacion, totalOTs: hijas.length },
         });
+      }).catch(async (error) => {
+        await deleteObject(key).catch((err) => request.log.warn({ err, key }, 'Error al retirar el comprobante no registrado'));
+        throw error;
       });
 
       return {
@@ -730,53 +778,62 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idCotizacion = request.params.id;
-      const { hijas, master, certificados, comprobantes, todosAprobados } =
-        await cargarContextoCotizacion(fastify, idCotizacion);
+      const { destino, jobId } = await fastify.prisma.$transaction(async (tx) => {
+        await bloquearCotizacionParaEntrega(tx, idCotizacion);
+        const { hijas, master, cotizacion, certificados, comprobantes, todosAprobados, selladoPendiente } =
+          await cargarContextoCotizacion(tx, idCotizacion);
 
-      if (comprobantes.length === 0) {
-        throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
-      }
-      if (!todosAprobados) {
-        throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
-      }
+        if (hijas.some((ot) => ot.estado === EstadoOT.Certificado_enviado)) {
+          throw new AppError(409, 'La cotización ya tiene órdenes enviadas. Revise su trazabilidad antes de repetir el envío.');
+        }
+        if (hijas.some((ot) => ot.estado_pago !== 'PAGADO')) {
+          throw new AppError(409, 'Registre el pago de todas las órdenes antes de enviar.');
+        }
+        if (comprobantes.length === 0) {
+          throw new AppError(409, 'Debe adjuntar el comprobante de pago antes de enviar.');
+        }
+        if (!todosAprobados) {
+          throw new AppError(409, 'Todos los certificados deben estar aprobados para enviar.');
+        }
+        if (selladoPendiente.length) {
+          throw new AppError(409, `PDF sellado pendiente de publicación: ${selladoPendiente.join(', ')}.`);
+        }
 
-      const destino =
-        hijas[0]?.CORREO_CERTIFICADO ?? master?.CORREO_CERTIFICADO ?? hijas[0]?.clientes?.CORREO ?? null;
-      if (!destino) {
-        throw new AppError(409, 'La cotización no tiene correo de certificados configurado.');
-      }
+        const destino =
+          hijas[0]?.CORREO_CERTIFICADO ?? master?.CORREO_CERTIFICADO ?? hijas[0]?.clientes?.CORREO ?? null;
+        if (!destino) {
+          throw new AppError(409, 'La cotización no tiene correo de certificados configurado.');
+        }
 
-      const links = [
-        ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
-        ...comprobantes.map((c) => c.RUTA_URL),
-      ];
+        const links = [
+          ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
+          ...comprobantes.map((c) => c.RUTA_URL),
+        ];
 
-      const emailData = {
-        to: destino,
-        subject: `Certificados de calibración — Cotización ${idCotizacion}`,
-        template_type: 'envia_certifiados',
-        context_data: {
-          nombreCliente:
-            hijas[0]?.clientes?.NOMBRE_CONTACTO ?? hijas[0]?.clientes?.RAZON_SOCIAL ?? 'Cliente',
-          numeroOT: hijas.map((h) => h.CODIGO_OT).join(', '),
-          numeroCotizacion: null,
-          totalCertificados: certificados.length,
-          certificados: certificados.map((c, i) => ({
-            item: i + 1,
-            codigo: c.codigo,
-            instrumento: c.instrumento,
-            estampilla: c.estampilla ?? '—',
-          })),
-        },
-        minio_links: links,
-        id_registro: idCotizacion,
-        notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
-        modulo_origen: 'entrega_y_envio',
-        tabla_origen: 'cotizaciones',
-        tipo_entry: 'prod',
-      } as const;
-
-      const jobId = await fastify.prisma.$transaction(async (tx) => {
+        const emailData = {
+          to: destino,
+          subject: `Certificados de calibración — Cotización ${cotizacion?.CODIGO_COTIZACION ?? idCotizacion}`,
+          template_type: 'envia_certifiados',
+          context_data: {
+            nombreCliente:
+              hijas[0]?.clientes?.NOMBRE_CONTACTO ?? hijas[0]?.clientes?.RAZON_SOCIAL ?? 'Cliente',
+            numeroOT: hijas.map((h) => h.CODIGO_OT).join(', '),
+            numeroCotizacion: cotizacion?.CODIGO_COTIZACION ?? null,
+            totalCertificados: certificados.length,
+            certificados: certificados.map((c, i) => ({
+              item: i + 1,
+              codigo: c.codigo,
+              instrumento: c.instrumento,
+              estampilla: c.estampilla ?? '—',
+            })),
+          },
+          minio_links: links,
+          id_registro: idCotizacion,
+          notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+          modulo_origen: 'entrega_y_envio',
+          tabla_origen: 'cotizaciones',
+          tipo_entry: 'prod',
+        } as const;
         for (const hija of hijas) {
           await transicionarOT(tx, hija.ID_ORDEN_TRABAJO, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
         }
@@ -787,7 +844,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         });
         const jobId = await enviarCorreoYEsperar(emailData);
         await cerrarSeguimientoSiCompleto(tx, idCotizacion, Number(request.user?.sub ?? 0) || null);
-        return jobId;
+        return { destino, jobId };
       }, { timeout: 180_000 });
 
       return {

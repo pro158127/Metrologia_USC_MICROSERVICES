@@ -1,6 +1,6 @@
 import { diasVigenciaCotizacion, inicioVigenciaCotizacion, fechaVencimientoCotizacion } from '../services/vigencia-cotizacion.service.js';
 import { datosSitioOT, verificarGruposOperativos } from '../services/recepcion-ot-sync.service.js';
-import { esPdfGenerado, nombreArchivoDocumento, type TipoDocumentoGenerado } from '../services/documento-generado.service.js';
+import { esPdfSelladoVigente, esPdfGenerado, nombreArchivoDocumento, type TipoDocumentoGenerado } from '../services/documento-generado.service.js';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Estados, Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -1558,6 +1558,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
     }
   );
 
+  app.get('/api/v1/cotizaciones/en-seguimiento', { preHandler: [fastify.authenticate] }, async () => {
+    const cotizaciones = await fastify.prisma.cotizaciones.findMany({
+      where: { ESTADO: Estados.EN_SEGUIMIENTO },
+      orderBy: [{ UPDATED_AT: 'desc' }, { ID_COTIZACION: 'desc' }],
+      include: { clientes: true, historial_estado_cotizacion: true },
+    });
+    return { ok: true as const, data: cotizaciones.map((c) => cotizacionRawToDtoSchema.parse(c)) };
+  });
+
   app.get('/api/v1/cotizaciones/metricas-dashboard', { preHandler: [fastify.authenticate] }, async () => {
     const cotizaciones = await fastify.prisma.cotizaciones.findMany({
       select: {
@@ -1955,10 +1964,9 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         const esVigente = cert.ESTADO_REVISION === 'APROBADO' && detalle?.activacion !== false &&
           detalle != null && idsRecVigentes.has(detalle.ID_RECEPCION_FK);
         const codigoArchivo = `${cert.CODIGO_CERTIFICADO}.pdf`;
-        const archivoFinal = versiones.find((version) =>
-          version.rutaUrl.startsWith('certificados-generados/') &&
-          version.nombre.replace(/^\d+_/, '') === codigoArchivo &&
-          (!cert.REVISADO_AT || version.idVersion < 0 || version.createdAt >= cert.REVISADO_AT));
+        const archivoFinal = versiones.find((version) => esPdfSelladoVigente({
+          rutaUrl: version.rutaUrl, createdAt: version.idVersion < 0 ? null : version.createdAt,
+        }, cert.CODIGO_CERTIFICADO, cert.REVISADO_AT));
         if (esVigente && !archivoFinal) pendientes.certificados.push(cert.CODIGO_CERTIFICADO);
         (esVigente && archivoFinal ? categorias.certificados : archivados.certificados).push({
           idCertificado: cert.ID_CERTIFICADO,
