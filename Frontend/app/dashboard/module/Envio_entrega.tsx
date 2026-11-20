@@ -422,11 +422,24 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
     setTimeout(() => setToast(""), 4000);
   }, []);
 
-  // Agrupa hijas por cotización; el grupo aparece cuando TODAS están en Certificado_aprobado.
+  // Una OT con sitio null puede ser una OT homogénea operativa (legacy) o la
+  // maestra de un grupo heterogéneo. Excluirla solo cuando tiene hijas vigentes.
+  const ordenesOperativas = useMemo(() => {
+    const vigentes = ordenes.filter((ot) => ot.vigente !== false && ot.idCotizacion != null);
+    const padresConHijasVigentes = new Set(
+      vigentes
+        .map((ot) => ot.idOrdenTrabajoPadre)
+        .filter((id): id is number => id != null)
+    );
+    return vigentes.filter(
+      (ot) => !(ot.sitioCalibracion == null && padresConHijasVigentes.has(ot.idOrdenTrabajo))
+    );
+  }, [ordenes]);
+
+  // Una cotización aparece cuando todas sus OTs operativas tienen certificados aprobados.
   const grupos = useMemo(() => {
-    const hijas = ordenes.filter((o) => o.sitioCalibracion != null && o.vigente !== false);
-    const map = new Map<number, typeof hijas>();
-    for (const h of hijas) {
+    const map = new Map<number, typeof ordenesOperativas>();
+    for (const h of ordenesOperativas) {
       if (h.idCotizacion == null) continue;
       const lista = map.get(h.idCotizacion) ?? [];
       lista.push(h);
@@ -435,7 +448,9 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
     return Array.from(map.entries())
       .map(([idCotizacion, hs]) => {
         const master = ordenes.find(
-          (o) => o.idCotizacion === idCotizacion && o.sitioCalibracion == null
+          (o) => o.idCotizacion === idCotizacion &&
+            o.sitioCalibracion == null &&
+            ordenesOperativas.some((operativa) => operativa.idOrdenTrabajoPadre === o.idOrdenTrabajo)
         );
         const cliente =
           clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.razonSocial ??
@@ -445,7 +460,7 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
         return {
           idCotizacion,
           codigoCotizacion: hs[0]?.cotizacion?.codigo ?? "—",
-          masterCodigo: master?.codigo ?? "—",
+          masterCodigo: master?.codigo ?? (hs.length === 1 ? hs[0]?.codigo : "—"),
           cliente,
           correo:
             hs[0]?.correoCertificado ??
@@ -466,11 +481,11 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
           g.masterCodigo.toLowerCase().includes(q)
         );
       });
-  }, [ordenes, clientes, busqueda]);
+  }, [ordenes, ordenesOperativas, clientes, busqueda]);
 
   const ordenesHijasVigentes = useMemo(
-    () => ordenes.filter((ot) => ot.sitioCalibracion != null && ot.vigente !== false),
-    [ordenes]
+    () => ordenesOperativas,
+    [ordenesOperativas]
   );
   const ordenesPendientesAprobacion = useMemo(
     () => ordenesHijasVigentes.filter((ot) => ot.estado !== "Certificado_aprobado"),
@@ -537,7 +552,7 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
                   {busqueda.trim()
                     ? "No hay cotizaciones que coincidan con la búsqueda."
                     : ordenesHijasVigentes.length === 0
-                    ? "No hay órdenes de trabajo hijas vigentes para enviar."
+                    ? "No hay órdenes operativas vigentes asociadas a una cotización."
                     : ordenesPendientesAprobacion.length === 0
                     ? "No se encontraron cotizaciones listas. Actualiza la lista o valida que sus OT estén vigentes y asociadas a una cotización."
                     : `${ordenesPendientesAprobacion.length} de ${ordenesHijasVigentes.length} órdenes aún no tienen todos sus certificados aprobados.`}

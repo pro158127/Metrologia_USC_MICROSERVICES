@@ -169,10 +169,9 @@ function pendientesEntrega(recepciones: Array<any>): string[] {
 }
 
 async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: number) {
-  const hijas = await fastify.prisma.ordenes_trabajo.findMany({
+  const ordenesVigentes = await fastify.prisma.ordenes_trabajo.findMany({
     where: {
       ID_COTIZACION_FK: idCotizacion,
-      SITIO_CALIBRACION: { not: null },
       VIGENTE: true,
     },
     include: {
@@ -193,6 +192,17 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
       },
     },
   });
+
+  // La OT maestra de un grupo heterogéneo también tiene sitio null, pero una OT
+  // homogénea sin hijas es operativa y debe poder enviarse.
+  const padresConHijasVigentes = new Set(
+    ordenesVigentes
+      .map((ot) => ot.ID_OT_PADRE_FK)
+      .filter((id): id is number => id != null)
+  );
+  const hijas = ordenesVigentes.filter(
+    (ot) => !(ot.SITIO_CALIBRACION == null && padresConHijasVigentes.has(ot.ID_ORDEN_TRABAJO))
+  );
 
   if (hijas.length === 0) {
     throw new AppError(404, 'La cotización no tiene órdenes de trabajo hijas vigentes');
@@ -232,10 +242,13 @@ async function cargarContextoCotizacion(fastify: FastifyInstance, idCotizacion: 
     certificados.every((c) => c.estadoRevision === 'APROBADO');
   const entregasPendientes = pendientesEntrega(hijas.flatMap((h) => h.recepciones_equipo));
 
-  const master = await fastify.prisma.ordenes_trabajo.findFirst({
-    where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: null, VIGENTE: true },
-    select: { ID_ORDEN_TRABAJO: true, CODIGO_OT: true, CORREO_CERTIFICADO: true },
-  });
+  const masterHeterogenea = ordenesVigentes.find(
+    (ot) => ot.SITIO_CALIBRACION == null && padresConHijasVigentes.has(ot.ID_ORDEN_TRABAJO)
+  );
+  const masterHomogenea = hijas.length === 1 && hijas[0]?.SITIO_CALIBRACION == null
+    ? hijas[0]
+    : undefined;
+  const master = masterHeterogenea ?? masterHomogenea ?? null;
 
   const cotizacion = await fastify.prisma.cotizaciones.findUnique({
     where: { ID_COTIZACION: idCotizacion },
