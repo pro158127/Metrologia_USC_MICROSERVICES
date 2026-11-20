@@ -19,7 +19,7 @@ type Detail = {
   ID_UNIDADES?: string[];
 };
 
-function fakeTx(options: { details?: Detail[]; tarifas?: object[]; viaticos?: number; descuento?: number } = {}) {
+function fakeTx(options: { details?: Detail[]; tarifas?: object[]; viaticos?: number; descuento?: number; montoTotal?: number } = {}) {
   const details = [...(options.details ?? [])];
   const tarifas = options.tarifas ?? [{
     Instrumento: 'Manómetro',
@@ -49,7 +49,10 @@ function fakeTx(options: { details?: Detail[]; tarifas?: object[]; viaticos?: nu
     tarifas: { findMany: async () => tarifas },
     cotizaciones: {
       findUniqueOrThrow: async () => ({ viaticos: new Prisma.Decimal(options.viaticos ?? 100), descuento: options.descuento ?? 10 }),
-      findUnique: async () => ({ viaticos: new Prisma.Decimal(options.viaticos ?? 100), descuento: options.descuento ?? 10 }),
+      findUnique: async () => ({
+        viaticos: new Prisma.Decimal(options.viaticos ?? 100), descuento: options.descuento ?? 10,
+        MONTO_TOTAL: new Prisma.Decimal(options.montoTotal ?? 0),
+      }),
       update: async ({ data }: { data: Record<string, unknown> }) => { quoteUpdate = data; return data; },
     },
   };
@@ -262,4 +265,38 @@ test('agregar una unidad equivalente mantiene la cantidad y el precio previament
     { instrumento: 'Manómetro', idUnidad: 'nueva' },
   ], 'LABORATORIO', 'agregar'), /ya está cotizada/);
   assert.equal(mock.details[0].CANTIDAD, 4);
+});
+
+test('la recepción usa la tarifa acreditada seleccionada aunque el instrumento tenga otras tarifas', async () => {
+  const mock = fakeTx({ tarifas: [
+    { ID_TARIFA: 21, Instrumento: 'Manómetro', MAGNITUD: 'Presión', TIPO_SERVICIO: 'Acreditado',
+      Norma: 'NTC-1', historial_tarifas: [{ PRECIO_U: 500 }] },
+    { ID_TARIFA: 22, Instrumento: 'Manómetro', MAGNITUD: 'Presión', TIPO_SERVICIO: 'Acreditado',
+      Norma: 'NTC-2', historial_tarifas: [{ PRECIO_U: 700 }] },
+    { ID_TARIFA: 23, Instrumento: 'Manómetro', MAGNITUD: 'Presión', TIPO_SERVICIO: 'No_acreditado',
+      Norma: 'NTC-2', historial_tarifas: [{ PRECIO_U: 300 }] },
+  ] });
+  const resultado = await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'unidad-acreditada', tipoServicio: 'Acreditado', idTarifa: 22 },
+  ], 'LABORATORIO');
+  assert.equal(resultado.serviciosPorUnidad.get('unidad-acreditada'), 'Acreditado');
+  assert.equal(mock.details[0].NORMA_TECNICA, 'NTC-2');
+  assert.equal(Number(mock.details[0].VALOR_UNITARIO), 700);
+
+  await assert.rejects(sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'unidad-acreditada', tipoServicio: 'Acreditado', idTarifa: 23 },
+  ], 'LABORATORIO'), /no corresponde al servicio/);
+});
+
+test('la recepción conserva el precio ya pactado al elegir la misma tarifa acreditada', async () => {
+  const vigente = detalle({ ID_UNIDADES: ['unidad-acreditada'], TIPO_SERVICIO: 'Acreditado', CANTIDAD: 1, VALOR_TOTAL: new Prisma.Decimal(500) });
+  const mock = fakeTx({ details: [vigente], viaticos: 0, descuento: 0, montoTotal: 500, tarifas: [
+    { ID_TARIFA: 21, Instrumento: 'Manómetro', MAGNITUD: 'Presión', TIPO_SERVICIO: 'Acreditado',
+      Norma: 'NTC-1', historial_tarifas: [{ PRECIO_U: 900 }] },
+  ] });
+  const resultado = await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'unidad-acreditada', tipoServicio: 'Acreditado', idTarifa: 21 },
+  ], 'LABORATORIO');
+  assert.equal(resultado.cambio, false);
+  assert.equal(vigente.VALOR_UNITARIO.toNumber(), 500);
 });

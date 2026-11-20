@@ -491,8 +491,17 @@ const DatosGeneralesSection = ({
 };
 
 // 3.6 TablaInstrumentos con selector desde tarifas
-const opcionTarifaRecepcion = (tarifa: { Instrumento: string; tipoServicio: string; magnitud: string }) =>
-  `${tarifa.Instrumento} — ${tarifa.tipoServicio} · ${tarifa.magnitud}`;
+const claveServicioRecepcion = (servicio: string) => servicio.trim().toLowerCase().replace(/[_\s]+/g, " ");
+
+const etiquetaServicioRecepcion = (servicio: string) => {
+  const clave = claveServicioRecepcion(servicio);
+  if (clave === "acreditado") return "Acreditado";
+  if (clave === "no acreditado") return "No acreditado";
+  return servicio.trim();
+};
+
+const opcionTarifaRecepcion = (tarifa: { Instrumento: string; tipoServicio: string; magnitud: string; Norma: string }) =>
+  `${tarifa.Instrumento} — ${etiquetaServicioRecepcion(tarifa.tipoServicio)} · ${tarifa.magnitud} · ${tarifa.Norma}`;
 
 const claveInstrumentoRecepcion = (nombre: string) => nombre.trim().toLocaleLowerCase('es-CO').replace(/\s+/g, " ");
 
@@ -608,7 +617,7 @@ const TablaInstrumentos = ({
                         .map((t) => t.tipoServicio),
                       inst.tipoServicio,
                     ].filter(Boolean))].map((tipo) => (
-                      <option key={tipo} value={tipo}>{tipo}</option>
+                      <option key={tipo} value={tipo}>{etiquetaServicioRecepcion(tipo)}</option>
                     ))}
                   </select>
                 </td>
@@ -1127,6 +1136,14 @@ export function MainRenderers() {
           cambios.tipoServicio = tipos.length === 1 ? tipos[0] : "";
           cambios.idTarifaSeleccionada = coincidencias.length === 1 ? coincidencias[0].idTarifa : undefined;
         }
+        if (propiedad === "tipoServicio") {
+          const coincidencias = tarifasStore.filter((tarifa) => tarifa.estado === "ACTIVO" &&
+            claveInstrumentoRecepcion(tarifa.Instrumento) === claveInstrumentoRecepcion(instrumentos[index].instrumento) &&
+            claveServicioRecepcion(tarifa.tipoServicio) === claveServicioRecepcion(String(valor)));
+          const seleccionada = coincidencias.find((tarifa) => tarifa.idTarifa === instrumentos[index].idTarifaSeleccionada);
+          cambios.idTarifaSeleccionada = seleccionada?.idTarifa ??
+            (coincidencias.length === 1 ? coincidencias[0].idTarifa : undefined);
+        }
         instrumentos[index] = { ...instrumentos[index], ...cambios } as FilaInstrumento;
         return { ...prev, instrumentos };
       });
@@ -1229,9 +1246,10 @@ export function MainRenderers() {
           .filter((detalle) => (detalle.sitio ?? "LABORATORIO") === sitio);
         const porNombre = detallesCotizacion.filter((detalle) =>
           detalle.equipoDescripcion.trim().toLowerCase() === det.instrumento.trim().toLowerCase());
-        const detalleCotizacion = det.idUnidad
+        const porUnidad = det.idUnidad
           ? detallesCotizacion.find((detalle) => detalle.idUnidades?.includes(det.idUnidad!))
-          : porNombre.length === 1 ? porNombre[0] : undefined;
+          : undefined;
+        const detalleCotizacion = porUnidad ?? (porNombre.length === 1 ? porNombre[0] : undefined);
 
         return {
           id: generarIdUnico(),
@@ -1421,6 +1439,7 @@ const handleGenerarActa = useCallback(async () => {
           idUnidad: inst.idUnidad,
           instrumento: inst.instrumento.trim(),
           tipoServicio: inst.tipoServicio || undefined,
+          idTarifa: inst.idTarifaSeleccionada,
           marca: inst.marca || undefined,
           modelo: inst.modelo || undefined,
           serie: inst.serie || undefined,
@@ -1482,6 +1501,7 @@ const handleGenerarActa = useCallback(async () => {
               idUnidad: persistido.idUnidad,
               item: persistido.item,
               tipoServicio: detalle?.tipoServicio ?? fila.tipoServicio,
+              idTarifaSeleccionada: undefined,
             } : fila;
           }),
         }));

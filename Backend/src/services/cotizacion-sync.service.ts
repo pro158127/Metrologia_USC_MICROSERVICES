@@ -4,7 +4,7 @@ import { calcularMontoTotalCotizacion, calcularValorDetalle } from './cotizacion
 
 type Tx = Prisma.TransactionClient;
 type Sitio = 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC';
-type UnidadRecibida = { instrumento: string; idUnidad?: string | null; tipoServicio?: string | null };
+type UnidadRecibida = { instrumento: string; idUnidad?: string | null; tipoServicio?: string | null; idTarifa?: number };
 
 const normalizar = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
 export const normalizarServicioCotizado = (s: string): string => normalizar(s).replace(/[_\s]+/g, ' ');
@@ -92,6 +92,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
   });
 
   const tarifasPorInstrumento = tarifas.map((t) => ({
+    idTarifa: t.ID_TARIFA,
     instrumento: t.Instrumento,
     info: {
       magnitud: t.MAGNITUD,
@@ -140,9 +141,17 @@ export async function sincronizarCotizacionDesdeRecepcion(
     if (inst.idUnidad && unidadesOtrosSitios.has(inst.idUnidad)) {
       throw new AppError(409, `La unidad de "${nombre}" ya pertenece a otro sitio de la cotización.`);
     }
+    const seleccion = inst.idTarifa === undefined ? undefined : tarifasPorInstrumento.find(({ idTarifa }) => idTarifa === inst.idTarifa);
+    if (inst.idTarifa !== undefined && (!seleccion || normalizar(seleccion.instrumento) !== normalizar(nombre) ||
+        (inst.tipoServicio && normalizarServicioCotizado(seleccion.info.tipoServicio) !== normalizarServicioCotizado(inst.tipoServicio)))) {
+      throw new AppError(409, `La tarifa seleccionada para "${nombre}" ya no está activa o no corresponde al servicio. Selecciónala nuevamente.`);
+    }
+    const servicio = seleccion?.info.tipoServicio ?? inst.tipoServicio;
     const compatibles = (existentesPorInstrumento.get(normalizar(nombre)) ?? [])
       .filter((linea) => linea.sitio === sitio &&
-        (!inst.tipoServicio || normalizarServicioCotizado(linea.tipoServicio) === normalizarServicioCotizado(inst.tipoServicio)));
+        (!servicio || normalizarServicioCotizado(linea.tipoServicio) === normalizarServicioCotizado(servicio)) &&
+        (!seleccion || (normalizar(linea.magnitud) === normalizar(seleccion.info.magnitud) &&
+          normalizar(linea.norma ?? '') === normalizar(seleccion.info.norma))));
     const propias = inst.idUnidad ? compatibles.filter((linea) => linea.idsUnidades.includes(inst.idUnidad!)) : [];
     const candidatas = propias.length ? propias : compatibles;
     if (new Set(candidatas.map(claveComercial)).size > 1) {
@@ -150,7 +159,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
     }
     const existente = candidatas[0];
     const tienePrecio = existente && new Prisma.Decimal(existente.valorUnitario).gt(0);
-    const tarifa = tienePrecio ? null : resolverTarifa(nombre, inst.tipoServicio, existente);
+    const tarifa = tienePrecio ? null : seleccion?.info ?? resolverTarifa(nombre, servicio, existente);
     if (!existente && !tarifa) {
       throw new AppError(409, `No existe una tarifa activa con el nombre exacto "${nombre}". No se guardó el cambio en la cotización.`);
     }

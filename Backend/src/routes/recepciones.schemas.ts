@@ -789,6 +789,7 @@ export const instrumentoRecepcionInputSchema = z.object({
   item: z.number().nullish(),
   instrumento: z.string().trim().min(1),
   tipoServicio: z.string().trim().min(1).optional(),
+  idTarifa: z.number().int().positive().optional(),
   marca: z.string().nullish(),
   modelo: z.string().nullish(),
   serie: z.string().nullish(),

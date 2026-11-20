@@ -71,6 +71,7 @@ export interface InstrumentoRecepcionPayload {
   idUnidad?: string | null;
   instrumento: string;
   tipoServicio?: string;
+  idTarifa?: number;
   marca?: string;
   modelo?: string;
   serie?: string;

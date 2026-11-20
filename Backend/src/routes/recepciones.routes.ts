@@ -988,6 +988,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             if (!inst.tipoServicio && inst.idUnidad) inst.tipoServicio = servicioPorUnidad.get(inst.idUnidad);
           }
           const nuevos = instrumentosActualizados.filter((inst) => inst.idInstrumento == null);
+          const cambioTarifaExplicita = instrumentosActualizados.some((inst) => inst.idInstrumento != null && inst.idTarifa != null);
           const cambioComercialExistente = sobrantes.length > 0 || instrumentosActualizados.some((inst) => {
             if (inst.idInstrumento == null) return false;
             const anterior = porId.get(inst.idInstrumento);
@@ -999,11 +1000,11 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               normalizarServicioCotizado(servicioAnterior) !== normalizarServicioCotizado(inst.tipoServicio));
           });
           // Un alta no debe reconstruir ni volver a cobrar equipos ya cotizados.
-          const soloAltas = nuevos.length > 0 && !cambioComercialExistente;
-          const unidades = soloAltas ? nuevos : cambioComercialExistente || repararIdentidades
+          const soloAltas = nuevos.length > 0 && !cambioComercialExistente && !cambioTarifaExplicita;
+          const unidades = soloAltas ? nuevos : cambioComercialExistente || cambioTarifaExplicita || repararIdentidades
             ? await reunirUnidadesDelSitio(tx, idCotizacion, id, sitio, instrumentosActualizados)
             : [];
-          if (soloAltas || ((cambioComercialExistente || repararIdentidades) &&
+          if (soloAltas || cambioTarifaExplicita || ((cambioComercialExistente || repararIdentidades) &&
               await cotizacionDesalineadaConRecepcion(tx, idCotizacion, sitio, unidades))) {
             const comercial = await sincronizarCotizacionDesdeRecepcion(
               tx, idCotizacion, unidades, sitio, soloAltas ? 'agregar' : 'reconciliar',
