@@ -1702,6 +1702,16 @@ const trackingJobs: Record<string, string[]> = {};
         revisores.map((u) => [u.ID_USUARIO_AUTO_INCREMENT, u.NOMBRE_COMPLETO])
       );
 
+      // Los documentos de certificados también guardan sus FK de OT/recepción
+      // para facilitar consultas. No deben volver a clasificarse como formatos
+      // de OT o recepción en las carpetas genéricas.
+      const idsDocumentoCertificado = new Set(
+        certificados.map((cert) => cert.ID_DOCUMENTO_FK)
+      );
+      const documentosSinCertificados = documentos.filter(
+        (doc) => !idsDocumentoCertificado.has(doc.ID_DOCUMENTO)
+      );
+
       const toVersion = (v: {
         ID_VERSION: number;
         VERSION: number;
@@ -1736,7 +1746,9 @@ const trackingJobs: Record<string, string[]> = {};
         idDocumento: doc.ID_DOCUMENTO,
         idVersionActual: doc.version_documentos[0]?.ID_VERSION,
         nombre: doc.NOMBRE,
-        rutaUrl: doc.RUTA_URL,
+        // La versión vigente se ordena primero; la ruta del registro base puede
+        // haber quedado apuntando a una versión anterior.
+        rutaUrl: doc.version_documentos[0]?.RUTA_URL ?? doc.RUTA_URL,
         mimeType: doc.MIME_TYPE,
         createdAt: doc.CREATED_AT,
         versionActual: doc.version_documentos[0]?.VERSION ?? 1,
@@ -1751,7 +1763,7 @@ const trackingJobs: Record<string, string[]> = {};
         certificados: [] as z.infer<typeof documentoCertificadoItemSchema>[],
       };
 
-      for (const doc of documentos) {
+      for (const doc of documentosSinCertificados) {
         const item = toItem(doc);
         if (doc.ordenPagoId != null && otIds.includes(doc.ordenPagoId)) {
           categorias.comprobantes.push(item);
@@ -1779,7 +1791,7 @@ const trackingJobs: Record<string, string[]> = {};
         const vigente = ordenadas.find((orden) => orden.VIGENTE);
         if (!vigente || vigente.SITIO_CALIBRACION == null) continue;
 
-        const documentoVigente = documentos.find(
+        const documentoVigente = documentosSinCertificados.find(
           (doc) => doc.ID_ORDEN_TRABAJO_FK === vigente.ID_ORDEN_TRABAJO &&
             esArchivoGenerado(doc, vigente.CODIGO_OT)
         );
@@ -1789,7 +1801,7 @@ const trackingJobs: Record<string, string[]> = {};
         const historicas = ordenadas
           .filter((orden) => orden.ID_ORDEN_TRABAJO !== vigente.ID_ORDEN_TRABAJO)
           .flatMap((orden) => {
-            const docHistorico = documentos.find(
+            const docHistorico = documentosSinCertificados.find(
               (doc) => doc.ID_ORDEN_TRABAJO_FK === orden.ID_ORDEN_TRABAJO &&
                 esArchivoGenerado(doc, orden.CODIGO_OT)
             );
@@ -1827,7 +1839,7 @@ const trackingJobs: Record<string, string[]> = {};
         const vigente = ordenadas.find((recepcion) => recepcion.VIGENTE && recepcion.activacion !== false);
         if (!vigente) continue;
 
-        const documentoVigente = documentos.find(
+        const documentoVigente = documentosSinCertificados.find(
           (doc) => doc.ID_RECEPCION_FK === vigente.ID_RECEPCION &&
             esArchivoGenerado(doc, vigente.CODIGO_RECEPCION)
         );
@@ -1837,7 +1849,7 @@ const trackingJobs: Record<string, string[]> = {};
         const versionesHistoricas = ordenadas
           .filter((recepcion) => recepcion.ID_RECEPCION !== vigente.ID_RECEPCION)
           .flatMap((recepcion) => {
-            const docHistorico = documentos.find(
+            const docHistorico = documentosSinCertificados.find(
               (doc) => doc.ID_RECEPCION_FK === recepcion.ID_RECEPCION &&
                 esArchivoGenerado(doc, recepcion.CODIGO_RECEPCION)
             );

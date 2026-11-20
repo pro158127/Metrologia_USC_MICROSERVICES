@@ -1411,6 +1411,10 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   const tarifas = useDbTable("tarifas");
   const { mergeTable, setTableLoading, loadTable } = useDbActions();
   const loadingOrdenes = useDbLoading("ordenes_trabajo");
+  // El hook global se activa desde un effect; sin este estado local, el primer
+  // render puede mostrar el tablero vacío antes de que empiece la consulta.
+  const [cargaInicialOrdenes, setCargaInicialOrdenes] = useState(true);
+  const [errorCargaOrdenes, setErrorCargaOrdenes] = useState(false);
 
   // Vista actual (kanban, lista o detalle de OT)
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
@@ -1786,8 +1790,10 @@ const saveOrderEdits = async () => {
         console.log(...usuarios,"aqui estaaa")
       } catch (error) {
         console.error("Error al obtener datos iniciales:", error);
+        setErrorCargaOrdenes(true);
       } finally {
         setTableLoading("ordenes_trabajo", false);
+        setCargaInicialOrdenes(false);
       }
     }
     initdata();
@@ -1992,6 +1998,12 @@ const handleRemoveInstrument = (id: string) => {
         warnings={warnings}
       />
 
+      {!selectedOT && errorCargaOrdenes && (
+        <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          No se pudieron cargar las órdenes de trabajo. Recarga el módulo para volver a consultar los datos.
+        </div>
+      )}
+
       {selectedOT && (
         <div className="space-y-6 max-w-7xl mx-auto">
           <OrderAlertsBanner selectedOT={selectedOT} warnings={warnings} />
@@ -2023,8 +2035,8 @@ const handleRemoveInstrument = (id: string) => {
         </div>
       )}
 
-      {!selectedOT && viewMode === "kanban" && (
-        loadingOrdenes ? (
+      {!selectedOT && !errorCargaOrdenes && viewMode === "kanban" && (
+        loadingOrdenes || cargaInicialOrdenes ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
             {[1, 2, 3, 4].map((n) => (
               <div key={n} className="space-y-3">
@@ -2044,8 +2056,8 @@ const handleRemoveInstrument = (id: string) => {
         )
       )}
 
-      {!selectedOT && viewMode === "tree" && (
-        loadingOrdenes ? (
+      {!selectedOT && !errorCargaOrdenes && viewMode === "tree" && (
+        loadingOrdenes || cargaInicialOrdenes ? (
           <div className="space-y-2 animate-pulse">
             {[1, 2, 3, 4, 5].map((n) => (
               <div key={n} className="h-10 rounded-lg bg-slate-200" />
@@ -2056,8 +2068,8 @@ const handleRemoveInstrument = (id: string) => {
         )
       )}
 
-      {!selectedOT && viewMode === "list" && (
-        loadingOrdenes ? (
+      {!selectedOT && !errorCargaOrdenes && viewMode === "list" && (
+        loadingOrdenes || cargaInicialOrdenes ? (
           <div className="space-y-2 animate-pulse">
             {[1, 2, 3, 4, 5].map((n) => (
               <div key={n} className="h-10 rounded-lg bg-slate-200" />
