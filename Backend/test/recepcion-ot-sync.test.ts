@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Prisma } from '@prisma/client';
 import { sincronizarOTMaestraDesdeRecepcion } from '../src/services/recepcion-ot-sync.service.js';
+import { instrumentoRecepcionInputSchema } from '../src/routes/recepciones.schemas.js';
 
 function unidad(id: number, codigo: string, item: number, instrumento = 'Manómetro') {
   return {
@@ -48,4 +49,9 @@ test('si queda un solo grupo, la hija conserva el consecutivo y deja de depender
     { where: { ID_ORDEN_TRABAJO: 3 }, data: { VIGENTE: false } },
     { where: { ID_ORDEN_TRABAJO: 11 }, data: { ID_OT_PADRE_FK: null } },
   ]);
+});
+
+test('al consolidar, una fila nueva requiere un nombre de instrumento válido', () => {
+  assert.equal(instrumentoRecepcionInputSchema.safeParse({ instrumento: '   ' }).success, false);
+  assert.equal(instrumentoRecepcionInputSchema.parse({ instrumento: '  Manómetro  ' }).instrumento, 'Manómetro');
 });

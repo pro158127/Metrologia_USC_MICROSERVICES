@@ -29,8 +29,6 @@ import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
 import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
-import { VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
-import type { QuoteItem, TarifaOption, cambiospayload } from "@/tipos/cotizacion";
 import type {
   FilaInstrumento,
   FormularioRecepcion,
@@ -972,15 +970,13 @@ export function MainRenderers() {
   const [historialItems, setHistorialItems] = useState<HistorialCambioItem[]>([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
 
-  // Soft delete con versionado (reutiliza el VersionModal de Cotizaciones)
-  const [isDeleteVersionOpen, setDeleteVersionOpen] = useState(false);
-  const [deleteModalItems, setDeleteModalItems] = useState<QuoteItem[]>([]);
-  const [deleteInstrumento, setDeleteInstrumento] = useState<{ idInstrumento: number; index: number } | null>(null);
+  const [retiro, setRetiro] = useState<
+    { tipo: "recepcion" } | { tipo: "instrumento"; idInstrumento: number; nombre: string; identificador: string } | null
+  >(null);
+  const [motivoRetiro, setMotivoRetiro] = useState("");
+  const [observacionesRetiro, setObservacionesRetiro] = useState("");
+  const [errorRetiro, setErrorRetiro] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
-
-  // Soft delete de la recepción completa (modal de confirmación)
-  const [deleteRecepcionOpen, setDeleteRecepcionOpen] = useState(false);
-  const [deleteRecepcionMotivo, setDeleteRecepcionMotivo] = useState("");
 
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
   const esEdicionAtada =
@@ -991,58 +987,6 @@ export function MainRenderers() {
   const nombresTecnicosAsignados = [...new Set(
     tecnicosInstrumentos.map((asignacion) => asignacion.nombreTecnico.trim()).filter(Boolean)
   )].join(", ");
-
-  // --- Helpers para el VersionModal (soft delete) ---
-  const tarifasOptions: TarifaOption[] = useMemo(() => {
-    return (tarifasStore ?? []).map((t) => {
-      const historial = t.historial || [];
-      const activo = historial.find((h) => !h.fechaFin) || historial[0];
-      const precio = activo ? Number(activo.precioU) : 0;
-      return {
-        tipoServicio: t.tipoServicio || "ACREDITADO",
-        magnitud: t.magnitud || "",
-        instrumento: t.Instrumento || "Genérico",
-        norma: t.Norma || "N/A",
-        precio,
-      };
-    });
-  }, [tarifasStore]);
-
-  const getMagnitudesByTipo = useCallback(
-    (tipo: string): string[] => {
-      const unique = new Set<string>();
-      tarifasOptions.forEach((t) => {
-        if (t.tipoServicio === tipo) unique.add(t.magnitud);
-      });
-      return Array.from(unique).filter(Boolean);
-    },
-    [tarifasOptions]
-  );
-
-  const getInstrumentosByMagnitudAndTipo = useCallback(
-    (magnitud: string, tipo: string): TarifaOption[] =>
-      tarifasOptions.filter((t) => t.magnitud === magnitud && t.tipoServicio === tipo),
-    [tarifasOptions]
-  );
-
-  const calculateTotal = useCallback(
-    (listaItems: QuoteItem[], desc: number, viat: number) => {
-      const subtotal = listaItems.reduce(
-        (acc, item) => acc + item.cantidad * item.valorUnitario,
-        0
-      );
-      return (subtotal + viat) * (1 - desc / 100);
-    },
-    []
-  );
-
-  const formatCurrency = (value: number) =>
-    value.toLocaleString("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
 
   // --- Helpers ---
   const showToast = useCallback((msg: string) => {
@@ -1157,31 +1101,23 @@ export function MainRenderers() {
       ...prev,
       instrumentos: [...prev.instrumentos, crearFilaInstrumentoVacia()],
     }));
-    showToast("➕ Nueva fila de instrumento añadida.");
+    showToast("Instrumento agregado al formulario. Consolida la recepción para actualizar la cotización y la OT.");
   }, [showToast]);
 
   const eliminarFilaInstrumento = useCallback(
     (index: number) => {
       const fila = formulario.instrumentos[index];
 
-      // Si el instrumento ya existe en BD, se abre el modal de versionado
-      // (el mismo de Cotizaciones) para capturar el motivo del soft delete.
       if (fila?.idInstrumento && recepcionActual?.idRecepcion) {
-        const mapeados: QuoteItem[] = formulario.instrumentos
-          .filter((_, i) => i !== index)
-          .map((inst) => ({
-            id: Number(inst.idInstrumento ?? 0) || Math.floor(Math.random() * 1e9),
-            tipoServicio: "",
-            magnitud: "",
-            instrumento: inst.instrumento || "",
-            norma: "N/A",
-            cantidad: 1,
-            valorUnitario: 0,
-            lugarCalibracion: "Laboratorio",
-          }));
-        setDeleteModalItems(mapeados);
-        setDeleteInstrumento({ idInstrumento: fila.idInstrumento, index });
-        setDeleteVersionOpen(true);
+        setMotivoRetiro("");
+        setObservacionesRetiro("");
+        setErrorRetiro("");
+        setRetiro({
+          tipo: "instrumento",
+          idInstrumento: fila.idInstrumento,
+          nombre: fila.instrumento,
+          identificador: fila.estampilla || fila.serie,
+        });
         return;
       }
 
@@ -1220,104 +1156,6 @@ export function MainRenderers() {
     setActaGuardada(false);
   }, []);
 
-  // --- Confirmación del soft delete (motivo capturado en el VersionModal) ---
-  const confirmarEliminarInstrumento = useCallback(
-    async (auditForm: cambiospayload) => {
-      if (!deleteInstrumento || !recepcionActual?.idRecepcion) return;
-      setIsDeleting(true);
-      try {
-        const res = await eliminarInstrumentoRecepcionConMotivo(
-          recepcionActual.idRecepcion,
-          deleteInstrumento.idInstrumento,
-          {
-            descripcion: auditForm.descripcion,
-            aprobo: auditForm.aprobo,
-            observaciones: auditForm.observaciones ?? null,
-          }
-        );
-        if (!res.ok) {
-          showToast(res.error || "No se pudo desactivar el instrumento.");
-          return;
-        }
-        showToast(res.message || "Instrumento desactivado.");
-        if (res.grupoDesactivado) {
-          volverALista();
-          await recargarVinculados();
-          return;
-        }
-
-        setFormulario((prev) => {
-          if (prev.instrumentos.length <= 1) {
-            return prev;
-          }
-          const filtrados = prev.instrumentos.filter(
-            (_, idx) => idx !== deleteInstrumento.index
-          );
-          return { ...prev, instrumentos: filtrados };
-        });
-
-        // Refrescar datos de trazabilidad
-        try {
-          const actualizada = await getRecepcionPorId(recepcionActual.idRecepcion);
-          setRecepcionActual(actualizada);
-          setFormulario((anterior) => ({
-            ...anterior,
-            cotizacionCodigo: actualizada.cotizacion?.codigo ?? anterior.cotizacionCodigo,
-            ordenTrabajoCodigo: actualizada.ordenTrabajo?.codigo ?? anterior.ordenTrabajoCodigo,
-          }));
-        } catch (error) {
-          console.error("No se pudo actualizar el código de recepción después del retiro:", error);
-        }
-        await recargarVinculados();
-      } finally {
-        setIsDeleting(false);
-        setDeleteVersionOpen(false);
-        setDeleteInstrumento(null);
-        setDeleteModalItems([]);
-      }
-    },
-    [deleteInstrumento, recepcionActual, showToast, recargarVinculados, volverALista]
-  );
-
-  // --- Operaciones de ítems dentro del VersionModal (solo contexto) ---
-  const agregarFilaModal = useCallback((_target: "create" | "modal") => {
-    setDeleteModalItems((prev) => [
-      ...prev,
-      {
-        id: Math.floor(Math.random() * 1e9),
-        tipoServicio: "",
-        magnitud: "",
-        instrumento: "",
-        norma: "N/A",
-        cantidad: 1,
-        valorUnitario: 0,
-        lugarCalibracion: "Laboratorio",
-      },
-    ]);
-  }, []);
-
-  const eliminarFilaModal = useCallback(
-    (idParaEliminar: number, _target: "create" | "modal") => {
-      setDeleteModalItems((prev) => prev.filter((f) => f.id !== idParaEliminar));
-    },
-    []
-  );
-
-  const manejarCambioModalFila = useCallback(
-    <K extends keyof QuoteItem>(
-      index: number,
-      propiedad: K,
-      valor: QuoteItem[K],
-      _target: "create" | "modal"
-    ) => {
-      setDeleteModalItems((prev) => {
-        const actualizados = [...prev];
-        actualizados[index] = { ...actualizados[index], [propiedad]: valor } as QuoteItem;
-        return actualizados;
-      });
-    },
-    []
-  );
 
   // --- Cargar una recepción existente para editar ---
   const cargarRecepcion = useCallback(
@@ -1463,6 +1301,11 @@ const handleGenerarActa = useCallback(async () => {
       showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
       return;
     }
+    const filaSinInstrumento = formulario.instrumentos.findIndex((fila) => !fila.instrumento.trim());
+    if (filaSinInstrumento >= 0) {
+      showToast(`Selecciona el instrumento de la fila ${filaSinInstrumento + 1} o retira esa fila antes de consolidar.`);
+      return;
+    }
     // 🟢 1. EVALUACIÓN NO BLOQUEANTE (Soft Validation)
     // Verificamos si la cabecera tiene lo mínimo
     const cabeceraLista = !!(formulario.nombreQuienEntrega && formulario.fechaRecepcion);
@@ -1499,15 +1342,6 @@ const handleGenerarActa = useCallback(async () => {
       [inst.ibcE_in, inst.ibcT_in, inst.ibcD_in, inst.ibcA_in].every((valor) => typeof valor === "boolean")
     );
 
-    // Feedback visual para el usuario
-    if (estadoCalculado === "ENTREGADO") {
-      showToast("✅ Salida completa. La recepción quedará cerrada como ENTREGADO.");
-    } else if (cumpleRequisitosCompletos) {
-      showToast("✅ Recepción guardada. Puedes completar la salida en otro momento.");
-    } else {
-      showToast("⚠️ Faltan datos (ETDA o básicos). Se guardará el avance como BORRADOR.");
-    }
-
     try {
       // 🟢 2. CONSTRUCCIÓN DEL PAYLOAD
       const payload = {
@@ -1536,7 +1370,7 @@ const handleGenerarActa = useCallback(async () => {
           idLocal: inst.id,
           idInstrumento: inst.idInstrumento,
           idUnidad: inst.idUnidad,
-          instrumento: inst.instrumento,
+          instrumento: inst.instrumento.trim(),
           tipoServicio: inst.tipoServicio || undefined,
           marca: inst.marca || undefined,
           modelo: inst.modelo || undefined,
@@ -1587,8 +1421,19 @@ const handleGenerarActa = useCallback(async () => {
           cotizacionCodigo: guardada.cotizacion?.codigo ?? anterior.cotizacionCodigo,
           ordenTrabajoCodigo: guardada.ordenTrabajo?.codigo ?? anterior.ordenTrabajoCodigo,
           instrumentos: anterior.instrumentos.map((fila, indice) => {
-            const persistido = guardada.instrumentos?.[indice];
-            return persistido ? { ...fila, idInstrumento: persistido.idInstrumento, idUnidad: persistido.idUnidad, item: persistido.item } : fila;
+            const persistido = guardada.instrumentos?.find((unidad) =>
+              fila.idInstrumento != null ? unidad.idInstrumento === fila.idInstrumento : unidad.item === indice + 1,
+            );
+            const detalle = guardada.cotizacion?.detalles?.find((linea) =>
+              persistido?.idUnidad && linea.idUnidades?.includes(persistido.idUnidad),
+            );
+            return persistido ? {
+              ...fila,
+              idInstrumento: persistido.idInstrumento,
+              idUnidad: persistido.idUnidad,
+              item: persistido.item,
+              tipoServicio: detalle?.tipoServicio ?? fila.tipoServicio,
+            } : fila;
           }),
         }));
         if (esNueva) setSelectedRecepcionId(String(guardada.idRecepcion));
@@ -1596,7 +1441,9 @@ const handleGenerarActa = useCallback(async () => {
       setActaGuardada(true);
       showToast(habilitaAsignacion && !cumpleRequisitosCompletos
         ? "Recepción guardada. Puedes asignar los instrumentos con estampilla e IBC de entrada completos."
-        : response.message || "✅ Recepción guardada correctamente.");
+        : estadoCalculado === "ENTREGADO"
+          ? "Salida registrada como entregada."
+          : response.message || "Recepción guardada correctamente.");
 
       // Actualizar los datos vigentes después de guardar.
       await recargarVinculados();
@@ -1631,30 +1478,51 @@ const handleGenerarActa = useCallback(async () => {
     }
   }, [recepcionActual, showToast]);
 
-  // --- Soft delete de la recepción completa ---
-  const confirmarEliminarRecepcion = useCallback(async () => {
-    if (!recepcionActual?.idRecepcion || !deleteRecepcionMotivo.trim()) return;
+  const confirmarRetiro = useCallback(async () => {
+    if (!retiro || !recepcionActual?.idRecepcion || !motivoRetiro.trim() || isDeleting) return;
+    const idRecepcion = recepcionActual.idRecepcion;
+    const datos = {
+      descripcion: motivoRetiro.trim(),
+      aprobo: nombreUsuarioSesion || "Sistema",
+      observaciones: observacionesRetiro.trim() || null,
+    };
     setIsDeleting(true);
+    setErrorRetiro("");
     try {
-      const res = await eliminarRecepcion(recepcionActual.idRecepcion, {
-        descripcion: deleteRecepcionMotivo.trim(),
-        aprobo: nombreUsuarioSesion || "Sistema",
-        observaciones: null,
-      });
+      const res = retiro.tipo === "instrumento"
+        ? await eliminarInstrumentoRecepcionConMotivo(idRecepcion, retiro.idInstrumento, datos)
+        : await eliminarRecepcion(idRecepcion, datos);
       if (!res.ok) {
-        showToast(res.error || "No se pudo desactivar la recepción.");
+        setErrorRetiro(res.error || "No se pudo confirmar el retiro.");
         return;
       }
-      showToast("🗑️ Recepción desactivada (soft delete).");
-      setDeleteRecepcionOpen(false);
-      setDeleteRecepcionMotivo("");
 
+      setRetiro(null);
+      showToast(res.message || (retiro.tipo === "instrumento" ? "Instrumento retirado." : "Recepción desactivada."));
+      if (retiro.tipo === "recepcion" || res.grupoDesactivado) {
+        volverALista();
+      } else {
+        setFormulario((prev) => ({
+          ...prev,
+          instrumentos: prev.instrumentos.filter((fila) => fila.idInstrumento !== retiro.idInstrumento),
+        }));
+        try {
+          const actualizada = await getRecepcionPorId(idRecepcion);
+          setRecepcionActual(actualizada);
+          setFormulario((prev) => ({
+            ...prev,
+            cotizacionCodigo: actualizada.cotizacion?.codigo ?? prev.cotizacionCodigo,
+            ordenTrabajoCodigo: actualizada.ordenTrabajo?.codigo ?? prev.ordenTrabajoCodigo,
+          }));
+        } catch (error) {
+          console.error("No se pudo recargar la recepción después del retiro:", error);
+        }
+      }
       await recargarVinculados();
-      volverALista();
     } finally {
       setIsDeleting(false);
     }
-  }, [recepcionActual, deleteRecepcionMotivo, nombreUsuarioSesion, showToast, recargarVinculados, volverALista]);
+  }, [retiro, recepcionActual, motivoRetiro, observacionesRetiro, isDeleting, nombreUsuarioSesion, showToast, recargarVinculados, volverALista]);
 
   // ============================================================
   // RENDER
@@ -1664,31 +1532,6 @@ const handleGenerarActa = useCallback(async () => {
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification message={toast} />
       <PlantillasIncompletasBanner estado={estadoPlantillas} />
-
-      <VersionModal
-        usu_rol={nombreUsuarioSesion || "no hay"}
-        isOpen={isDeleteVersionOpen}
-        onClose={() => {
-          setDeleteVersionOpen(false);
-          setDeleteInstrumento(null);
-          setDeleteModalItems([]);
-        }}
-        modalItems={deleteModalItems}
-        modalDescuento={0}
-        setModalDescuento={() => {}}
-        modalViaticos={0}
-        setModalViaticos={() => {}}
-        agregarFila={agregarFilaModal}
-        eliminarFila={eliminarFilaModal}
-        manejarCambioFila={manejarCambioModalFila}
-        calculateTotal={calculateTotal}
-        formatCurrency={formatCurrency}
-        saveNewVersion={confirmarEliminarInstrumento}
-        isSaving={isDeleting}
-        tarifasOptions={tarifasOptions}
-        getMagnitudesByTipo={getMagnitudesByTipo}
-        getInstrumentosByMagnitudAndTipo={getInstrumentosByMagnitudAndTipo}
-      />
 
       <HeaderSection
         selectedRecepcionId={selectedRecepcionId}
@@ -1763,7 +1606,12 @@ const handleGenerarActa = useCallback(async () => {
                 </button>
                 {puedeRegistrar && (
                 <button
-                  onClick={() => { setDeleteRecepcionMotivo(""); setDeleteRecepcionOpen(true); }}
+                  onClick={() => {
+                    setMotivoRetiro("");
+                    setObservacionesRetiro("");
+                    setErrorRetiro("");
+                    setRetiro({ tipo: "recepcion" });
+                  }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 cursor-pointer border-none"
                 >
                   <Trash2 size={14} /> Eliminar
@@ -1863,38 +1711,74 @@ const handleGenerarActa = useCallback(async () => {
         </div>
       )}
 
-      {deleteRecepcionOpen && (
+      {retiro && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl border border-slate-100 p-6">
-            <div className="text-sm font-bold text-slate-700 mb-2">
-              Desactivar Recepción {recepcionActual?.codigo}
-            </div>
-            <p className="text-xs text-slate-500 mb-3">
-              Esta acción desactivará la recepción (soft delete). Es obligatorio indicar el motivo.
-            </p>
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="retiro-recepcion-titulo"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void confirmarRetiro();
+            }}
+            className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl border border-slate-100 p-6"
+          >
+            <h2 id="retiro-recepcion-titulo" className="text-sm font-bold text-slate-700 mb-2">
+              {retiro.tipo === "instrumento" ? "Retirar instrumento" : `Desactivar recepción ${recepcionActual?.codigo ?? ""}`}
+            </h2>
+            {retiro.tipo === "instrumento" && (
+              <p className="text-xs text-slate-600 mb-4">
+                <strong>{retiro.nombre}</strong>{retiro.identificador ? ` · ${retiro.identificador}` : ""}
+                <br />
+                Al confirmar, se actualizarán la recepción, la OT y la cotización vinculadas.
+              </p>
+            )}
+            <label htmlFor="motivo-retiro" className="block mb-1 text-xs font-bold text-slate-700">
+              Motivo del retiro
+            </label>
             <textarea
-              value={deleteRecepcionMotivo}
-              onChange={(e) => setDeleteRecepcionMotivo(e.target.value)}
+              id="motivo-retiro"
+              value={motivoRetiro}
+              onChange={(event) => setMotivoRetiro(event.target.value)}
               rows={3}
-              placeholder="Motivo del borrado..."
+              required
+              disabled={isDeleting}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-rose-400 resize-none"
             />
+            {retiro.tipo === "instrumento" && (
+              <>
+                <label htmlFor="observaciones-retiro" className="block mt-3 mb-1 text-xs font-bold text-slate-700">
+                  Observaciones (opcional)
+                </label>
+                <textarea
+                  id="observaciones-retiro"
+                  value={observacionesRetiro}
+                  onChange={(event) => setObservacionesRetiro(event.target.value)}
+                  rows={2}
+                  disabled={isDeleting}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-rose-400 resize-none"
+                />
+              </>
+            )}
+            {errorRetiro && <p role="alert" className="mt-2 text-xs text-rose-700">{errorRetiro}</p>}
             <div className="flex justify-end gap-2 mt-4">
               <button
-                onClick={() => setDeleteRecepcionOpen(false)}
-                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setRetiro(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50 disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
-                onClick={confirmarEliminarRecepcion}
-                disabled={isDeleting || !deleteRecepcionMotivo.trim()}
+                type="submit"
+                disabled={isDeleting || !motivoRetiro.trim()}
                 className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50"
               >
-                {isDeleting ? "Desactivando..." : "Confirmar eliminación"}
+                {isDeleting ? "Guardando..." : retiro.tipo === "instrumento" ? "Confirmar retiro" : "Confirmar desactivación"}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>

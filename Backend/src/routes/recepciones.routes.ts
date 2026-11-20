@@ -111,9 +111,13 @@ async function reunirUnidadesDelSitio(
       select: { INSTRUMENTO: true, ID_UNIDAD_FK: true },
     } },
   });
-  return [...unidades, ...otras.flatMap((recepcion) => recepcion.recepcion_equipo_detalles.map((detalle) => ({
+  const reunidas = [...unidades, ...otras.flatMap((recepcion) => recepcion.recepcion_equipo_detalles.map((detalle) => ({
     instrumento: detalle.INSTRUMENTO, idUnidad: detalle.ID_UNIDAD_FK,
   })))];
+  if (reunidas.some((unidad) => !unidad.idUnidad)) {
+    throw new AppError(409, 'Hay instrumentos antiguos sin identificador en este sitio. Regulariza sus recepciones antes de cambiar la cotización.');
+  }
+  return reunidas;
 }
 
 function snapshotEstable(valor: unknown): string {
@@ -143,6 +147,36 @@ function snapshotIBC(valor: unknown) {
 function parseVersion(numeroVersion?: string | null): number {
   const match = numeroVersion?.match(/V?(\d+)/i);
   return match ? Number(match[1]) : 0;
+}
+
+async function registrarHistorialRecepcion(
+  tx: Prisma.TransactionClient,
+  idCotizacion: number,
+  descripcion: string,
+  observaciones: string | null,
+  responsable: string,
+) {
+  const ultimo = await tx.historial_cambios.findFirst({
+    where: { id_cotizacion: idCotizacion },
+    orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    select: { numero_version: true },
+  });
+  const ahora = new Date();
+  await tx.historial_cambios.create({ data: {
+    id: randomUUID(),
+    numero_version: `V${parseVersion(ultimo?.numero_version) + 1}`,
+    fecha_cambio: ahora,
+    descripcion,
+    observaciones,
+    aprobo: responsable,
+    id_cotizacion: idCotizacion,
+    updated_at: ahora,
+  } });
+}
+
+function cambioDeCodigo(anterior: string | null | undefined, actual: string | null | undefined): string | null {
+  if (!actual || actual === anterior) return null;
+  return anterior ? `${anterior} → ${actual}` : actual;
 }
 
 function validarRecepcionDefinitiva(body: InstrumentoInput[], cabecera: { nombreEntrega?: string | null; fechaRecepcion?: string | null }) {
@@ -413,11 +447,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         if (ot && (!cotizacion || ot.ID_COTIZACION_FK !== cotizacion.ID_COTIZACION)) {
           throw new AppError(409, 'La OT indicada no pertenece a la cotización.');
         }
-        if (cotizacion && (cotizacion.ESTADO === 'RECHAZADA' || cotizacion.ESTADO === 'EN_SEGUIMIENTO' ||
-            await cotizacionListaParaSeguimiento(tx, cotizacion.ID_COTIZACION))) {
-          throw new AppError(409, 'La cotización está cerrada y no admite otra recepción.');
-        }
-
         const cotizacionNueva = !cotizacion;
         if (!cotizacion) {
           cotizacion = await tx.cotizaciones.create({
@@ -431,6 +460,14 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         }
 
         await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${cotizacion.ID_COTIZACION} FOR UPDATE`;
+        cotizacion = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION } });
+        if (codigoCotizacion && cotizacion.CODIGO_COTIZACION !== codigoCotizacion) {
+          throw new AppError(409, 'La cotización cambió mientras se abría la recepción. Usa el consecutivo vigente.');
+        }
+        if (!cotizacionNueva && (cotizacion.ESTADO === 'RECHAZADA' || cotizacion.ESTADO === 'EN_SEGUIMIENTO' ||
+            await cotizacionListaParaSeguimiento(tx, cotizacion.ID_COTIZACION))) {
+          throw new AppError(409, 'La cotización está cerrada y no admite otra recepción.');
+        }
         const familia = await tx.ordenes_trabajo.findMany({
           where: { ID_COTIZACION_FK: cotizacion.ID_COTIZACION, VIGENTE: true },
         });
@@ -496,32 +533,51 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           orderBy: [{ ITEM: 'asc' }, { ID_DETALLE: 'asc' }],
         });
         const usados = new Set<number>();
-        let otCambio = ot.SITIO_CALIBRACION !== sitio;
-        for (const [indice, instrumento] of instrumentosConId.entries()) {
-          const item = indice + 1;
+        const emparejados = instrumentosConId.map((instrumento, indice) => {
+          const nombre = instrumento.instrumento.trim().toLowerCase();
           const candidatos = detallesOT.filter((detalle) => !usados.has(detalle.ID_DETALLE) &&
-            detalle.INSTRUMENTO.trim().toLowerCase() === instrumento.instrumento.trim().toLowerCase());
-          const anterior = candidatos.find((detalle) => detalle.ITEM === item) ??
+            detalle.INSTRUMENTO.trim().toLowerCase() === nombre &&
+            (!instrumento.tipoServicio || normalizarServicioCotizado(detalle.TIPO_SERVICIO) === normalizarServicioCotizado(instrumento.tipoServicio)));
+          const anterior = candidatos.find((detalle) => detalle.ITEM === indice + 1) ??
             (candidatos.length === 1 ? candidatos[0] : undefined);
-          const idUnidad = anterior?.ID_UNIDAD_FK ?? instrumento.idUnidad;
-          instrumentosConId[indice] = { ...instrumento, idUnidad, tipoServicio: instrumento.tipoServicio ?? anterior?.TIPO_SERVICIO };
+          if (candidatos.length > 1 && !anterior) {
+            throw new AppError(409, `No se pudo identificar de forma inequívoca la unidad de «${instrumento.instrumento}» en la OT.`);
+          }
+          if (anterior) usados.add(anterior.ID_DETALLE);
+          return { instrumento: {
+            ...instrumento, idUnidad: anterior?.ID_UNIDAD_FK ?? instrumento.idUnidad,
+            tipoServicio: instrumento.tipoServicio ?? anterior?.TIPO_SERVICIO,
+          }, anterior };
+        });
+        instrumentosConId = emparejados.map(({ instrumento }) => instrumento);
+        const comercial = await sincronizarCotizacionDesdeRecepcion(tx, cotizacion.ID_COTIZACION, instrumentosConId, sitio);
+        generarCotizacion = cotizacionNueva || comercial.cambio;
+        if (comercial.cambio && !cotizacionNueva) {
+          await tx.cotizaciones.update({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION }, data: {
+            CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotizacion.CODIGO_COTIZACION),
+          } });
+        }
+
+        let otCambio = ot.SITIO_CALIBRACION !== sitio;
+        for (const [indice, { instrumento, anterior }] of emparejados.entries()) {
+          const item = indice + 1;
           const datos = {
             ITEM: item,
             INSTRUMENTO: instrumento.instrumento,
-            TIPO_SERVICIO: instrumento.tipoServicio ?? anterior?.TIPO_SERVICIO ?? 'Calibración',
+            TIPO_SERVICIO: comercial.serviciosPorUnidad.get(instrumento.idUnidad!) ?? instrumento.tipoServicio ?? 'Calibración',
             FABRICANTE: instrumento.marca ?? null,
             MODELO: instrumento.modelo ?? null,
             SERIE: instrumento.serie ?? null,
             CODIGO_INVENTARIO: instrumento.codigoInventario ?? null,
             RESOLUCION: instrumento.resolucion ?? null,
-            ID_UNIDAD_FK: idUnidad,
+            ID_UNIDAD_FK: instrumento.idUnidad,
+            sitio_calibracion: sitio,
             activacion: true,
           };
           if (!anterior) {
             await tx.orden_trabajo_detalles.create({ data: { ...datos, ID_ORDEN_TRABAJO_FK: ot.ID_ORDEN_TRABAJO } });
             otCambio = true;
           } else {
-            usados.add(anterior.ID_DETALLE);
             if (Object.entries(datos).some(([campo, valor]) => anterior[campo as keyof typeof datos] !== valor)) {
               await tx.orden_trabajo_detalles.update({ where: { ID_DETALLE: anterior.ID_DETALLE }, data: datos });
               otCambio = true;
@@ -592,17 +648,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           include: REC_INCLUDE,
         });
 
-        const cotizacionCambio = await sincronizarCotizacionDesdeRecepcion(
-          tx,
-          cotizacion.ID_COTIZACION,
-          instrumentosConId.map((instrumento) => ({ instrumento: instrumento.instrumento, idUnidad: instrumento.idUnidad, tipoServicio: instrumento.tipoServicio })),
-          sitio,
-        );
-        generarCotizacion = cotizacionNueva || cotizacionCambio;
-        if (cotizacionCambio && !cotizacionNueva) {
-          await tx.cotizaciones.update({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION }, data: { CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotizacion.CODIGO_COTIZACION) } });
-        }
-
         await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
         await cerrarSeguimientoSiCompleto(tx, cotizacion.ID_COTIZACION, idUsuario || null);
 
@@ -638,7 +683,17 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           });
         }
 
-        return { recepcion: nueva, job };
+        const vigente = await tx.recepciones_equipo.findUniqueOrThrow({ where: { ID_RECEPCION: nueva.ID_RECEPCION }, include: REC_INCLUDE });
+        const codigos = [
+          vigente.CODIGO_RECEPCION,
+          vigente.ordenes_trabajo?.CODIGO_OT,
+          cambioDeCodigo(cotizacionNueva ? null : cotizacion.CODIGO_COTIZACION, vigente.cotizaciones?.CODIGO_COTIZACION),
+        ].filter(Boolean).join(' · ');
+        await registrarHistorialRecepcion(tx, cotizacion.ID_COTIZACION,
+          `Recepción ${vigente.CODIGO_RECEPCION} creada con ${instrumentosConId.length} instrumento(s).`,
+          [codigos, instrumentosConId.map((inst) => inst.instrumento).join(', ')].filter(Boolean).join('\n'),
+          nombreUsuarioActual(request) || String(idUsuario));
+        return { recepcion: vigente, job };
       });
 
       return {
@@ -710,6 +765,14 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         if (body.codigoRecepcionActual && body.codigoRecepcionActual !== actual.CODIGO_RECEPCION) {
           throw new AppError(409, 'La recepción tiene una versión más reciente. Vuelve a abrirla antes de guardar.');
         }
+        const [cotizacionAnterior, ordenAnterior] = await Promise.all([
+          actual.ID_COTIZACION_FK ? tx.cotizaciones.findUnique({
+            where: { ID_COTIZACION: actual.ID_COTIZACION_FK }, select: { CODIGO_COTIZACION: true },
+          }) : null,
+          actual.ID_ORDEN_TRABAJO_FK ? tx.ordenes_trabajo.findUnique({
+            where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK }, select: { CODIGO_OT: true },
+          }) : null,
+        ]);
         const otDetalles = actual.ID_ORDEN_TRABAJO_FK ? await tx.orden_trabajo_detalles.findMany({
           where: { ID_ORDEN_TRABAJO_FK: actual.ID_ORDEN_TRABAJO_FK },
         }) : [];
@@ -801,12 +864,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         });
         const repararIdentidades = detallesActuales.some((detalle) => !detalle.ID_UNIDAD_FK);
         const recepcionCambio = valorEntrada !== valorPersistido || repararIdentidades;
-        let requiereSyncComercial = repararIdentidades || sitio !== sitioAnterior ||
-          idsRecibidos.length !== detallesActuales.length || idsRecibidos.length !== body.instrumentos.length ||
-          body.instrumentos.some((inst) => {
-            const previo = inst.idInstrumento == null ? undefined : porId.get(inst.idInstrumento);
-            return previo != null && previo.INSTRUMENTO.trim() !== inst.instrumento.trim();
-          });
         const otVinculada = actual.ID_ORDEN_TRABAJO_FK ? await tx.ordenes_trabajo.findUnique({
           where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
           select: { estado: true },
@@ -898,6 +955,28 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           });
         }
 
+        if (actual.ID_COTIZACION_FK) {
+          const idCotizacion = actual.ID_COTIZACION_FK;
+          for (const inst of instrumentosActualizados) {
+            if (!inst.tipoServicio && inst.idUnidad) inst.tipoServicio = servicioPorUnidad.get(inst.idUnidad);
+          }
+          const unidades = await reunirUnidadesDelSitio(tx, idCotizacion, id, sitio, instrumentosActualizados);
+          if (await cotizacionDesalineadaConRecepcion(tx, idCotizacion, sitio, unidades)) {
+            const comercial = await sincronizarCotizacionDesdeRecepcion(tx, idCotizacion, unidades, sitio);
+            for (const inst of instrumentosActualizados) {
+              if (inst.idUnidad) inst.tipoServicio = comercial.serviciosPorUnidad.get(inst.idUnidad) ?? inst.tipoServicio;
+            }
+            if (comercial.cambio) {
+              const cot = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: idCotizacion } });
+              await tx.cotizaciones.update({
+                where: { ID_COTIZACION: idCotizacion },
+                data: { CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cot.CODIGO_COTIZACION) },
+              });
+              generarCotDoc = true;
+            }
+          }
+        }
+
         // 4. Sincronizar campos compartidos hacia la OT homóloga + versionar OT
         if (actual.ID_ORDEN_TRABAJO_FK) {
           let otCambio = false;
@@ -917,7 +996,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             if (otDet) {
               const cambioServicio = inst.tipoServicio &&
                 normalizarServicioCotizado(inst.tipoServicio) !== normalizarServicioCotizado(otDet.TIPO_SERVICIO);
-              if (cambioServicio) requiereSyncComercial = true;
               if (!inst.tipoServicio) instrumentosActualizados[i] = {
                 ...inst, tipoServicio: servicioPorUnidad.get(inst.idUnidad ?? '') ?? otDet.TIPO_SERVICIO,
               };
@@ -941,6 +1019,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                 otDet.RESOLUCION !== resolucion ||
                 cambioServicio ||
                 otDet.ID_UNIDAD_FK !== inst.idUnidad ||
+                otDet.sitio_calibracion !== sitio ||
                 otDet.activacion === false;
 
               if (cambio) {
@@ -957,6 +1036,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                     RESOLUCION: resolucion,
                     ...(cambioServicio ? { TIPO_SERVICIO: inst.tipoServicio } : {}),
                     ID_UNIDAD_FK: inst.idUnidad,
+                    sitio_calibracion: sitio,
                     activacion: true,
                   },
                 });
@@ -976,6 +1056,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
                   CODIGO_INVENTARIO: inst.codigoInventario ?? null,
                   RESOLUCION: inst.resolucion ?? null,
                   ID_UNIDAD_FK: inst.idUnidad,
+                  sitio_calibracion: sitio,
                   asignado: null,
                   activacion: true,
                 },
@@ -1019,21 +1100,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           await evaluarTransicionesOT(tx, actual.ID_ORDEN_TRABAJO_FK);
         }
 
-        // Una edición de recepción también puede reparar una agrupación incorrecta anterior.
-        if (actual.ID_COTIZACION_FK) {
-          const idCotizacion = actual.ID_COTIZACION_FK;
-          const unidades = await reunirUnidadesDelSitio(tx, idCotizacion, id, sitio, instrumentosActualizados);
-          const desalineada = requiereSyncComercial ||
-            await cotizacionDesalineadaConRecepcion(tx, idCotizacion, sitio, unidades);
-          if (desalineada && await sincronizarCotizacionDesdeRecepcion(tx, idCotizacion, unidades, sitio)) {
-            const cot = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: idCotizacion } });
-            await tx.cotizaciones.update({
-              where: { ID_COTIZACION: idCotizacion },
-              data: { CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cot.CODIGO_COTIZACION) },
-            });
-            generarCotDoc = true;
-          }
-        }
         generarRecDoc = recepcionCambio;
 
         const final = await tx.recepciones_equipo.findUnique({
@@ -1052,6 +1118,25 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         }
 
         if (generarRecDoc || generarOtDoc || generarCotDoc || generarMaestroDoc) {
+          const codigos = [
+            cambioDeCodigo(actual.CODIGO_RECEPCION, final!.CODIGO_RECEPCION),
+            cambioDeCodigo(ordenAnterior?.CODIGO_OT, final!.ordenes_trabajo?.CODIGO_OT),
+            cambioDeCodigo(cotizacionAnterior?.CODIGO_COTIZACION, final!.cotizaciones?.CODIGO_COTIZACION),
+          ].filter((codigo): codigo is string => codigo != null);
+          const agregados = instrumentosActualizados.filter((inst) => inst.idInstrumento == null).map((inst) => ({
+            idUnidad: inst.idUnidad ?? null, instrumento: inst.instrumento,
+          }));
+          const retirados = sobrantes.map((inst) => ({ idUnidad: inst.ID_UNIDAD_FK, instrumento: inst.INSTRUMENTO }));
+          if (idCotizacionCierre) {
+            const cambios = [
+              codigos.join(' · '),
+              agregados.length ? `Agregados · ${agregados.map((inst) => inst.instrumento).join(', ')}` : '',
+              retirados.length ? `Retirados · ${retirados.map((inst) => inst.instrumento).join(', ')}` : '',
+            ].filter(Boolean);
+            await registrarHistorialRecepcion(tx, idCotizacionCierre,
+              `Actualización desde Recepción ${final!.CODIGO_RECEPCION}.`, cambios.join('\n') || null,
+              nombreUsuarioActual(request) || String(idUsuario));
+          }
           await registrarBitacora(tx, {
             action: 'UPDATE',
             tableName: 'recepciones_equipo',
@@ -1059,6 +1144,9 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             userId: idUsuario,
             ip: request.ip,
             details: {
+              codigos,
+              agregados,
+              retirados,
               codigo: final!.CODIGO_RECEPCION,
               idCotizacion: actual.ID_COTIZACION_FK,
               idOrdenTrabajo: actual.ID_ORDEN_TRABAJO_FK,
@@ -1165,6 +1253,9 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         if (detalle.activacion === false) {
           throw new AppError(404, 'El instrumento ya está desactivado en la recepción');
         }
+        if (rec.ID_COTIZACION_FK && !detalle.ID_UNIDAD_FK) {
+          throw new AppError(409, 'Consolida esta recepción para vincular el instrumento con la cotización antes de retirarlo.');
+        }
         if (instrumentosActivos.length === 1) {
           const hayOtroGrupo = rec.ID_COTIZACION_FK != null && await tx.recepciones_equipo.count({
             where: { ID_COTIZACION_FK: rec.ID_COTIZACION_FK, ID_RECEPCION: { not: id }, VIGENTE: true, activacion: true },
@@ -1216,18 +1307,21 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               }))),
               sitio,
             )
-          : false;
+          : null;
 
         // 4. Versionar OT y recepción para reflejar el cambio en sus consecutivos.
+        let cambioCodigoOT: string | null = null;
         if (rec.ID_ORDEN_TRABAJO_FK) {
           const otActual = await tx.ordenes_trabajo.findUnique({
             where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
             select: { CODIGO_OT: true },
           });
           if (otActual) {
+            const nuevoCodigo = await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT);
+            cambioCodigoOT = cambioDeCodigo(otActual.CODIGO_OT, nuevoCodigo);
             await tx.ordenes_trabajo.update({
               where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
-              data: { CODIGO_OT: await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT) },
+              data: { CODIGO_OT: nuevoCodigo },
             });
           }
         }
@@ -1275,43 +1369,26 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           },
         });
 
-        // 5. Historial de cambios de la cotización (con el motivo capturado)
         if (cotizacionId) {
-          const ultimo = await tx.historial_cambios.findFirst({
-            where: { id_cotizacion: cotizacionId },
-            orderBy: { created_at: 'desc' },
+          const cotActual = await tx.cotizaciones.findUniqueOrThrow({
+            where: { ID_COTIZACION: cotizacionId }, select: { CODIGO_COTIZACION: true },
           });
-          const nextVersion = parseVersion(ultimo?.numero_version) + 1;
-          await tx.historial_cambios.create({
-            data: {
-              id: crypto.randomUUID(),
-              numero_version: `V${nextVersion}`,
-              fecha_cambio: new Date(),
-              descripcion:
-                motivo ??
-                `Eliminación (soft delete) del equipo "${detalle.INSTRUMENTO}" de la recepción ${rec.CODIGO_RECEPCION}.`,
-              requiere_validacion_hoja: false,
-              observaciones,
-              aprobo,
-              id_cotizacion: cotizacionId,
-              created_at: new Date(),
-              updated_at: new Date(),
-            },
-          });
-
-          // Versionar el consecutivo de la cotización (acción originada en recepción).
-          const cotActual = await tx.cotizaciones.findUnique({
-            where: { ID_COTIZACION: cotizacionId },
-            select: { CODIGO_COTIZACION: true },
-          });
-          if (cotActual && cambioCotizacion) {
+          let codigoCotizacion = cotActual.CODIGO_COTIZACION;
+          if (cambioCotizacion?.cambio) {
+            codigoCotizacion = await generarConsecutivo(tx, 'COT', codigoCotizacion);
             await tx.cotizaciones.update({
-              where: { ID_COTIZACION: cotizacionId },
-              data: {
-                CODIGO_COTIZACION: await generarConsecutivo(tx, 'COT', cotActual.CODIGO_COTIZACION),
-              },
+              where: { ID_COTIZACION: cotizacionId }, data: { CODIGO_COTIZACION: codigoCotizacion },
             });
           }
+          const cambios = [
+            cambioDeCodigo(rec.CODIGO_RECEPCION, codigoRecepcion),
+            cambioCodigoOT,
+            cambioDeCodigo(cotActual.CODIGO_COTIZACION, codigoCotizacion),
+            observaciones,
+          ].filter(Boolean).join('\n');
+          await registrarHistorialRecepcion(tx, cotizacionId,
+            `Se retiró «${detalle.INSTRUMENTO}» de ${rec.CODIGO_RECEPCION}.${motivo ? ` Motivo · ${motivo}` : ''}`,
+            cambios || null, aprobo);
         }
 
         // 6. Recalcular el estado automático de la OT tras el soft delete.
@@ -1319,7 +1396,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           await evaluarTransicionesOT(tx, rec.ID_ORDEN_TRABAJO_FK);
         }
 
-        idCotizacionFinal = cambioCotizacion ? cotizacionId : null;
+        idCotizacionFinal = cambioCotizacion?.cambio ? cotizacionId : null;
         idOrdenTrabajoFinal = rec.ID_ORDEN_TRABAJO_FK ?? null;
         if (idCotizacionFinal) {
           await registrarGeneracionPendiente(tx, 'actualizacion_cotizacion', {

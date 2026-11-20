@@ -157,7 +157,9 @@ test('agrupa el servicio inferido y el explícito sin sobrescribir cantidad ni c
     { instrumento: ' Manómetro ', idUnidad: 'unidad-2' },
     { instrumento: 'Manómetro', idUnidad: 'unidad-2', tipoServicio: 'No acreditado' },
   ];
-  assert.equal(await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, entrada, 'LABORATORIO'), true);
+  const resultado = await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, entrada, 'LABORATORIO');
+  assert.equal(resultado.cambio, true);
+  assert.equal(resultado.serviciosPorUnidad.get('unidad-2'), 'No acreditado');
   const activas = mock.details.filter((linea) => linea.activacion);
   assert.equal(activas.length, 1);
   assert.deepEqual(activas[0].ID_UNIDADES, ['unidad-1', 'unidad-2']);
@@ -174,10 +176,41 @@ test('al retirar un equipo se reconstruye la línea desde la recepción y se rep
   ] });
   const restantes = [{ instrumento: 'Manómetro', idUnidad: 'conservar' }];
   assert.equal(await cotizacionDesalineadaConRecepcion(mock.tx, 4, 'LABORATORIO', restantes), true);
-  assert.equal(await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, restantes, 'LABORATORIO'), true);
+  assert.equal((await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, restantes, 'LABORATORIO')).cambio, true);
   assert.equal(await cotizacionDesalineadaConRecepcion(mock.tx, 4, 'LABORATORIO', restantes), false);
   assert.deepEqual(mock.details.filter((linea) => linea.activacion).map((linea) => linea.ID_UNIDADES), [['conservar'], ['otro-sitio']]);
   assert.equal(mock.details[0].CANTIDAD, 1);
   assert.equal(mock.details[0].VALOR_TOTAL.toFixed(2), '500.00');
   assert.equal((mock.getQuoteUpdate()?.MONTO_TOTAL as Prisma.Decimal).toFixed(2), '990.00');
+});
+
+test('agregar y retirar una unidad conserva el precio pactado y las líneas de los demás sitios', async () => {
+  const mock = fakeTx({ details: [
+    detalle({ ID_UNIDADES: ['original'], CANTIDAD: 1, VALOR_TOTAL: new Prisma.Decimal(500) }),
+    detalle({ ID_DETALLE: 2, sitio: 'CLIENTE', ID_UNIDADES: ['externa'], CANTIDAD: 1, VALOR_TOTAL: new Prisma.Decimal(500) }),
+  ], viaticos: 0, descuento: 0 });
+  const original = { instrumento: 'Manómetro', idUnidad: 'original' };
+  const agregado = await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    original, { instrumento: 'Manómetro', idUnidad: 'nueva' },
+  ], 'LABORATORIO');
+  assert.equal(agregado.serviciosPorUnidad.get('nueva'), 'Calibración');
+  assert.equal(mock.details[0].CANTIDAD, 2);
+  assert.equal(mock.details[0].VALOR_TOTAL.toFixed(2), '1000.00');
+  assert.deepEqual(mock.details[1].ID_UNIDADES, ['externa']);
+
+  await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [original], 'LABORATORIO');
+  assert.deepEqual(mock.details[0].ID_UNIDADES, ['original']);
+  assert.equal(mock.details[0].VALOR_TOTAL.toFixed(2), '500.00');
+  assert.deepEqual(mock.details[1].ID_UNIDADES, ['externa']);
+  assert.equal((mock.getQuoteUpdate()?.MONTO_TOTAL as Prisma.Decimal).toFixed(2), '1000.00');
+});
+
+test('un alta sin servicio explícito devuelve el servicio de la tarifa resuelta', async () => {
+  const mock = fakeTx({ tarifas: [{ Instrumento: 'Manómetro', MAGNITUD: 'Presión', TIPO_SERVICIO: 'No acreditado', Norma: 'NTC-1', historial_tarifas: [{ PRECIO_U: 500 }] }] });
+  const resultado = await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'nueva' },
+  ], 'INTERNO_USC');
+  assert.equal(resultado.serviciosPorUnidad.get('nueva'), 'No acreditado');
+  assert.equal(mock.details[0].TIPO_SERVICIO, 'No acreditado');
+  assert.deepEqual(mock.details[0].ID_UNIDADES, ['nueva']);
 });

@@ -318,21 +318,6 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           const fsm = await evaluarTransicionesOT(tx, id);
           estadoFinal = fsm.estadoNuevo;
 
-          if (huboCambioDocumento) {
-            await registrarBitacora(tx, {
-              action: 'UPDATE',
-              tableName: 'ordenes_trabajo',
-              recordId: id,
-              userId: idUsuario,
-              ip: request.ip,
-              details: {
-                codigo: otActualizada.CODIGO_OT,
-                estadoAnterior: otActualizada.estado,
-                estadoNuevo: estadoFinal,
-              },
-            });
-          }
-
           // 2. Registrar el tracker de generación documental (dentro de la tx)
           if (huboCambioDocumento) {
             const nuevoCodigo = await generarConsecutivo(tx, 'OT', otActualizada.CODIGO_OT);
@@ -341,6 +326,19 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
               data: { CODIGO_OT: nuevoCodigo },
             });
             codigoOT = versionada.CODIGO_OT;
+            await registrarBitacora(tx, {
+              action: 'UPDATE',
+              tableName: 'ordenes_trabajo',
+              recordId: id,
+              userId: idUsuario,
+              ip: request.ip,
+              details: {
+                codigoAnterior: otActualizada.CODIGO_OT,
+                codigo: versionada.CODIGO_OT,
+                estadoAnterior: otActualizada.estado,
+                estadoNuevo: estadoFinal,
+              },
+            });
             const quoteJob = await registrarGeneracionPendiente(tx, 'generar_ot_consolidada', {
               tipo: 2, id_registro: id, tipo_entry: 'prod', id_usuario: idUsuario,
             });

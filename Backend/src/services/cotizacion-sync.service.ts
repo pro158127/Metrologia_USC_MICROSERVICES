@@ -48,7 +48,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
   idCotizacion: number,
   instrumentos: UnidadRecibida[],
   sitio: Sitio,
-): Promise<boolean> {
+): Promise<{ cambio: boolean; serviciosPorUnidad: ReadonlyMap<string, string> }> {
   // 1. Detalles activos existentes de la cotización.
   const detalles = await tx.cotizacion_detalles.findMany({
     where: { ID_COTIZACION_FK: idCotizacion, activacion: true },
@@ -128,6 +128,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
     valorUnitario: number | Prisma.Decimal; sitio: Sitio; cantidad: number; idsUnidades: string[];
   }>();
   const clavePorUnidad = new Map<string, string>();
+  const serviciosPorUnidad = new Map<string, string>();
   for (const inst of instrumentos) {
     const nombre = inst.instrumento.trim();
     if (!nombre) continue;
@@ -168,6 +169,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
         continue;
       }
       clavePorUnidad.set(inst.idUnidad, clave);
+      serviciosPorUnidad.set(inst.idUnidad, datos.tipoServicio);
     }
     const grupo = grupos.get(clave) ?? { ...datos, cantidad: 0, idsUnidades: [] };
     grupo.cantidad++;
@@ -246,7 +248,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
     where: { ID_COTIZACION: idCotizacion },
     data: { MONTO_TOTAL: montoTotal, UPDATED_AT: new Date() },
   });
-  return changed;
+  return { cambio: changed, serviciosPorUnidad };
 }
 
 /** Retira únicamente las unidades que pertenecían a la recepción desactivada. */
