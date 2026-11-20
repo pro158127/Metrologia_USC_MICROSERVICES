@@ -273,7 +273,7 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
           </span>
         )}
       </div>
-      {editingTechnician && (
+      {editingTechnician && puedeAsignar && tienePermisoAsignar && (
         <div className="space-y-3 animate-fadeIn">
           {instrumentosCot.map((item) => (
             <div
