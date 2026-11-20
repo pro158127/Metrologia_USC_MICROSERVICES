@@ -5,7 +5,7 @@ import { AppError } from '../lib/errors.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { getCertificatePdfQueue } from '../lib/queue/queue.js';
 import { esAcreditado, seleccionarPlantillaSello } from '../services/certificatePdf.service.js';
-import { evaluarTransicionesOT, transicionarOT } from '../services/ot-fsm.service.js';
+import { evaluarTransicionesOT, transicionarOT, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { notificarUsuario } from '../services/notificacion.service.js';
 import {
@@ -126,10 +126,8 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
         const cal = cert.calibraciones;
         const detalle = cal?.recepcion_equipo_detalles;
         const ot = detalle?.recepciones_equipo?.ordenes_trabajo ?? null;
-        const otDetalle =
-          ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle?.INSTRUMENTO) ??
-          ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle?.ITEM) ??
-          null;
+        const otDetalle = detalle && ot ? vincularUnidadRecepcion(detalle,
+          ot.orden_trabajo_detalles.filter((d) => d.activacion !== false)) : null;
 
         return {
           idCertificado: cert.ID_CERTIFICADO,
@@ -199,10 +197,8 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
 
       const detalle = cert.calibraciones?.recepcion_equipo_detalles;
       const ot = detalle?.recepciones_equipo?.ordenes_trabajo ?? null;
-      const otDetalle =
-        ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle?.ITEM) ??
-        ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle?.INSTRUMENTO) ??
-        null;
+      const otDetalle = detalle && ot ? vincularUnidadRecepcion(detalle,
+          ot.orden_trabajo_detalles.filter((d) => d.activacion !== false)) : null;
 
       const servicioAcreditado = esAcreditado(otDetalle?.TIPO_SERVICIO);
       assertPermission(
@@ -313,10 +309,8 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
 
       const ot = cert.calibraciones?.recepcion_equipo_detalles?.recepciones_equipo?.ordenes_trabajo;
       const detalleRecepcion = cert.calibraciones?.recepcion_equipo_detalles;
-      const detalleOT =
-        ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalleRecepcion?.ITEM) ??
-        ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalleRecepcion?.INSTRUMENTO) ??
-        null;
+      const detalleOT = detalleRecepcion && ot ? vincularUnidadRecepcion(detalleRecepcion,
+          ot.orden_trabajo_detalles.filter((d) => d.activacion !== false)) : null;
       assertPermission(
         request,
         'revision',

@@ -14,7 +14,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Download, Search, FileText, X } from "lucide-react";
-import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useRevisionTablas } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   obtenerReportes,
@@ -33,17 +33,6 @@ const inputBaseStyles =
 
 const formatearMoneda = (value: number) =>
   value.toLocaleString("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 0 });
-
-/** Etiquetas de los últimos N meses (Ene, Feb, ...). */
-const mesesUltimos = (n: number): string[] => {
-  const labels: string[] = [];
-  const ahora = new Date();
-  for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1);
-    labels.push(d.toLocaleDateString("es-CO", { month: "short" }).replace(".", ""));
-  }
-  return labels;
-};
 
 // 2. Declaración de Componentes Hijos (Extraídos)
 
@@ -178,9 +167,9 @@ const ChartsSection: React.FC<{
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
       <div className="rounded-[20px] border border-slate-100 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)]">
         <div className="text-sm font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3 mb-1">
-          Calibraciones por mes
+          OT operativas vigentes por mes
         </div>
-        <div className="text-xs text-slate-400 pl-4 mb-4">Externo vs imputado USC (apiladas)</div>
+        <div className="text-xs text-slate-400 pl-4 mb-4">Servicios externos e internos USC</div>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={barData}>
             <XAxis dataKey="mes" tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -229,9 +218,9 @@ const TecnicoSummaryTable: React.FC<{ tecnicoData: TecnicoResumen[] }> = ({ tecn
           Resumen por técnico
         </span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="max-h-96 overflow-auto" tabIndex={0}>
         <table className="w-full">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50/75 border-b border-slate-100">
               {["Técnico", "OT completadas", "Equipos calibrados", "Promedio días por OT"].map((h) => (
                 <th key={h} className="text-left px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -284,9 +273,9 @@ const HistoricalCertificatesTable: React.FC<{
           Búsqueda de certificados históricos (RF-41)
         </span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="max-h-96 overflow-auto" tabIndex={0}>
         <table className="w-full">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50/75 border-b border-slate-100">
               {["N° Certificado", "Cliente", "NIT", "Instrumento", "Estampilla", "Fecha emisión", "Técnico", "Acciones"].map((h) => (
                 <th key={h} className="text-left px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -417,13 +406,9 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
 // 3. Componente Padre (`MainRenderer`)
 
 export function MainRendererreport() {
-  const cotizaciones = useDbTable("cotizaciones");
-  const ordenesTrabajo = useDbTable("ordenes_trabajo");
   const clientes = useDbTable("clientes");
   const tarifas = useDbTable("tarifas");
   const { loadTable } = useDbActions();
-  const loadingOrdenes = useDbLoading("ordenes_trabajo");
-  const loadingCotizaciones = useDbLoading("cotizaciones");
 
   const [filtros, setFiltros] = useState<FiltrosReporte>({});
   const [datos, setDatos] = useState<DatosReporte | null>(null);
@@ -440,78 +425,40 @@ export function MainRendererreport() {
     setTimeout(() => setToast(""), 3500);
   }, []);
 
-  const cargarReporte = useCallback(async (f: FiltrosReporte) => {
-    const d = await obtenerReportes(f);
-    setDatos(d);
-    setCargandoReporte(false);
-  }, []);
-
-  React.useEffect(() => {
-    loadTable("cotizaciones");
-    loadTable("ordenes_trabajo");
-    loadTable("clientes");
-    loadTable("tarifas");
-    let activo = true;
-    obtenerReportes({}).then((d) => {
-      if (activo) {
-        setDatos(d);
-        setCargandoReporte(false);
-      }
-    });
-    return () => {
-      activo = false;
-    };
-  }, [loadTable]);
-
-  const aplicarFiltros = useCallback(
-    (f: FiltrosReporte) => {
-      setFiltros(f);
-      setCargandoReporte(true);
-      cargarReporte(f);
-    },
-    [cargarReporte]
+  const revision = useRevisionTablas(
+    "cotizaciones", "ordenes_trabajo", "certificados", "calibraciones", "facturas", "recepciones_equipo",
   );
 
-  // ==========================================
-  // GRÁFICAS (desde el store)
-  // ==========================================
-  const meses = useMemo(() => mesesUltimos(6), []);
+  React.useEffect(() => {
+    for (const tabla of ["clientes", "tarifas"] as const) {
+      void loadTable(tabla);
+    }
+  }, [loadTable]);
 
-  const barData: BarChartData[] = useMemo(() => {
-    return meses.map((mes) => {
-      const index = meses.indexOf(mes);
-      const fechaRef = new Date();
-      const target = new Date(fechaRef.getFullYear(), fechaRef.getMonth() - (meses.length - 1 - index), 1);
-      const delMes = (d: Date | string | null | undefined) => {
-        if (!d) return false;
-        const dt = new Date(d);
-        return dt.getMonth() === target.getMonth() && dt.getFullYear() === target.getFullYear();
-      };
-      const delMesCount = ordenesTrabajo.filter((o) => delMes(o.createdAt));
-      return {
-        mes,
-        externo: delMesCount.filter((o) => o.esInternoUSC === false || o.esInternoUSC == null).length,
-        interno: delMesCount.filter((o) => o.esInternoUSC === true).length,
-      };
-    });
-  }, [meses, ordenesTrabajo]);
+  React.useEffect(() => {
+    let activo = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const reporte = await obtenerReportes(filtros);
+        if (activo) setDatos(reporte);
+      } finally {
+        if (activo) setCargandoReporte(false);
+      }
+    }, 150);
+    return () => {
+      activo = false;
+      window.clearTimeout(timer);
+    };
+  }, [filtros, revision]);
 
-  const conversionData: ConversionData[] = useMemo(() => {
-    return meses.map((mes) => {
-      const index = meses.indexOf(mes);
-      const fechaRef = new Date();
-      const target = new Date(fechaRef.getFullYear(), fechaRef.getMonth() - (meses.length - 1 - index), 1);
-      const delMes = (d: Date) => d.getMonth() === target.getMonth() && d.getFullYear() === target.getFullYear();
-      const emitidas = cotizaciones.filter((c) => delMes(new Date(c.createdAt))).length;
-      const aprobadas = cotizaciones.filter(
-        (c) => delMes(new Date(c.createdAt)) && c.estado === "APROBADA"
-      ).length;
-      return {
-        mes,
-        tasa: emitidas > 0 ? Math.round((aprobadas / emitidas) * 100) : 0,
-      };
-    });
-  }, [meses, cotizaciones]);
+  const aplicarFiltros = useCallback((f: FiltrosReporte) => {
+    setCargandoReporte(true);
+    setFiltros({ ...f });
+  }, []);
+
+  // ==========================================
+  const barData = datos?.series ?? [];
+  const conversionData = datos?.series ?? [];
 
   // ==========================================
   // DATOS DEL ENDPOINT DE REPORTES
@@ -523,7 +470,7 @@ export function MainRendererreport() {
       { label: "Cotizaciones emitidas", val: String(k.cotizacionesEmitidas), sub: "registradas en el sistema", color: "#5680F9", bg: "#EEF2FF", trend: "" },
       { label: "Tasa de conversión", val: `${k.tasaConversion}%`, sub: "aprobadas sobre emitidas", color: "#22C55E", bg: "#F0FDF4", trend: "" },
       { label: "Ingresos facturados", val: formatearMoneda(k.ingresos), sub: "total facturado registrado", color: "#9A8CF3", bg: "#F5F3FF", trend: "" },
-      { label: "Órdenes internas USC", val: String(k.ordenesInternas), sub: "servicios internos imputados", color: "#F59C0B", bg: "#FFFBEB", trend: "" },
+      { label: "Órdenes internas USC", val: String(k.ordenesInternas), sub: "OT operativas vigentes de Interno USC", color: "#F59C0B", bg: "#FFFBEB", trend: "" },
     ];
   }, [datos]);
 
@@ -636,7 +583,7 @@ export function MainRendererreport() {
         </div>
       )}
 
-      {loadingOrdenes || loadingCotizaciones || cargandoReporte ? (
+      {cargandoReporte ? (
         <div className="space-y-5 animate-pulse">
           <div className="h-8 w-64 rounded bg-slate-200" />
           <div className="h-12 rounded-2xl bg-slate-200" />

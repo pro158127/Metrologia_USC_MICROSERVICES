@@ -1,3 +1,4 @@
+import { despacharGeneracionesPendientes, type GeneracionExcelJob } from '../services/generacion-pendiente.service.js';
 // workers/plantillas.worker.ts
 import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
@@ -10,7 +11,6 @@ import { getRedisConnection, TarifasJobData, TARIFAS_QUEUE,GENERATION_EXCEL } fr
 import { procesarPlantillaJob } from './plantillasWorker.js';
 import { PrismaClient } from '@prisma/client';
 import { pipeline } from 'stream/promises';
-import { GenerarExcelBody } from '../routes/plantillas-generacion.schemas.js';
 import { generarExcelPlantilla } from './generador.excel.js'; 
 import { encolarCorreoConRegistro } from '../services/email-delivery.service.js';
 const prisma = new PrismaClient();
@@ -114,7 +114,7 @@ worker.on('error', (err) => {
 console.log('🚀 [plantillas-worker] Worker de consolidación de tarifas escuchando en Redis...');
 
 
-const generador_excel= new Worker<GenerarExcelBody>(GENERATION_EXCEL, async(job)=>{
+const generador_excel= new Worker<GeneracionExcelJob>(GENERATION_EXCEL, async(job)=>{
   return generarExcelPlantilla(job);
 },
  {
@@ -124,8 +124,29 @@ const generador_excel= new Worker<GenerarExcelBody>(GENERATION_EXCEL, async(job)
 )
 
 
+let despachando = false;
+async function despacharDocumentos() {
+  if (despachando) return;
+  despachando = true;
+  try {
+    await despacharGeneracionesPendientes(prisma);
+  } catch (error) {
+    console.error('[generacion-documental] La cola no está disponible. Se reintentará.', error);
+  } finally {
+    despachando = false;
+  }
+}
+void despacharDocumentos();
+setInterval(() => { void despacharDocumentos(); }, 2000).unref();
+
 generador_excel.on('completed', async(job,returnvalue) => {
-  console.log(`✅ [generador_excel-worker] Job Redis ${job.id} completado con éxito. (Quote BD ID: ${job.data.id_job})`);
+  console.log('[generador_excel-worker] Documento generado', {
+    redisJobId: job.id,
+    id_job: job.data.id_job,
+    tipo: job.data.tipo,
+    id_registro: job.data.id_registro,
+    pdf: returnvalue?.url_pdf,
+  });
   if (returnvalue?.exito && returnvalue?.datos_correo) {
     if(returnvalue.estado=="ENVIADA"){
     if(returnvalue.action=="cot_create"){
@@ -143,7 +164,7 @@ generador_excel.on('completed', async(job,returnvalue) => {
     modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
   });
     }}
-    if (returnvalue.action === "cot_update") {
+    if (returnvalue.action === "cot_update" && returnvalue.estado !== "BORRADOR") {
       await encolarCorreoConRegistro(prisma, {
         to: returnvalue.datos_correo.emailDestino,
         // Cambiamos el Asunto para reflejar la aprobación
@@ -207,24 +228,31 @@ generador_excel.on('completed', async(job,returnvalue) => {
 }
     
     
-    console.log(`➡️ [Orquestador] Correo encolado exitosamente.`);
   }
 });
 
 generador_excel.on('failed', async (job, err) => {
-  console.error(`❌ [generador_excel-worker] Job Redis ${job?.id} falló: ${err.message}`);
-  
-  if (job?.data?.id_job) {
-    try {
-      // Liberamos el registro en BD para indicar que hubo un error crítico
-      await prisma.quote.update({
-        where: { id: job.data.id_job },
-        data: { status: 'FAILED' }
-      });
-      console.log(`⚠️ [generador_excel-worker] Registro ${job.data.id_job} actualizado a FAILED en la base de datos.`);
-    } catch (dbError) {
-      console.error(`🚨 [generador_excel-worker] Fallo fatal al intentar actualizar la BD a FAILED:`, dbError);
+  if (!job) {
+    console.error('[generador_excel-worker] Falló un trabajo sin datos:', err.message);
+    return;
+  }
+  const { id_job, tipo, id_registro } = job.data;
+  const contexto = { redisJobId: job.id, nombre: job.name, id_job, tipo, id_registro };
+  console.error('[generador_excel-worker] Error generando documento', contexto, err.message);
+  if (!id_job) return;
+
+  try {
+    const estado = await job.getState();
+    if (estado !== 'failed') return;
+    const resultado = await prisma.quote.updateMany({
+      where: { id: id_job },
+      data: { status: 'FAILED', data: { error: err.message } },
+    });
+    if (resultado.count === 0) {
+      console.warn('[generador_excel-worker] El trabajo terminó sin registro Quote en PostgreSQL', contexto);
     }
+  } catch (dbError) {
+    console.error('[generador_excel-worker] No se pudo registrar el fallo en PostgreSQL', contexto, dbError);
   }
 });
 

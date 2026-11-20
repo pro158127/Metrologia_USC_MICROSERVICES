@@ -2,7 +2,7 @@
 
 import { auth } from '@/app/Login/types/auth';
 import { fastifyRequest } from '@/app/lib/api/fastifyClient';
-import type { RecepcionConInfo } from '@/tipos/recepciones';
+import type { RecepcionConInfo, SolicitanteRecepcion } from '@/tipos/recepciones';
 import type {
   RecepcionEquipoModel,
   ClienteModel,
@@ -37,6 +37,20 @@ export async function getRecepcionesEnriquecidas(): Promise<RecepcionConInfo[]> 
   }
 }
 
+/** Lee una recepción puntual desde la base de datos antes de abrir su formulario. */
+export async function getRecepcionPorId(idRecepcion: number): Promise<RecepcionEquipoModel> {
+  const session = await auth();
+  const res = await fastifyRequest<{ ok: boolean; data: RecepcionEquipoModel }>(
+    session,
+    `/api/v1/recepciones/${idRecepcion}`
+  );
+  return res.data;
+}
+
+export async function obtenerRecepcionesVigentes(): Promise<RecepcionEquipoModel[]> {
+  return fastifyRequest(await auth(), '/api/v1/recepciones/listado');
+}
+
 export async function getInitialData(): Promise<InitialDataResponse> {
   try {
     const session = await auth();
@@ -54,8 +68,10 @@ export async function getInitialData(): Promise<InitialDataResponse> {
 export interface InstrumentoRecepcionPayload {
   idLocal?: string;
   idInstrumento?: number;
+  idUnidad?: string | null;
   instrumento: string;
   tipoServicio?: string;
+  idTarifa?: number;
   marca?: string;
   modelo?: string;
   serie?: string;
@@ -71,8 +87,9 @@ export interface InstrumentoRecepcionPayload {
 export interface RecepcionMutationPayload {
   estado?: string;
   isNueva?: boolean;
-  idCliente?: number | null;
+  codigoRecepcionActual?: string;
   solicitante: string;
+  idCliente?: number;
   nombreEntrega?: string;
   cotizacionCodigo?: string;
   ordenTrabajoCodigo?: string;
@@ -87,6 +104,14 @@ export interface RecepcionMutationPayload {
   nombreCalibra?: string;
   nombreRecibeServicio?: string;
   instrumentos: InstrumentoRecepcionPayload[];
+}
+
+export async function obtenerSolicitantesDeRecepcion(): Promise<SolicitanteRecepcion[]> {
+  const session = await auth();
+  const respuesta = await fastifyRequest<{ ok: true; data: SolicitanteRecepcion[] }>(
+    session, '/api/v1/recepciones/solicitantes',
+  );
+  return respuesta.data;
 }
 
 export interface RespuestaRecepcionMutacion {
@@ -130,6 +155,7 @@ export async function actualizarRecepcion(
 }
 
 export interface RespuestaSoftDelete {
+  grupoDesactivado?: boolean;
   ok: boolean;
   message?: string;
   error?: string;

@@ -75,7 +75,8 @@ interface ModuloActivoProps {
   clienteId: number | null;                 // ← el ID del cliente seleccionado
   onSelectCliente: (id: number) => void;   // ← navega a perfil
   onVolver: () => void;     
-  onNavigarte: (modulo: ModuleKey) =>void;               // ← vuelve a lista
+  onNavigarte: (modulo: ModuleKey, idCertificado?: number) => void;
+  certificadoToOpen: number | null;               // ← vuelve a lista
   otToOpen: number | null;                 // ← OT a preseleccionar en Órdenes
   onOpenOt: (id: number) => void;          // ← abre una OT desde importación
 }
@@ -86,6 +87,7 @@ const ModuloActivo = ({
   onSelectCliente, 
   onVolver ,
   onNavigarte,
+  certificadoToOpen,
   otToOpen,
   onOpenOt,
 }: ModuloActivoProps)=> {
@@ -112,7 +114,7 @@ const ModuloActivo = ({
     case "importarOrden":
       return <MainRenderer2 onOpenOt={onOpenOt} />;
     case "revision":
-      return <RevisionCertificados/>
+      return <RevisionCertificados certificadoInicial={certificadoToOpen} />
     case "dashboard":
       return <Dashboard onNavigate={onNavigarte}/>
     case "calibracion":
@@ -136,6 +138,7 @@ export const MainRenderer = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
   const [cliente, setCliente] = useState<number | null>(null);
+  const [certificadoToOpen, setCertificadoToOpen] = useState<number | null>(null);
   const [otToOpen, setOtToOpen] = useState<number | null>(null);
   const [showProfile, setShowProfile] = useState(false);
 
@@ -144,7 +147,8 @@ export const MainRenderer = () => {
     return key === true || hasModule(key as string);
   }, [hasModule]);
 
-  const navegarSeguro = useCallback((m: ModuleKey) => {
+  const navegarSeguro = useCallback((m: ModuleKey, idCertificado?: number) => {
+    setCertificadoToOpen(m === "revision" ? idCertificado ?? null : null);
     setActiveModule(puedeVer(m) ? m : "dashboard");
   }, [puedeVer]);
 
@@ -174,9 +178,14 @@ const handleOpenOt = useCallback((id: number) => {
   setActiveModule("ordenes");
 }, []);
 
-  const handleLogout = () => {
-    console.log("Cerrando sesión...");
-    signOut();
+  const handleLogout = async () => {
+    try {
+      // Espera a que NextAuth elimine la cookie antes de cambiar de pantalla.
+      await signOut({ redirect: false });
+    } catch (error) {
+      console.error("No se pudo completar la solicitud de cierre de sesión:", error);
+    }
+    window.location.replace("/Login");
   };
 
   return (
@@ -213,6 +222,7 @@ const handleOpenOt = useCallback((id: number) => {
               onSelectCliente={handleSelectCliente}
               onVolver={handleVolverClientes}
               onNavigarte={navegarSeguro}
+              certificadoToOpen={certificadoToOpen}
               otToOpen={otToOpen}
               onOpenOt={handleOpenOt}
             />

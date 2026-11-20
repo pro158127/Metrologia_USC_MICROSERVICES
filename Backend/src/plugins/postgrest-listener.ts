@@ -4,12 +4,11 @@ import fp from 'fastify-plugin';
 
 async function postgresListenerPluginHandler(fastify: FastifyInstance) {
   const dbEnv = process.env.DB_ENV;
-  const connectionString =
-    process.env.DATABASE_URL_LOCAL ||
-    process.env.DATABASE_URL_AWS ||
-    'postgresql://postgres:password123@postgres_db:5432/metrologia_db';
-
-  const useSSL = dbEnv === 'aws' || dbEnv === 'production';
+  // Es la misma variable que declara el datasource de Prisma.
+  const connectionString = process.env.DATABASE_URL_LOCAL;
+  if (!connectionString) throw new Error('DATABASE_URL_LOCAL es requerida para LISTEN');
+  const sslMode = new URL(connectionString).searchParams.get('sslmode');
+  const useSSL = !sslMode && (dbEnv === 'aws' || dbEnv === 'production');
   const clientConfig: ClientConfig = {
     connectionString,
     keepAlive: true,
@@ -17,6 +16,7 @@ async function postgresListenerPluginHandler(fastify: FastifyInstance) {
     ssl: useSSL ? { rejectUnauthorized: false } : false,
   };
 
+  let escuchandoAntes = false;
   let pgClient: Client | null = null;
   let isDisconnecting = false;
   let reconnectTimer: NodeJS.Timeout | null = null;
@@ -44,43 +44,20 @@ async function postgresListenerPluginHandler(fastify: FastifyInstance) {
     client.on('notification', (msg) => {
       if (msg.channel === 'cambio_tablas' && msg.payload) {
         try {
-          const evento = JSON.parse(msg.payload);
-          const { tabla, operacion, data, seq, truncado } = evento;
+          const { tabla, operacion, data } = JSON.parse(msg.payload);
+          if (typeof tabla !== 'string') return;
 
-          if (!fastify.io) {
-            return;
-          }
-
+          const cambio = { tabla, operacion };
           if (tabla === 'notificaciones') {
-            const targetUserId = data?.ID_USUARIO_FK ?? data?.idUsuario ?? data?.id_usuario;
-
-            if (targetUserId) {
-              const targetRoom = `user_room_${targetUserId}`;
-              const roomSockets = fastify.io.sockets.adapter.rooms.get(targetRoom);
-              const usuarioEstaConectado = roomSockets && roomSockets.size > 0;
-
-              if (usuarioEstaConectado) {
-                fastify.io.to(targetRoom).emit('cambio_realtime', { tabla, operacion, data, seq, truncado });
-                fastify.io.except(targetRoom).emit('cambio_realtime', {
-                  tabla,
-                  operacion: 'DELETE',
-                  data: { id: data?.id ?? data?.ID_NOTIFICACION },
-                  seq,
-                  truncado,
-                });
-              } else {
-                fastify.io.emit('cambio_realtime', {
-                  tabla,
-                  operacion: 'DELETE',
-                  data: { id: data?.id ?? data?.ID_NOTIFICACION },
-                  seq,
-                  truncado,
-                });
-              }
+            const usuario = Number(data?.ID_USUARIO_FK ?? data?.idUsuario ?? data?.id_usuario);
+            if (Number.isSafeInteger(usuario) && usuario > 0) {
+              fastify.io.to(`user_room_${usuario}`).emit('cambio_realtime', cambio);
+            } else {
+              // Un trigger anterior podía truncar incluso el destinatario.
+              fastify.io.emit('cambio_realtime', { tabla });
             }
           } else {
-            // Emisión global para las demás tablas
-            fastify.io.emit('cambio_realtime', { tabla, operacion, data, seq, truncado });
+            fastify.io.emit('cambio_realtime', cambio);
           }
         } catch (err) {
           console.error('❌ Error parseando payload de Postgres:', err);
@@ -90,12 +67,17 @@ async function postgresListenerPluginHandler(fastify: FastifyInstance) {
 
     client.on('error', (err) => {
       console.error('❌ Error en el cliente de PostgreSQL:', err.message);
-      scheduleReconnect();
+      if (pgClient === client) scheduleReconnect();
+    });
+    client.on('end', () => {
+      if (pgClient === client) scheduleReconnect();
     });
 
     try {
       await client.connect();
       await client.query('LISTEN cambio_tablas');
+      if (escuchandoAntes) fastify.io.emit('realtime_resync');
+      escuchandoAntes = true;
       console.log(`🔈 PostgreSQL (${(dbEnv ?? 'unknown').toUpperCase()}) escuchando "cambio_tablas" con éxito.`);
     } catch (err: any) {
       console.error('❌ Error al conectar el Listener de PostgreSQL:', err.message);

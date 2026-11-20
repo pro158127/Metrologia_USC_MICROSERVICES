@@ -30,6 +30,7 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       },
     },
     async (request) => {
+      assertPermission(request, 'cotizaciones', 'crear_editar');
       const idCotizacion = request.query.idCotizacion ?? undefined;
       const page = request.query.page ?? 1;
       const limit = request.query.limit ?? 50;
@@ -79,6 +80,11 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       assertPermission(request, 'cotizaciones', 'crear_editar');
       const idUsuario = Number(request.user?.sub ?? 0);
       const { idCotizacion, tipo, descripcion, fechaGestion, proximaGestion, resultado, idUsuario: responsable } = request.body;
+
+      const fechaBase = fechaGestion ?? new Date();
+      if (proximaGestion && proximaGestion < fechaBase) {
+        throw new AppError(400, 'La próxima gestión no puede ser anterior a la fecha de gestión.');
+      }
 
       const cotizacion = await fastify.prisma.cotizaciones.findUnique({
         where: { ID_COTIZACION: idCotizacion },
@@ -143,13 +149,21 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       });
       if (!existente) throw new AppError(404, 'Seguimiento no encontrado');
 
+      const fechaGestionFinal = request.body.fechaGestion ?? existente.FECHA_GESTION;
+      const proximaGestionFinal = request.body.proximaGestion !== undefined
+        ? request.body.proximaGestion
+        : existente.PROXIMA_GESTION;
+      if (proximaGestionFinal && proximaGestionFinal < fechaGestionFinal) {
+        throw new AppError(400, 'La próxima gestión no puede ser anterior a la fecha de gestión.');
+      }
+
       const actualizado = await fastify.prisma.$transaction(async (tx) => {
         const seguimiento = await tx.seguimientos_comerciales.update({
           where: { ID_SEGUIMIENTO: idSeguimiento },
           data: {
-            ...(request.body.tipo && { TIPO: request.body.tipo }),
-            ...(request.body.descripcion && { DESCRIPCION: request.body.descripcion }),
-            ...(request.body.fechaGestion && { FECHA_GESTION: request.body.fechaGestion }),
+            ...(request.body.tipo !== undefined && { TIPO: request.body.tipo }),
+            ...(request.body.descripcion !== undefined && { DESCRIPCION: request.body.descripcion }),
+            ...(request.body.fechaGestion !== undefined && { FECHA_GESTION: request.body.fechaGestion }),
             ...(request.body.proximaGestion !== undefined && { PROXIMA_GESTION: request.body.proximaGestion }),
             ...(request.body.resultado !== undefined && { RESULTADO: request.body.resultado }),
             ...(request.body.idUsuario !== undefined && { ID_USUARIO_FK: request.body.idUsuario }),

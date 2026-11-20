@@ -16,6 +16,7 @@ interface SessionLike {
     name?: string | null;
     role?: string;
     permissions?: { permisos?: Record<string, unknown> } | null;
+    sessionVersion?: number;
   } | null;
 }
 
@@ -40,6 +41,7 @@ export async function fastifyRequest<T = unknown>(
   const id = session.user.id_user ?? session.user.id ?? '';
   const token = await generarTokenBackend({
     sub: String(id),
+    sessionVersion: session.user.sessionVersion ?? 0,
     email: session.user.email ?? '',
     name: session.user.name ?? '',
     role: session.user.role ?? '',
@@ -70,10 +72,19 @@ export async function fastifyRequest<T = unknown>(
       : {}),
   });
 
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    throw new FastifyHttpError(
+      res.ok ? 502 : res.status,
+      `La API devolvió una respuesta inválida (HTTP ${res.status}).`,
+    );
+  }
 
   if (!res.ok) {
-    throw new FastifyHttpError(res.status, data.error ?? `HTTP ${res.status}`);
+    const error = (data as { error?: unknown } | null)?.error;
+    throw new FastifyHttpError(res.status, typeof error === 'string' ? error : `HTTP ${res.status}`);
   }
 
   return data as T;

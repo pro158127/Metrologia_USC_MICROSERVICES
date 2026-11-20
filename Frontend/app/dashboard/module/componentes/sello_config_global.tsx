@@ -1,4 +1,5 @@
 'use client';
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import { generarPrevisualizacionSello } from '@/app/action_module/sellos';
 import { toast } from 'sonner';
 import { validarArchivo } from '@/app/lib/upload';
@@ -165,6 +166,7 @@ function PdfTemplateCanvas({
 // ============================================================================
 
 export function SelloManagementDashboard() {
+  const revision = useRevisionTablas("plantillas_sellos", "sellos");
   const [seals, setSeals] = useState<SealConfig[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +176,7 @@ export function SelloManagementDashboard() {
 
   const applySellosResult = useCallback((res: Awaited<ReturnType<typeof obtenerPlantillasSellos>>) => {
     if (res.success && res.data) {
+      setError(null);
       setSeals(res.data);
     } else {
       setError(res.error ?? 'Error al cargar los sellos');
@@ -194,7 +197,7 @@ export function SelloManagementDashboard() {
     return () => {
       active = false;
     };
-  }, [applySellosResult]);
+  }, [applySellosResult, revision]);
 
   const handleCreateNew = () => {
     setEditingSeal({
@@ -467,6 +470,7 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
     }
 
     if (config.templatePdfKey) {
+      setSecureRenderSource(null);
       let isMounted = true;
 
       const fetchSecureFile = async () => {
@@ -490,17 +494,17 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
     }
   }, [templateFile, config.templatePdfKey]);
 
-  // 3. Adaptamos la validación
-  const isImage = useMemo(() => {
-    if (!secureRenderSource) return false;
-    if (secureRenderSource instanceof File) return secureRenderSource.type.startsWith('image/');
-    
-    if (config.templatePdfKey) {
-      const keyStr = config.templatePdfKey.toLowerCase();
-      return keyStr.endsWith('.png') || keyStr.endsWith('.jpg') || keyStr.endsWith('.jpeg');
-    }
-    return false;
-  }, [secureRenderSource, config.templatePdfKey]);
+  const [imagenLocal, setImagenLocal] = useState<{ file: File; url: string } | null>(null);
+  useEffect(() => {
+    if (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/")) return;
+    const url = URL.createObjectURL(secureRenderSource);
+    setImagenLocal({ file: secureRenderSource, url });
+    return () => URL.revokeObjectURL(url);
+  }, [secureRenderSource]);
+
+  const imageSource = secureRenderSource instanceof File
+    ? (imagenLocal?.file === secureRenderSource ? imagenLocal.url : null)
+    : (secureRenderSource?.startsWith("data:image/") ? secureRenderSource : null);
 
   const hasTemplate = !!config.templatePdfUrl || !!templateFile || !!config.templatePdfKey;
 
@@ -789,10 +793,10 @@ const handleDownloadBackendPreview = async () => {
                     className="relative bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
                     style={{ width: renderBox.width, height: renderBox.height }}
                   >
-                   {secureRenderSource &&
-                      (isImage ? (
+                   {secureRenderSource && (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/") || imageSource) &&
+                      (imageSource ? (
                         <img
-                          src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+                          src={imageSource}
                           alt="Plantilla base"
                           className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
                           onLoad={(e) => {
@@ -880,6 +884,22 @@ const handleDownloadBackendPreview = async () => {
 
               {/* Controles Derecha */}
               <div className="w-full lg:w-96 border-l border-slate-200 p-4 flex flex-col gap-4 overflow-y-auto bg-slate-50">
+                <div className="p-3 bg-white border border-slate-200 rounded-lg flex flex-col gap-2">
+                  <span className="text-[11px] font-bold text-slate-700 uppercase">Archivo base del sello</span>
+                  <label className="cursor-pointer flex items-center justify-center gap-2 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold transition-colors">
+                    <Upload size={14} />
+                    {templateFile ? 'Cambiar archivo seleccionado' : hasTemplate ? 'Reemplazar archivo' : 'Seleccionar archivo'}
+                    <input
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg"
+                      onChange={handleTemplateUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    {templateFile?.name ?? (hasTemplate ? 'El archivo actual se conserva si no seleccionas otro.' : 'Formatos permitidos: PDF, PNG o JPG.')}
+                  </span>
+                </div>
                 <div>
                   <label className="text-[11px] font-bold text-slate-700 uppercase">Nombre de la Plantilla</label>
                   <input
@@ -997,10 +1017,10 @@ const handleDownloadBackendPreview = async () => {
         >
           {/* CAPA 1 (z-0): Plantilla Base / Logo de la USC al fondo */}
          <div className="absolute inset-0 z-0 pointer-events-none">
-            {secureRenderSource &&
-              (isImage ? (
+            {secureRenderSource && (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/") || imageSource) &&
+              (imageSource ? (
                 <img
-                  src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+                  src={imageSource}
                   alt="Plantilla base"
                   className="w-full h-full object-contain select-none"
                 />

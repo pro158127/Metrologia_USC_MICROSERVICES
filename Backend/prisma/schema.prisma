@@ -378,6 +378,7 @@ model recepcion_equipo_detalles {
 enum sitio_calibracion {
 LABORATORIO
 CLIENTE
+INTERNO_USC
 }
 
 model recepciones_equipo {

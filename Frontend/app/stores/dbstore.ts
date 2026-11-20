@@ -8,13 +8,21 @@ import { obtenerUsuariosPorPermiso,obtenerRolesAction } from '@/app/action_modul
 import { obtenerTodasLasCotizaciones } from '@/app/action_module/cotizacion';
 import { obtenerTodasLasTarifas } from '@/app/action_module/tarifas';
 import { obtenerClientes } from '@/app/action_module/modulo_cliente';
-import { getInitialData as getRecepcionesData } from '@/app/action_module/recepciones';
-import { obtenerDatosIniciales as getOrdenesData } from '@/app/action_module/ordenes';
+import { obtenerRecepcionesVigentes } from '@/app/action_module/recepciones';
+import { obtenerOrdenesListado } from '@/app/action_module/ordenes';
 import { obtenerFacturas } from '@/app/action_module/facturas';
 import { obtenerParametrosSistema } from '@/app/action_module/parametros_sistema';
 import { obtenerCertificadosConContexto } from '@/app/action_module/certificados';
-import { obtenerSellos,obtenerPlantillasSellos } from '@/app/action_module/sellos';
+import { obtenerSellos } from '@/app/action_module/sellos';
 import { obtenerSeguimientos } from '@/app/action_module/seguimiento';
+export const TABLAS_CON_SNAPSHOT = [
+  'usuarios', 'cotizaciones', 'tarifas', 'clientes', 'recepciones_equipo',
+  'ordenes_trabajo', 'roles', 'facturas', 'seguimientos_comerciales',
+  'sellos', 'parametros_sistema', 'certificados',
+] as const satisfies readonly (keyof RealtimeTablesState)[];
+
+const cargasEnCurso = new Map<keyof RealtimeTablesState, Promise<boolean>>();
+
 const initialState: RealtimeTablesState = {
   usuarios: [],
   tarifas: [],
@@ -62,7 +70,7 @@ export const useDbStore = create<
     ) => void;
     setTableLoading: <K extends keyof RealtimeTablesState>(table: K, value: boolean) => void;
     loadAllData: () => Promise<void>;
-    loadTable: <K extends keyof RealtimeTablesState>(table: K, force?: boolean) => Promise<void>;
+    loadTable: <K extends keyof RealtimeTablesState>(table: K, force?: boolean) => Promise<boolean>;
     reset: () => void;
   }
 >((set, get) => ({
@@ -120,113 +128,110 @@ updateTable: (table, updater) =>
   
   reset: () => set(() => ({ ...initialState, loading: {}, initialized: false })),
 
-  loadTable: async (table, force = false) => {
-    const state = get();
-    if (state[table].length > 0 && table !== 'usuarios' && !force) return;
-    const revisionAlIniciar = obtenerRevisionRealtime(String(table));
+  loadTable: (table, force = false) => {
+    const enCurso = cargasEnCurso.get(table);
+    if (enCurso) return enCurso;
+    if (!force && get()[table].length > 0 && table !== 'usuarios') return Promise.resolve(true);
+    if (!TABLAS_CON_SNAPSHOT.some((tabla) => tabla === table)) return Promise.resolve(false);
 
     set((s) => ({ loading: { ...s.loading, [table]: true } }));
-    try {
-      let data: any[] = [];
-      let snapshotValido = false;
-      switch (table) {
-        case 'usuarios': {
-          const res = await obtenerUsuariosPorPermiso();
-          if (res?.success && Array.isArray(res.data)) {
-            snapshotValido = true;
-            data = res.data.map((u: any) => ({
-              ...u,
-              rolnombre: u.rol?.nombreRol || 'Sin rol',
-            }));
+    const cargar = async (): Promise<boolean> => {
+      let revisionAlIniciar: number;
+      do {
+        revisionAlIniciar = obtenerRevisionRealtime(table);
+        let data: any[] = [];
+        let snapshotValido = false;
+        switch (table) {
+          case 'usuarios': {
+            const res = await obtenerUsuariosPorPermiso();
+            if (res?.success && Array.isArray(res.data)) {
+              snapshotValido = true;
+              data = res.data.map((u: any) => ({
+                ...u,
+                rolnombre: u.rol?.nombreRol || 'Sin rol',
+              }));
+            }
+            break;
           }
-          break;
-        }
-        case 'cotizaciones': {
-          const res = await obtenerTodasLasCotizaciones();
-          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'tarifas': {
-          const res = await obtenerTodasLasTarifas();
-          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'clientes': {
-          const res = await obtenerClientes();
-          if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'recepciones_equipo': {
-          const res = await getRecepcionesData();
-          if (res && Array.isArray(res.recepciones)) { data = res.recepciones; snapshotValido = true; }
-          break;
-        }
-        case 'ordenes_trabajo': {
-          const res = await getOrdenesData();
-          if (res && Array.isArray(res.ordenes)) { data = res.ordenes; snapshotValido = true; }
-          break;
-        }
-        case 'roles':{
-             const res = await obtenerRolesAction();
-          if (res && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'facturas': {
-          const res = await obtenerFacturas();
-          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'seguimientos_comerciales': {
-          const res = await obtenerSeguimientos();
-          if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'sellos': {
-          const res = await obtenerSellos();
-          if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'parametros_sistema': {
-          const res = await obtenerParametrosSistema();
-          if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
-          break;
-        }
-        case 'certificados': {
-          const res = await obtenerCertificadosConContexto();
-          if (res.success && res.data) {
-            snapshotValido = true;
-            data = res.data.certificados;
-            get().mergeTable('calibraciones', res.data.calibraciones);
-            get().mergeTable('recepcion_equipo_detalles', res.data.instrumentos);
-            get().mergeTable('ordenes_trabajo', res.data.ordenes);
-            get().mergeTable('clientes', res.data.clientes);
+          case 'cotizaciones': {
+            const res = await obtenerTodasLasCotizaciones();
+            if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
           }
-          break;
+          case 'tarifas': {
+            const res = await obtenerTodasLasTarifas();
+            if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
+          }
+          case 'clientes': {
+            const res = await obtenerClientes();
+            if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
+          }
+          case 'recepciones_equipo': {
+            const res = await obtenerRecepcionesVigentes();
+            if (Array.isArray(res)) { data = res; snapshotValido = true; }
+            break;
+          }
+          case 'ordenes_trabajo': {
+            const res = await obtenerOrdenesListado();
+            if (Array.isArray(res)) { data = res; snapshotValido = true; }
+            break;
+          }
+          case 'roles':{
+               const res = await obtenerRolesAction();
+            if (res && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
+          }
+          case 'facturas': {
+            const res = await obtenerFacturas();
+            if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
+          }
+          case 'seguimientos_comerciales': {
+            const res = await obtenerSeguimientos();
+            if (res.ok && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
+          }
+          case 'sellos': {
+            const res = await obtenerSellos();
+            if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
+          }
+          case 'parametros_sistema': {
+            const res = await obtenerParametrosSistema();
+            if (res.success && Array.isArray(res.data)) { data = res.data; snapshotValido = true; }
+            break;
+          }
+          case 'certificados': {
+            const res = await obtenerCertificadosConContexto();
+            if (res.success && Array.isArray(res.data?.certificados)) {
+              snapshotValido = true;
+              data = res.data.certificados;
+            }
+            break;
+          }
+          default:
+            console.warn(`⚠️ loadTable: Tabla "${table}" sin acción definida.`);
+            data = [];
         }
-        default:
-          console.warn(`⚠️ loadTable: Tabla "${table}" sin acción definida.`);
-          data = [];
-      }
-      const cambioDuranteLaCarga = revisionAlIniciar !== obtenerRevisionRealtime(String(table));
-      if (force && snapshotValido && !cambioDuranteLaCarga) {
-        set((s) => ({
-          ...s,
-          [table]: data,
-          loading: { ...s.loading, [table]: false },
-        }));
-      } else {
-        get().mergeTable(table, data);
-        set((s) => ({ loading: { ...s.loading, [table]: false } }));
-        if (force && snapshotValido && cambioDuranteLaCarga) {
-          setTimeout(() => { void get().loadTable(table, true); }, 0);
+        if (!snapshotValido) return false;
+        if (revisionAlIniciar === obtenerRevisionRealtime(table)) {
+          set({ [table]: data });
+          return true;
         }
-      }
-    } catch (error) {
-      console.error(`❌ Error al cargar tabla "${table}":`, error);
-      set((s) => ({
-        loading: { ...s.loading, [table]: false },
-      }));
-    }
+      } while (true);
+    };
+
+    const carga = cargar().catch((error: unknown) => {
+      console.error(`Error al cargar tabla "${table}":`, error);
+      return false;
+    }).finally(() => {
+      cargasEnCurso.delete(table);
+      get().setTableLoading(table, false);
+    });
+    cargasEnCurso.set(table, carga);
+    return carga;
   },
 
   loadAllData: async () => {

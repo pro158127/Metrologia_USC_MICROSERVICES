@@ -1516,7 +1516,7 @@ function RenderConfigParametros() {
     return <div className="text-sm text-slate-500">Cargando parámetros...</div>;
   }
 
-  return <FormParametros parametrosPorClave={parametrosPorClave} onGuardado={() => loadTable("parametros_sistema")} />;
+  return <FormParametros parametrosPorClave={parametrosPorClave} onGuardado={async () => { await loadTable("parametros_sistema", true); }} />;
 }
 
 function FormParametros({
@@ -1738,6 +1738,7 @@ export function Administracion() {
 
     generarTokenBackend({
       sub: session?.user?.id_user ?? "",
+      sessionVersion: session?.user?.sessionVersion ?? 0,
       email: session?.user?.email ?? "",
       user: {
         id: session?.user?.id_user ?? "",
@@ -1896,7 +1897,7 @@ export function Administracion() {
     await loadTable("usuarios", true);
   };
 
-  const recargarUsuarios = useCallback(() => loadTable("usuarios", true), [loadTable]);
+  const recargarUsuarios = useCallback(async () => { await loadTable("usuarios", true); }, [loadTable]);
 console.log("LONGITUD STORE:", usuarios.length);
 console.log("LONGITUD FILTRADOS:", filteredUsers.length);
   return (

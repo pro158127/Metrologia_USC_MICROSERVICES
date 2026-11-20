@@ -165,8 +165,11 @@ const schemaRecepcion = {
   "description": "Contrato de entrada para la plantilla de Recepción, Reporte y Entrega de Instrumentos del Laboratorio de Metrología (R-CM010 Versión 004)",
   "fields": {
     "scalars": [
+      { "key": "solicitante", "label": "Solicitante", "dataType": "STRING", "required": true },
       { "key": "nombre_quien_entrega", "label": "Nombre quién entrega", "dataType": "STRING", "required": true },
       { "key": "no_cotizacion", "label": "No. Cotización de Referencia (Cot)", "dataType": "STRING", "required": false },
+      { "key": "no_orden_trabajo", "label": "No. Orden de Trabajo", "dataType": "STRING", "required": false },
+      { "key": "sitio_interno_usc", "label": "Sitio de calibración - Interno USC", "dataType": "BOOLEAN", "required": false },
       { "key": "sitio_laboratorio_permanente", "label": "Sitio de calibración - Laboratorio permanente", "dataType": "BOOLEAN", "required": false },
       { "key": "sitio_instalaciones_cliente", "label": "Sitio de calibración - Instalaciones del cliente", "dataType": "BOOLEAN", "required": false },
       { "key": "fecha_recepcion", "label": "Fecha de recepción", "dataType": "DATE", "required": true },
@@ -395,6 +398,39 @@ async function main() {
       });
       console.log(`✅ "version_plantillas" (V1) y "INPUT_SCHEMA" inyectados para: ${p.nombre}`);
     }
+
+    // Mantiene el contrato de recepción sincronizado en instalaciones donde V1
+    // ya existe, sin reemplazar el mapeo de celdas configurado en Administración.
+    if (p.modulo === 'RECEPCION') {
+      const ultimaVersion = await prisma.version_plantillas.findFirst({
+        where: { ID_PLANTILLA_FK: plantilla.ID_PLANTILLA },
+        orderBy: { VERSION: 'desc' },
+      });
+      if (ultimaVersion) {
+        const esquemaActual = ultimaVersion.INPUT_SCHEMA as any;
+        const camposActuales: Array<{ key?: string }> = Array.isArray(esquemaActual?.fields?.scalars)
+          ? esquemaActual.fields.scalars
+          : [];
+        const camposFaltantes = schemaRecepcion.fields.scalars.filter((campo) =>
+          ['solicitante', 'sitio_interno_usc'].includes(campo.key) && !camposActuales.some((actual) => actual.key === campo.key));
+        if (camposFaltantes.length) {
+          const esquemaActualizado = esquemaActual
+            ? {
+                ...esquemaActual,
+                fields: {
+                  ...esquemaActual.fields,
+                  scalars: [...camposActuales, ...camposFaltantes],
+                },
+              }
+            : schemaRecepcion;
+          await prisma.version_plantillas.update({
+            where: { ID_VERSION_PLANTILLA: ultimaVersion.ID_VERSION_PLANTILLA },
+            data: { INPUT_SCHEMA: esquemaActualizado },
+          });
+          console.log('✅ Campos de recepción agregados al contrato activo.');
+        }
+      }
+    }
   }
 
   // Sincronizar secuencia de las plantillas por si acaso
@@ -448,89 +484,25 @@ async function main() {
     DECLARE
         tabla_nombre TEXT := TG_TABLE_NAME;
         operacion   TEXT := TG_OP;
-        payload     JSONB;
-        row_data    JSONB;
-        seq_val     BIGINT;
-        truncado_flag BOOLEAN := false;
+        usuario_id JSONB;
     BEGIN
-        IF (TG_OP = 'DELETE') THEN
-            row_data := to_jsonb(OLD);
-        ELSE
-            row_data := to_jsonb(NEW);
+        -- NOTIFY señala qué tabla cambió. Los DTO completos se leen por HTTP.
+        IF tabla_nombre = 'notificaciones' THEN
+            usuario_id := CASE WHEN TG_OP = 'DELETE'
+                THEN to_jsonb(OLD)->'ID_USUARIO_FK'
+                ELSE to_jsonb(NEW)->'ID_USUARIO_FK'
+            END;
         END IF;
 
-        -- 💡 FILTRO DE SEGURIDAD: Remover las columnas gigantes para no exceder los 8KB
-        IF (tabla_nombre = 'usuarios') THEN
-            -- Nunca emitir hashes de contraseña en eventos globales de Socket.IO.
-            row_data := row_data - 'contraseña' - 'contrase_a';
-        ELSIF (tabla_nombre = 'version_plantillas') THEN
-            row_data := row_data - 'INPUT_SCHEMA' - 'MAPPING_CONFIG' - 'MAPEO_CONFIG' - 'MAPEO_EXCEL_JSON';
-        ELSIF (tabla_nombre = 'calibraciones') THEN
-            row_data := row_data - 'DATOS_TECNICOS_JSON';
-        ELSIF (tabla_nombre = 'roles') THEN
-            row_data := row_data - 'PERMISOS_JSON';
-            -- El cliente debe recargar el rol desde el endpoint autorizado.
-            truncado_flag := true;
-        ELSIF (tabla_nombre = 'version_documentos') THEN
-            row_data := row_data - 'content_json';
-        ELSIF (tabla_nombre = 'document_chunks') THEN
-            row_data := row_data - 'CONTENIDO' - 'embedding';
-        ELSIF (tabla_nombre = 'Quote') THEN
-            row_data := row_data - 'data';
-        END IF;
-
-        payload := jsonb_build_object(
+        PERFORM pg_notify('cambio_tablas', jsonb_build_object(
             'tabla', tabla_nombre,
             'operacion', operacion,
-            'data', row_data,
-            'truncado', truncado_flag
-        );
-
-        -- 💡 GUARD DE TAMAÑO: pg_notify falla si el payload supera ~8KB y, al estar
-        -- dentro del trigger, abortaría la transacción de escritura. Si el payload
-        -- es muy grande se degrada a un marcador que indica al frontend que debe
-        -- re-consultar la tabla en lugar de aplicar la fila recibida.
-        IF octet_length(payload::text) > 7500 THEN
-            row_data := jsonb_build_object(
-                '__truncado', true,
-                'id', COALESCE(
-                    row_data->'ID_COTIZACION',
-                    row_data->'ID_DETALLE',
-                    row_data->'ID_ORDEN_TRABAJO',
-                    row_data->'ID_RECEPCION',
-                    row_data->'ID_INSTRUMENTO',
-                    row_data->'ID_CERTIFICADO',
-                    row_data->'ID_CERTIFICADO_FK',
-                    row_data->'ID_CALIBRACION',
-                    row_data->'ID_CLIENTE',
-                    row_data->'ID_DOCUMENTO',
-                    row_data->'ID_TARIFA',
-                    row_data->'ID_SELLO',
-                    row_data->'ID_USUARIO_AUTO_INCREMENT',
-                    row_data->'ID_ROL_INCREMENT',
-                    row_data->'ID_NOTIFICACION',
-                    row_data->'ID_FACTURA',
-                    row_data->'ID_SEGUIMIENTO',
-                    row_data->'ID_VERSION',
-                    row_data->'ID_VERSION_PLANTILLA',
-                    row_data->'ID_PARAMETRO',
-                    row_data->'ID_HISTORIAL',
-                    row_data->'ID_PLANTILLA',
-                    row_data->'ID_PLANTILLA_SELLO'
-                )
-            );
-            payload := jsonb_build_object(
-                'tabla', tabla_nombre,
-                'operacion', operacion,
-                'data', row_data,
-                'truncado', true
-            );
-        END IF;
-
-        SELECT nextval('public.realtime_event_seq') INTO seq_val;
-        payload := payload || jsonb_build_object('seq', seq_val);
-
-        PERFORM pg_notify('cambio_tablas', payload::text);
+            'data', CASE WHEN usuario_id IS NOT NULL
+                THEN jsonb_build_object('ID_USUARIO_FK', usuario_id)
+                ELSE NULL
+            END,
+            'seq', nextval('public.realtime_event_seq')
+        )::text);
 
         RETURN NULL;
     END;

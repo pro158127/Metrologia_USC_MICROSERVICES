@@ -1,3 +1,4 @@
+import { cabeceraRecepcionLista, instrumentoListoParaAsignar, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { z } from 'zod';
 
 export const estadosEnum = z.enum(['BORRADOR', 'ENVIADA', 'APROBADA', 'RECHAZADA', 'EN_SEGUIMIENTO']);
@@ -109,6 +110,10 @@ export type CotizacionDto = z.infer<typeof cotizacionDtoSchema>;
 export const ordenTrabajoDetalleDtoSchema = z.object({
   idDetalle: z.number(),
   idOrdenTrabajo: z.number(),
+  idUnidad: z.string().nullable(),
+  listoParaAsignar: z.boolean(),
+  calibracionIniciada: z.boolean(),
+  certificadoCreado: z.boolean(),
   item: z.number(),
   tipoServicio: z.string(),
   instrumento: z.string(),
@@ -380,6 +385,7 @@ export const ordenTrabajoDetalleRawToDtoSchema = z
   .object({
     ID_DETALLE: z.number(),
     ID_ORDEN_TRABAJO_FK: z.number(),
+    ID_UNIDAD_FK: z.string().nullish(),
     ITEM: z.number(),
     TIPO_SERVICIO: z.string(),
     INSTRUMENTO: z.string(),
@@ -401,6 +407,10 @@ export const ordenTrabajoDetalleRawToDtoSchema = z
   .transform((raw): OrdenTrabajoDetalleDto => ({
     idDetalle: raw.ID_DETALLE,
     idOrdenTrabajo: raw.ID_ORDEN_TRABAJO_FK,
+    idUnidad: raw.ID_UNIDAD_FK ?? null,
+    listoParaAsignar: false,
+    calibracionIniciada: false,
+    certificadoCreado: false,
     item: raw.ITEM,
     tipoServicio: raw.TIPO_SERVICIO,
     instrumento: raw.INSTRUMENTO,
@@ -467,9 +477,16 @@ export const ordenTrabajoRawToDtoSchema = z
     cotizaciones: cotizacionRawToDtoSchema.nullish(),
     orden_trabajo_detalles: z.array(ordenTrabajoDetalleRawToDtoSchema).nullish(),
     recepciones_equipo: z.array(z.object({
+      FECHA_RECEPCION: z.coerce.date().nullish(),
+      NOMBRE_ENTREGA: z.string().nullish(),
+      NOMBRE_RECIBE: z.string().nullish(),
       recepcion_equipo_detalles: z.array(z.object({
+        ID_UNIDAD_FK: z.string().nullish(),
+        ITEM: z.number().nullish(),
+        ESTAMPILLA: z.string().nullish(),
+        ESTADO_IBC: z.json().optional(),
         calibraciones: z.object({
-          certificados: z.object({ ESTADO_REVISION: z.string().nullish() }).nullish(),
+          certificados: z.object({ ID_CERTIFICADO: z.number(), ESTADO_REVISION: z.string().nullish() }).nullish(),
         }).nullish(),
       }).passthrough()).nullish(),
     }).passthrough()).nullish(),
@@ -526,7 +543,19 @@ export const ordenTrabajoRawToDtoSchema = z
     alertamessag: raw.alertamessag ?? 'sin novedades',
     cliente: raw.clientes ?? null,
     cotizacion: raw.cotizaciones ?? null,
-    instrumentos: raw.orden_trabajo_detalles ?? [],
+    instrumentos: (raw.orden_trabajo_detalles ?? []).map((detalle) => {
+      const detalleRecepcion = vincularUnidadRecepcion(
+        { ID_UNIDAD_FK: detalle.idUnidad, ITEM: detalle.item },
+        raw.recepciones_equipo?.[0]?.recepcion_equipo_detalles ?? [],
+      );
+      return {
+        ...detalle,
+        listoParaAsignar: cabeceraRecepcionLista(raw.recepciones_equipo?.[0]) &&
+          detalleRecepcion != null && instrumentoListoParaAsignar(detalleRecepcion),
+        calibracionIniciada: detalleRecepcion?.calibraciones != null,
+        certificadoCreado: detalleRecepcion?.calibraciones?.certificados != null,
+      };
+    }),
   }));
 export type OrdenTrabajoRaw = z.input<typeof ordenTrabajoRawToDtoSchema>;
 
@@ -595,6 +624,8 @@ export const consolidarOtBodySchema = z.object({
   observacionesGenerales: z.string().nullable(),
   lugarCalibracion: z.string(),
   personaContactar: z.string().nullable().optional(),
+  contactoSolicitante: z.string().trim().nullable().optional(),
+  fechaLimiteFacturacion: z.iso.date().nullable().optional(),
   telefonoCalibracion: z.string().nullable().optional(),
   // El estado ya no se acepta como texto libre: la FSM lo calcula en backend.
   // Se mantiene opcional (y tolera "") por compatibilidad con el cliente actual.

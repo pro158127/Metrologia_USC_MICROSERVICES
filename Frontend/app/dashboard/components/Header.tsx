@@ -4,7 +4,7 @@ import { useState,useMemo,useEffect } from "react";
 import { Menu,Check, Bell, ChevronDown, CheckCircle, X, Ruler,Trash2 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { warn } from "console";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useRevisionTablas } from "@/app/componets/tables_recharge";
 import type RealtimeTablesState from "@/tipos/store";
 
 
@@ -48,29 +48,21 @@ export default function NotificationCenter() {
     });
   };
 
-useEffect(() => {
-  async function obtener_noty() {
-    // Evitamos consultas si aún no tenemos el ID del usuario
+  const revision = useRevisionTablas("notificaciones");
+  useEffect(() => {
     if (!currentUserId) return;
-
-    console.log("Consultando en la base de datos notificaciones para el usuario:", currentUserId);
-    
-    const { success, data } = await getHistorialCompletoNotificaciones(currentUserId);
-
-    if (success) {
-      setDbState((prevGlobalState): RealtimeTablesState => ({
-        ...prevGlobalState,
-        // Usamos ?? [] para que si por algún motivo 'data' es undefined, 
-        // TypeScript reciba un array vacío y no lance el error anterior.
-        notificaciones: data ?? [] 
-      }));
-    } else {
-      console.error("No se pudieron cargar las notificaciones desde el backend");
-    }
-  }
-
-  obtener_noty();
-}, [currentUserId, setDbState]); // Añadimos las dependencias correctas para el ciclo de vida
+    let activo = true;
+    const timer = window.setTimeout(async () => {
+      const { success, data } = await getHistorialCompletoNotificaciones(currentUserId);
+      if (activo && success && Array.isArray(data)) {
+        setDbState((prev): RealtimeTablesState => ({ ...prev, notificaciones: data }));
+      }
+    }, 120);
+    return () => {
+      activo = false;
+      window.clearTimeout(timer);
+    };
+  }, [currentUserId, revision, setDbState]);
 
   // 1. Marcar una sola notificación como leída
   const handleMarkAsRead = async (idNotificacion: number) => {
@@ -296,7 +288,6 @@ useEffect(() => {
   );
 }
 
-import socket from "@/app/lib/socket/socket";
 export function Header({ moduleTitle, isSidebarOpen, setIsSidebarOpen, onOpenProfile }: any) {
 
   const [showPanel, setShowPanel] = useState(false);

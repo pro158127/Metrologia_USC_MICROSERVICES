@@ -8,9 +8,10 @@
 import { Prisma } from '@prisma/client';
 import { generarConsecutivo } from './consecutivo.service.js';
 
-export type SitioCalibracion = 'LABORATORIO' | 'CLIENTE';
+export type SitioCalibracion = 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC';
 
 export interface InstrumentoResuelto {
+  idUnidad?: string | null;
   item?: number | null;
   tipo_servicio?: string | null;
   instrumento: string;
@@ -65,7 +66,7 @@ function agruparPorSitio(
 ): Map<SitioCalibracion, InstrumentoResuelto[]> {
   const mapa = new Map<SitioCalibracion, InstrumentoResuelto[]>();
   for (const inst of instrumentos) {
-    const sitio: SitioCalibracion = inst.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+    const sitio: SitioCalibracion = inst.sitio ?? 'LABORATORIO';
     const lista = mapa.get(sitio) ?? [];
     lista.push({ ...inst, sitio });
     mapa.set(sitio, lista);
@@ -94,6 +95,7 @@ export async function splitHeterogeneousOT(
       where: {
         ID_COTIZACION_FK: options.idCotizacion,
         SITIO_CALIBRACION: sitio,
+        VIGENTE: true,
         ...(options.idOtMaster != null
           ? { ID_OT_PADRE_FK: options.idOtMaster }
           : { ID_OT_PADRE_FK: null }),
@@ -112,7 +114,8 @@ export async function splitHeterogeneousOT(
           ...options.datosOT,
           SITIO_CALIBRACION: sitio,
           ES_EN_SITIO: esSitio,
-          ES_LAB_PERMANENTE: !esSitio,
+          ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+          ES_INTERNO_USC: sitio === 'INTERNO_USC',
           ID_OT_PADRE_FK: options.idOtMaster ?? null,
         },
       });
@@ -127,10 +130,11 @@ export async function splitHeterogeneousOT(
           ID_OT_PADRE_FK: options.idOtMaster ?? null,
           estado: 'Creada',
           ESTADO_REVISION: 'PENDIENTE_REVISION',
+          ...options.datosOT,
           SITIO_CALIBRACION: sitio,
           ES_EN_SITIO: esSitio,
-          ES_LAB_PERMANENTE: !esSitio,
-          ...options.datosOT,
+          ES_LAB_PERMANENTE: sitio === 'LABORATORIO',
+          ES_INTERNO_USC: sitio === 'INTERNO_USC',
         },
       });
     }
@@ -148,6 +152,7 @@ export async function splitHeterogeneousOT(
         ITEM: index + 1,
         TIPO_SERVICIO: item.tipo_servicio || 'Calibración',
         INSTRUMENTO: item.instrumento,
+        ID_UNIDAD_FK: item.idUnidad,
         FABRICANTE: item.fabricante || null,
         MODELO: item.modelo || null,
         SERIE: item.serie || null,
@@ -214,6 +219,7 @@ export async function splitHeterogeneousOT(
         ID_RECEPCION_FK: idRec,
         ITEM: index + 1,
         INSTRUMENTO: item.instrumento,
+        ID_UNIDAD_FK: item.idUnidad,
         MARCA: item.fabricante || null,
         MODELO: item.modelo || null,
         SERIE: item.serie || null,

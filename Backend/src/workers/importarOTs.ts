@@ -17,9 +17,11 @@ import {
   SitioCalibracion,
 } from '../services/ot-split.service.js';
 import { reimportarFamiliaOTVersionada } from '../services/ot-versionado.service.js';
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, UnrecoverableError } from 'bullmq';
 import { getRedisConnection, IMPORTAR_QUEUE } from '../lib/queue/queue.js';
-import { getGenerationExcelQueue } from '../lib/queue/queue.js';
+import { registrarGeneracionPendiente, type SolicitudGeneracion } from '../services/generacion-pendiente.service.js';
+import { normalizarServicioCotizado } from '../services/cotizacion-sync.service.js';
+import { randomUUID } from 'node:crypto';
 
 const prisma = new PrismaClient();
 
@@ -35,6 +37,7 @@ interface ImportarOTEPayload {
 type ExtractedScalar = string | number | boolean | Date | null;
 
 interface ExtractedInstrument {
+  idUnidad?: string | null;
   item?: string | number | null;
   tipo_servicio?: string | null;
   instrumento: string;
@@ -676,13 +679,123 @@ function buscarTarifa<T extends { Instrumento: string }>(
     : { tarifa: candidatas[0], advertencia: `${motivo}; se asignó la primera, revisar` };
 }
 
+interface PublicacionImportada {
+  idOtFinal: number;
+  codigoOTFinal: string;
+  tablasImportadas: number;
+  advertencias: string[];
+}
+
+async function publicarImportacion(payload: ImportarOTEPayload, publicacion: PublicacionImportada) {
+  const { s3KeyTemp, id_job, idUsuario, mappingConfig } = payload;
+  const { idOtFinal, codigoOTFinal, tablasImportadas, advertencias } = publicacion;
+  const s3KeyDefinitiva = `importaciones_ote/${id_job}/${codigoOTFinal}.xlsx`;
+  await s3Client.send(new CopyObjectCommand({
+    Bucket: BUCKET_NAME, CopySource: `${BUCKET_NAME}/${s3KeyTemp}`, Key: s3KeyDefinitiva,
+  }));
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "ID_ORDEN_TRABAJO" FROM ordenes_trabajo WHERE "ID_ORDEN_TRABAJO" = ${idOtFinal} FOR UPDATE`;
+      let documentoId: number;
+      let nuevaVersionNum = 1;
+
+      const docExistente = await tx.documentos.findFirst({
+        where: {
+          ID_ORDEN_TRABAJO_FK: idOtFinal,
+          RUTA_URL: { startsWith: "importaciones_ote/" },
+        },
+      });
+
+      if (docExistente) {
+        documentoId = docExistente.ID_DOCUMENTO;
+
+        const ultimaVersion = await tx.version_documentos.findFirst({
+          where: {
+            ID_DOCUMENTO_FK: documentoId,
+          },
+          orderBy: {
+            VERSION: 'desc',
+          },
+        });
+
+        nuevaVersionNum = ultimaVersion ? ultimaVersion.VERSION + 1 : 1;
+
+        await tx.documentos.update({
+          where: {
+            ID_DOCUMENTO: documentoId,
+          },
+          data: {
+            NOMBRE: codigoOTFinal,
+            RUTA_URL: s3KeyDefinitiva,
+          },
+        });
+      } else {
+        const nuevoDoc = await tx.documentos.create({
+          data: {
+            NOMBRE: codigoOTFinal,
+            RUTA_URL: s3KeyDefinitiva,
+            PROVEEDOR: 'AWS_S3',
+            MIME_TYPE:
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ID_ORDEN_TRABAJO_FK: idOtFinal,
+          },
+        });
+
+        documentoId = nuevoDoc.ID_DOCUMENTO;
+      }
+
+      await tx.version_documentos.create({
+        data: {
+          ID_DOCUMENTO_FK: documentoId,
+          VERSION: nuevaVersionNum,
+          RUTA_URL: s3KeyDefinitiva,
+          usuario_fk: idUsuario,
+          content_json: {
+            excel: s3KeyDefinitiva,
+            mappingVersion: mappingConfig?.version ?? null,
+            templateId: mappingConfig?.templateId ?? null,
+            templateType: mappingConfig?.templateType ?? null,
+            tablasImportadas: tablasImportadas,
+          },
+        },
+      });
+
+      await tx.quote.update({
+        where: {
+          id: id_job,
+        },
+        data: {
+          status: 'COMPLETED',
+          fileUrl: s3KeyDefinitiva,
+          data: { advertencias },
+        },
+      });
+
+  });
+  await eliminarTemporalImportacion(s3KeyTemp);
+  return { success: true, fileUrl: s3KeyDefinitiva, advertencias };
+}
+
+async function eliminarTemporalImportacion(key: string) {
+  await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key }))
+    .catch((error) => console.warn('[import-worker] No se pudo eliminar el origen temporal', { key, error }));
+}
+
 export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
   const { s3KeyTemp, mappingConfig, id_cotizacion, idUsuario, id_job } = payload;
-  const rutaArchivoLocal = path.join(os.tmpdir(), `import-ote-${Date.now()}.xlsx`);
+  const rutaArchivoLocal = path.join(os.tmpdir(), `import-ote-${randomUUID()}.xlsx`);
 
   let codigoOTFinal = '';
 
+  let puntoDePublicacion: PublicacionImportada | undefined;
   try {
+    const anterior = await prisma.quote.findUniqueOrThrow({ where: { id: id_job } });
+    if (anterior.status === 'COMPLETED') {
+      await eliminarTemporalImportacion(s3KeyTemp);
+      return { success: true, fileUrl: anterior.fileUrl };
+    }
+    puntoDePublicacion = (anterior.data as { publicacion?: PublicacionImportada } | null)?.publicacion;
+    if (puntoDePublicacion) return await publicarImportacion(payload, puntoDePublicacion);
+
     await prisma.quote.update({
       where: { id: id_job },
       data: { status: 'PROCESSING' },
@@ -736,6 +849,9 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
     const recepcionesProcesadas: { id: number; codigo: string; esNueva: boolean }[] = [];
 
     await prisma.$transaction(async (tx) => {
+      if (id_cotizacion != null) {
+        await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${id_cotizacion} FOR UPDATE`;
+      }
       // ==============================================================
       // 3. CLIENTE
       //    Se resuelve por el NIT del SOLICITANTE (solicitante_nit), no por
@@ -841,12 +957,18 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       // ==============================================================
       // 5. COTIZACIÓN
       // ==============================================================
+      const sitiosCabecera: SitioCalibracion[] = [];
+      if (getBoolean(datosExtraidos, 'calib_interno_usc', false)) sitiosCabecera.push('INTERNO_USC');
+      if (getBoolean(datosExtraidos, 'calib_en_sitio', false)) sitiosCabecera.push('CLIENTE');
+      if (getBoolean(datosExtraidos, 'calib_laboratorio_permanente', false)) sitiosCabecera.push('LABORATORIO');
       const normalizarSitio = (raw?: string | null): SitioCalibracion => {
         if (!raw) return 'LABORATORIO';
         const s = String(raw).trim().toUpperCase();
+        if (s.includes('INTERNO USC') || s.includes('INTERNO_USC') || s === 'USC') return 'INTERNO_USC';
         if (
           s.startsWith('CLI') ||
           s.startsWith('SIT') ||
+          s === 'EN SITIO' ||
           s.includes('CAMPO') ||
           s.includes('IN SITU') ||
           s.includes('CLIENTE')
@@ -866,8 +988,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         const itemsAgrupados = new Map<string, any>();
 
         for (const item of datosExtraidos.tablas) {
-          const sitio = normalizarSitio(item.sitio);
+          if (!item.sitio?.trim() && sitiosCabecera.length > 1) {
+            throw new Error(`Fila ${item.item ?? '?'} (${item.instrumento}): indica el sitio de calibración de este instrumento.`);
+          }
+          const sitio = item.sitio?.trim() ? normalizarSitio(item.sitio) : sitiosCabecera[0] ?? 'LABORATORIO';
           item.sitio = sitio;
+          item.idUnidad = randomUUID();
           // Agrupa por tarifa resuelta (filas distintas de una familia = líneas distintas);
           // los instrumentos sin tarifa se agrupan por su propio nombre.
           const clave = [item.tarifa_id ?? `sin:${normalizar(item.instrumento)}`, sitio].join('|');
@@ -875,7 +1001,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           const existente = itemsAgrupados.get(clave);
 
           if (existente) {
-            existente.cantidad += 1; // Agrupamos repeticiones
+            existente.cantidad += 1;
+            existente.idsUnidades.push(item.idUnidad);
           } else {
             itemsAgrupados.set(clave, {
               instrumento: item.instrumento_tarifa ?? item.instrumento,
@@ -883,6 +1010,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
               magnitud: item.magnitud_real || 'N/A',
               sitio,
               cantidad: 1,
+              idsUnidades: [item.idUnidad],
               valor_unitario: decimalOrZero(item.valor_estimado), // Usa el PRECIO_U obtenido
             });
           }
@@ -907,6 +1035,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
               TIPO_SERVICIO: item.tipo_servicio,
               MAGNITUD: item.magnitud,
               CANTIDAD: cantidad,
+              ID_UNIDADES: item.idsUnidades,
               VALOR_UNITARIO: valorUnitario,
               VALOR_TOTAL: valorTotal,
               sitio: item.sitio,
@@ -933,6 +1062,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         });
 
         idCotizacionFinal = nuevaCotizacion.ID_COTIZACION;
+        await tx.historial_estado_cotizacion.create({ data: {
+          ID_COTIZACION_FK: idCotizacionFinal,
+          ESTADO_NUEVO: 'BORRADOR',
+          ID_USUARIO_FK: idUsuario,
+          MOTIVO: 'Creada al importar una orden de trabajo.',
+        } });
       } else {
         // ==============================================================
         // FLUJO 2: importación ligada a una cotización existente.
@@ -953,6 +1088,16 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
         if (!cotizacionExistente) {
           throw new Error(`La cotización '${idCotizacionFinal}' no existe.`);
+        }
+
+        if (cotizacionExistente.ESTADO === 'BORRADOR' || cotizacionExistente.ESTADO === 'ENVIADA') {
+          const recepcionPendiente = await tx.recepciones_equipo.findFirst({
+            where: { ID_COTIZACION_FK: idCotizacionFinal, ID_ORDEN_TRABAJO_FK: null, VIGENTE: true, activacion: true },
+            select: { ID_RECEPCION: true },
+          });
+          if (recepcionPendiente) {
+            throw new UnrecoverableError('La cotización tiene una recepción pendiente de aprobación. Aprueba la cotización antes de importar su OT.');
+          }
         }
 
         // 1. NIT del cliente.
@@ -1004,38 +1149,18 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           }
 
           const sitioExcel = item.sitio ? normalizarSitio(item.sitio) : null;
-          const tipoExcel = normalizar(item.tipo_servicio_real || item.tipo_servicio || '');
+          const tipoExcel = item.tipo_servicio?.trim() ? normalizarServicioCotizado(item.tipo_servicio) : '';
 
-          // Algoritmo de emparejamiento con control de cupos y afinidad:
-          // 1. Candidato con cupo disponible (asignados < esperado), coincidencia de sitio y tipo de servicio
-          let seleccionado = candidatos.find(
-            (c) =>
-              c.asignados < c.esperado &&
-              (sitioExcel ? normalizarSitio(c.linea.sitio) === sitioExcel : true) &&
-              (tipoExcel ? normalizar(c.linea.TIPO_SERVICIO) === tipoExcel : true)
-          );
-
-          // 2. Candidato con cupo disponible y coincidencia de sitio
-          if (!seleccionado && sitioExcel) {
-            seleccionado = candidatos.find(
-              (c) => c.asignados < c.esperado && normalizarSitio(c.linea.sitio) === sitioExcel
-            );
+          const compatibles = candidatos.filter((c) =>
+            c.asignados < c.esperado &&
+            (!sitioExcel || normalizarSitio(c.linea.sitio) === sitioExcel) &&
+            (!tipoExcel || normalizarServicioCotizado(c.linea.TIPO_SERVICIO) === tipoExcel));
+          if (compatibles.length !== 1) {
+            throw new Error(`Fila ${item.item ?? '?'} (${item.instrumento}): indica un sitio y servicio que coincidan con una sola línea de la cotización.`);
           }
+          const [seleccionado] = compatibles;
 
-          // 3. Cualquier candidato del mismo instrumento con cupo disponible
-          if (!seleccionado) {
-            seleccionado = candidatos.find((c) => c.asignados < c.esperado);
-          }
-
-          // 4. Fallback si ya todos los cupos fueron cubiertos (exceso de items en archivo):
-          //    asignar al mejor candidato por sitio o al primero
-          if (!seleccionado) {
-            seleccionado =
-              candidatos.find(
-                (c) => sitioExcel && normalizarSitio(c.linea.sitio) === sitioExcel
-              ) ?? candidatos[0];
-          }
-
+          item.idUnidad = seleccionado.linea.ID_UNIDADES?.[seleccionado.asignados] ?? null;
           seleccionado.asignados += 1;
           const linea = seleccionado.linea;
 
@@ -1123,7 +1248,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           'solicitante_telefono',
         ) || cliente.TELEFONO,
         no_orden_trabajo: getString(datosExtraidos, 'no_orden_trabajo'),
-        no_cotizacion: getString(datosExtraidos, 'no_cotizacion'),
+        no_cotizacion: codigoCotizacionFinal,
         RESPONSABLE: getString(datosExtraidos, 'responsable'),
         FECHA_CALIBRACION_DILIGENCIAMENTO: getDate(
           datosExtraidos,
@@ -1152,7 +1277,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       for (const d of detallesCotizacion) {
         const inst = familiaDe(d.EQUIPO_DESCRIPCION);
         const tipo = normalizar(d.TIPO_SERVICIO);
-        const sitio = d.sitio === 'CLIENTE' ? 'CLIENTE' : 'LABORATORIO';
+        const sitio = normalizarSitio(d.sitio);
         if (tipo && !sitioPorClave.has(`${inst}|${tipo}`)) {
           sitioPorClave.set(`${inst}|${tipo}`, sitio);
         }
@@ -1173,6 +1298,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       };
 
       const instrumentosResueltos: InstrumentoResuelto[] = datosExtraidos.tablas.map((item) => ({
+        idUnidad: item.idUnidad,
         item: item.item != null ? Number(item.item) : null,
         tipo_servicio: item.tipo_servicio_real || item.tipo_servicio || 'Calibración',
         instrumento: item.instrumento,
@@ -1306,6 +1432,14 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         if (resultado.ots[0]) {
           idOtFinal = resultado.ots[0].id;
           codigoOTFinal = resultado.ots[0].codigo;
+        } else if (resultado.recepciones[0]) {
+          const recepcion = await tx.recepciones_equipo.findUniqueOrThrow({
+            where: { ID_RECEPCION: resultado.recepciones[0].id }, include: { ordenes_trabajo: true },
+          });
+          if (recepcion.ordenes_trabajo) {
+            idOtFinal = recepcion.ordenes_trabajo.ID_ORDEN_TRABAJO;
+            codigoOTFinal = recepcion.ordenes_trabajo.CODIGO_OT;
+          }
         }
       } else if (idOtMaster != null && codigoOtMaster) {
         idOtFinal = idOtMaster;
@@ -1313,6 +1447,28 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       } else if (resultado.ots[0]) {
         idOtFinal = resultado.ots[0].id;
         codigoOTFinal = resultado.ots[0].codigo;
+      } else if (resultado.recepciones[0]) {
+        const recepcion = await tx.recepciones_equipo.findUniqueOrThrow({
+          where: { ID_RECEPCION: resultado.recepciones[0].id }, include: { ordenes_trabajo: true },
+        });
+        if (!recepcion.ordenes_trabajo) throw new Error('La recepción importada no tiene OT vinculada.');
+        idOtFinal = recepcion.ordenes_trabajo.ID_ORDEN_TRABAJO;
+        codigoOTFinal = recepcion.ordenes_trabajo.CODIGO_OT;
+      }
+      if (!sinCambios) {
+        if (!idOtFinal) throw new Error('La importación no tiene una OT vinculada para archivar su archivo.');
+        const documentos: Omit<SolicitudGeneracion, 'tipo_entry'>[] = [
+          ...(isCotizacionNueva ? [{ tipo: 1, id_registro: idCotizacionFinal, action: 'cot_create' as const }] : []),
+          ...otsProcesadas.map((orden) => ({ tipo: 2, id_registro: orden.id, action: 'ot_update' as const })),
+          ...recepcionesProcesadas.map((recepcion) => ({
+            tipo: 3, id_registro: recepcion.id, action: recepcion.esNueva ? 'rec_create' as const : 'rec_update' as const,
+          })),
+        ];
+        for (const documento of documentos) {
+          await registrarGeneracionPendiente(tx, 'procesar_excel_importado', { ...documento, tipo_entry: 'prod', id_usuario: idUsuario });
+        }
+        const publicacion = { idOtFinal, codigoOTFinal, tablasImportadas: datosExtraidos.tablas.length, advertencias };
+        await tx.quote.update({ where: { id: id_job }, data: { data: { publicacion } } });
       }
     });
 
@@ -1327,6 +1483,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           data: { sinCambios: true, advertencias },
         },
       });
+      await eliminarTemporalImportacion(s3KeyTemp);
       return {
         success: true,
         sinCambios: true,
@@ -1336,130 +1493,9 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       };
     }
 
-    // ================================================================
-    // 9. GUARDAR EXCEL DEFINITIVO EN S3
-    // ================================================================
-    const s3KeyDefinitiva = `importaciones_ote/${codigoOTFinal}.xlsx`;
-
-    await s3Client.send(
-      new CopyObjectCommand({
-        Bucket: BUCKET_NAME,
-        CopySource: `${BUCKET_NAME}/${s3KeyTemp}`,
-        Key: s3KeyDefinitiva,
-      }),
-    );
-
-    await s3Client.send(
-      new DeleteObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: s3KeyTemp,
-      }),
-    );
-
-    // ================================================================
-    // 10. HISTORIAL DEL DOCUMENTO
-    // ================================================================
-    let documentoId: number;
-    let nuevaVersionNum = 1;
-
-    const docExistente = await prisma.documentos.findFirst({
-      where: {
-        ID_ORDEN_TRABAJO_FK: idOtFinal,
-      },
+    return await publicarImportacion(payload, {
+      idOtFinal, codigoOTFinal, tablasImportadas: datosExtraidos.tablas.length, advertencias,
     });
-
-    if (docExistente) {
-      documentoId = docExistente.ID_DOCUMENTO;
-
-      const ultimaVersion = await prisma.version_documentos.findFirst({
-        where: {
-          ID_DOCUMENTO_FK: documentoId,
-        },
-        orderBy: {
-          VERSION: 'desc',
-        },
-      });
-
-      nuevaVersionNum = ultimaVersion ? ultimaVersion.VERSION + 1 : 1;
-
-      await prisma.documentos.update({
-        where: {
-          ID_DOCUMENTO: documentoId,
-        },
-        data: {
-          RUTA_URL: s3KeyDefinitiva,
-        },
-      });
-    } else {
-      const nuevoDoc = await prisma.documentos.create({
-        data: {
-          NOMBRE: codigoOTFinal,
-          RUTA_URL: s3KeyDefinitiva,
-          PROVEEDOR: 'AWS_S3',
-          MIME_TYPE:
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          ID_ORDEN_TRABAJO_FK: idOtFinal,
-        },
-      });
-
-      documentoId = nuevoDoc.ID_DOCUMENTO;
-    }
-
-    await prisma.version_documentos.create({
-      data: {
-        ID_DOCUMENTO_FK: documentoId,
-        VERSION: nuevaVersionNum,
-        RUTA_URL: s3KeyDefinitiva,
-        usuario_fk: idUsuario,
-        content_json: {
-          excel: s3KeyDefinitiva,
-          mappingVersion: mappingConfig?.version ?? null,
-          templateId: mappingConfig?.templateId ?? null,
-          templateType: mappingConfig?.templateType ?? null,
-          tablasImportadas: datosExtraidos.tablas.length,
-        },
-      },
-    });
-
-    await prisma.quote.update({
-      where: {
-        id: id_job,
-      },
-      data: {
-        status: 'COMPLETED',
-        fileUrl: s3KeyDefinitiva,
-        data: { advertencias },
-      },
-    });
-
-    return {
-      success: true,
-      fileUrl: s3KeyDefinitiva,
-      idUsuario,
-      advertencias,
-      triggers: [
-        isCotizacionNueva
-          ? {
-              tipo: 1,
-              id_registro: idCotizacionFinal,
-              codigo_actual: codigoCotizacionFinal,
-              action: 'cot_create',
-            }
-          : null,
-        ...otsProcesadas.map((o) => ({
-          tipo: 2,
-          id_registro: o.id,
-          codigo_actual: o.codigo,
-          action: 'ot_update',
-        })),
-        ...recepcionesProcesadas.map((r) => ({
-          tipo: 3,
-          id_registro: r.id,
-          codigo_actual: r.codigo,
-          action: r.esNueva ? 'rec_create' : 'rec_update',
-        })),
-      ].filter(Boolean),
-    };
   } catch (error: any) {
     console.error('Error importando OTE:', error);
 
@@ -1474,6 +1510,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
       data: {
         status: 'FAILED',
         data: {
+          ...(await prisma.quote.findUnique({ where: { id: id_job }, select: { data: true } }))?.data as object,
           error: error?.message || String(error),
         },
       },
@@ -1500,28 +1537,8 @@ export const worker_import = new Worker<ImportarOTEPayload>(
   },
 );
 
-worker_import.on('completed', async (job, returnValue: any) => {
-  console.log(`✅ [import-worker] Job ${job.id} completado con éxito.`);
-
-  if (returnValue?.success && returnValue?.triggers) {
-    const excelQueue = getGenerationExcelQueue();
-
-    for (const trigger of returnValue.triggers) {
-      console.log(
-        `➡️ [import-worker] Encolando Excel | Tipo: ${trigger.tipo} | Acción: ${trigger.action}`,
-      );
-
-      await excelQueue.add('procesar_excel_importado', {
-        tipo: trigger.tipo,
-        id_registro: trigger.id_registro,
-        codigo_actual: trigger.codigo_actual,
-        action: trigger.action,
-        tipo_entry: 'prod',
-        id_usuario: returnValue.idUsuario,
-        id_job: job.id,
-      });
-    }
-  }
+worker_import.on('completed', (job) => {
+  console.log(`[import-worker] Job ${job.id} completado con éxito.`);
 });
 
 worker_import.on('failed', (job, err) => {

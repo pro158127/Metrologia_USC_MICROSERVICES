@@ -3,6 +3,20 @@
 import { auth } from '@/app/Login/types/auth';
 import { fastifyRequest } from '@/app/lib/api/fastifyClient';
 
+export interface CotizacionListaEnvio {
+  idCotizacion: number;
+  codigoCotizacion: string;
+  masterCodigo: string;
+  cliente: string;
+  correo: string | null;
+  totalHijas: number;
+  fecha: string | null;
+}
+
+export async function obtenerListadoEnvios(): Promise<CotizacionListaEnvio[]> {
+  return fastifyRequest(await auth(), '/api/v1/envios/listado');
+}
+
 export interface CertificadoEnvio {
   idCertificado: number;
   codigo: string;
@@ -25,6 +39,7 @@ export interface DocumentosEnvio {
   cliente: string;
   correo: string | null;
   todosAprobados: boolean;
+  selladoPendiente: string[];
   entregaCompleta: boolean;
   entregasPendientes: string[];
   certificados: CertificadoEnvio[];
@@ -108,6 +123,7 @@ export interface DocumentosEnvioCotizacion {
   cliente: string;
   correo: string | null;
   todosAprobados: boolean;
+  selladoPendiente: string[];
   entregaCompleta: boolean;
   entregasPendientes: string[];
   ots: OTEnvioCotizacion[];

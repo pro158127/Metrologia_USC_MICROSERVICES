@@ -227,6 +227,7 @@ export async function crearNuevaVersion(params: NuevaVersionParams): Promise<{ s
     const id = session.user.id_user ?? session.user.id ?? '';
     const token = await generarTokenBackend({
       sub: String(id),
+      sessionVersion: session.user.sessionVersion ?? 0,
       email: session.user.email ?? '',
       user: {
         id: String(id),

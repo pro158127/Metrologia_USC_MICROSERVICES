@@ -11,8 +11,6 @@ import {
   Wrench,
   User,
   Calendar,
-  Minus,
-  Plus,
 } from "lucide-react";
 import {
   ViewMode,
@@ -36,7 +34,6 @@ import {
   ListViewTableProps,
   defaultInstrumentos,
   kanbanColumns,
-  OTasiignemet,
   Tecnico,
 } from "@/tipos/tipo_ordenes_de_trabajo";
 import { consolidarOrdenTrabajoAction } from "@/app/action_module/ordenes";
@@ -82,6 +79,34 @@ const estaVencidaLaFechaLimite = (valor?: string | Date | null): boolean => {
 const limpiarPlaceholder = (v?: string | null): string => {
   const s = (v ?? "").trim();
   return s.toLowerCase().startsWith("sin ") ? "" : s;
+};
+
+const fechaISOParaInput = (valor?: string | Date | null): string => {
+  if (!valor) return "";
+  const fecha = valor instanceof Date ? valor : new Date(valor);
+  return Number.isNaN(fecha.getTime()) ? "" : fecha.toISOString().slice(0, 10);
+};
+
+const horaISOParaInput = (valor?: string | Date | null): string => {
+  if (!valor) return "";
+  const fecha = valor instanceof Date ? valor : new Date(valor);
+  return Number.isNaN(fecha.getTime()) ? "" : fecha.toISOString().slice(11, 16);
+};
+
+const formatearFechaCalendario = (valor?: string | Date | null): string => {
+  const fechaISO = fechaISOParaInput(valor);
+  if (!fechaISO) return "";
+  const [anio, mes, dia] = fechaISO.split("-");
+  return `${dia}/${mes}/${anio}`;
+};
+
+const normalizarLugarCalibracion = (
+  ot: OrdenTrabajoModel,
+): "Interno USC" | "En sitio" | "Laboratorio permanente" => {
+  const sitio = (ot.sitioCalibracion ?? "").trim().toUpperCase();
+  if (ot.esInternoUSC || sitio.includes("INTERNO_USC") || sitio === "INTERNO USC") return "Interno USC";
+  if (ot.esEnSitio || sitio === "CLIENTE" || sitio === "EN SITIO") return "En sitio";
+  return "Laboratorio permanente";
 };
 
 const buildOrderDraft = (ot: OTType): EditableOrderFields => ({
@@ -137,7 +162,6 @@ const HeaderSection = ({
   setViewMode,
   onBack,
   totalOTs,
-  warnings,
 }: HeaderSectionProps) => {
   return (
     <div className="flex items-center justify-between mb-6 border-b border-slate-200 pb-4">
@@ -188,7 +212,7 @@ const HeaderSection = ({
      
       {selectedOT  && (
         <div className="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold border border-blue-100">
-          {`CONSECUTIVO: ${selectedOT.noOrdenTrabajo} · VERSIÓN: ${selectedOT.ultima_version} · VIGENCIA: ${selectedOT.fechaLimiteFacturacion}`}
+          {`CONSECUTIVO: ${selectedOT.noOrdenTrabajo} · VERSIÓN: ${selectedOT.noOrdenTrabajo?.match(/[A-Z]$/)?.[0] ?? "—"} · VIGENCIA: ${selectedOT.fechaLimiteFacturacion}`}
         </div>
       )}
     </div>
@@ -236,9 +260,17 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   instrumentosCot,
   technicians,
   onAssignTechnician,
+  onSaveAssignments,
+  saving,
   estadoActual, // <-- Nuevo prop
 }) => {
- const puedeAsignar = ["En_recepción", "Asignada"].includes(estadoActual);
+ const todosCertificados = instrumentosCot.length > 0 && instrumentosCot.every((item) => item.certificadoCreado);
+ const certificadosEnviados = estadoActual === "Certificado_enviado";
+ const asignacionBloqueada = todosCertificados || certificadosEnviados;
+ const instrumentosListos = instrumentosCot.filter((item) => item.listoParaAsignar);
+ const pendientesRecepcion = instrumentosCot.length - instrumentosListos.length;
+ const puedeAsignar = estadoActual !== "Creada" && !asignacionBloqueada &&
+   instrumentosListos.some((item) => !item.calibracionIniciada);
  const { can } = usePermissions();
  const tienePermisoAsignar = can("ordenes_de_trabajo", "asignar_tecnico");
 
@@ -250,12 +282,18 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
             <Layers size={13} /> Gestión de Personal y Equipamiento
           </h3>
           <p className="text-[11px] text-slate-400">
-            Asignación directa de metrólogos por cada equipo en la orden de trabajo.
+            {pendientesRecepcion > 0
+              ? `Equipos pendientes de estampilla o IBC de entrada: ${pendientesRecepcion}.`
+              : "Asignación de metrólogos por equipo."}
           </p>
         </div>
         
         {/* Renderizado condicional basado en el estado */}
-        {puedeAsignar && tienePermisoAsignar ? (
+        {asignacionBloqueada ? (
+          <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+            {certificadosEnviados ? "Los certificados ya se enviaron" : "Todos los instrumentos ya tienen certificado"}
+          </span>
+        ) : puedeAsignar && tienePermisoAsignar ? (
           <button
             onClick={() => setEditingTechnician(!editingTechnician)}
             className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-700 transition cursor-pointer border-none shadow-sm"
@@ -268,9 +306,9 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
           </span>
         )}
       </div>
-      {editingTechnician && (
+      {editingTechnician && puedeAsignar && tienePermisoAsignar && (
         <div className="space-y-3 animate-fadeIn">
-          {instrumentosCot.map((item) => (
+          {instrumentosListos.map((item) => (
             <div
               key={item.id_instrumento}
               className="flex items-center justify-between p-3 border border-slate-200 rounded-xl bg-slate-50"
@@ -283,6 +321,7 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
                 value={item.asignado || ""}
                 // 🟢 CORRECCIÓN: Usar Number(e.target.value) en lugar del viejo item.asignado
                 onChange={(e) => onAssignTechnician(Number(e.target.value), item.id_instrumento)}
+                disabled={item.calibracionIniciada}
                 className="text-xs bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">-- Sin Asignar --</option>
@@ -292,8 +331,21 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
                   </option>
                 ))}
               </select>
+              {item.calibracionIniciada && (
+                <span className="text-[10px] text-amber-700">Instrumento ya calibrado</span>
+              )}
             </div>
           ))}
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={onSaveAssignments}
+              disabled={saving}
+              className="rounded-xl bg-blue-600 text-white px-5 py-2 font-bold text-xs hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? "Guardando asignaciones…" : "Guardar asignaciones"}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -402,10 +454,9 @@ const ComboboxInstrumento: React.FC<ComboboxInstrumentoProps> = ({
 export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
   instrumentDrafts,
   updateInstrumentDraft,
-  onAddInstrument,
-  onRemoveInstrument,
   excedioLimite,
   tarifas,
+  readOnly = false,
 }) => {
   const itemOptions = Array.from({ length: instrumentDrafts.length }, (_, i) => i + 1);
 
@@ -449,6 +500,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
    
       </div>
 
+      <fieldset disabled={readOnly} className="contents" aria-label="Instrumentos de la orden de trabajo en solo lectura">
       <div className="overflow-x-auto max-w-full shadow-inner">
         <table className="w-full text-left border-collapse text-sm">
           <thead>
@@ -643,6 +695,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
           </tbody>
         </table>
       </div>
+      </fieldset>
     </>
   );
 };
@@ -655,8 +708,6 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   updateInstrumentDraft,
   technicians,
   saveOrderEdits,
-  onAddInstrument,
-  onRemoveInstrument,
   tarifas,
 }) => {
   const { can } = usePermissions();
@@ -686,7 +737,6 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   }, [tarifas, instrumentDrafts]);
 
   // ===== REGLA DE ANEXO: si hay más de 10 instrumentos, forzar "Si" y mostrar aviso =====
-  const requiereAnexo = orderDraft?.requiereAnexo || 'No';
   const excedioLimite = instrumentDrafts.length > 10;
 
   useEffect(() => {
@@ -748,7 +798,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   onChange={(v) => updateOrderDraft('correoCertificados', v)}
                 />
                 <Field
-                  label="Fechalimite para facturacion "
+                  label="Fecha límite para facturación"
                   type="date"
                   value={orderDraft.fechaLimiteFacturacion}
                   onChange={(v) => updateOrderDraft('fechaLimiteFacturacion', v)}
@@ -783,10 +833,9 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
        <InstrumentosTable
   instrumentDrafts={instrumentDrafts}
   updateInstrumentDraft={updateInstrumentDraft}
-  onAddInstrument={onAddInstrument}
-  onRemoveInstrument={onRemoveInstrument} // implementar similar
   excedioLimite={instrumentDrafts.length > 10}
   tarifas={tarifas}
+  readOnly
 />
             
           </Section>
@@ -811,7 +860,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                         type="radio"
                         name="lugarCalibracionRadio"
                         checked={orderDraft.lugarCalibracion === lugar}
-                        onChange={() => updateOrderDraft('lugarCalibracion', lugar as EditableOrderFields["lugarCalibracion"])}
+                        disabled
                         className="w-4 h-4 text-blue-600 focus:ring-blue-500"
                       />
                       {lugar}
@@ -1082,8 +1131,6 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
   collapsedColumns,
   toggleColumnCollapse,
   onOpenOT,
-  warnigs,
-
 }) => {
   return (
     <div className="flex gap-4 overflow-x-auto pb-4 items-start select-none scrollbar-none snap-x snap-mandatory">
@@ -1178,9 +1225,7 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono mt-0.5">
                       <Calendar size={12} />
                       <span>
-                        {ot.fecha
-                          ? new Date(ot.fecha).toLocaleDateString()
-                          : "Sin fecha"}
+                        {formatearFechaCalendario(ot.fecha) || "Sin fecha"}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
@@ -1287,9 +1332,7 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
                     </span>
                   </td>
                   <td className="px-4 py-3.5 text-slate-500 font-mono hidden lg:table-cell">
-                    {ot.fecha
-                      ? new Date(ot.fecha).toLocaleDateString()
-                      : "—"}
+                    {formatearFechaCalendario(ot.fecha) || "—"}
                   </td>
                   <td className="px-4 py-3.5">
                     <button
@@ -1316,8 +1359,22 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
 export const TreeView: React.FC<{
   treeNodes: { node: Partial<OTBase>; children: Partial<OTBase>[] }[];
   onOpenOT: (ot: Partial<OTBase>) => void;
-}> = ({ treeNodes, onOpenOT }) => {
+  search: string;
+}> = ({ treeNodes, onOpenOT, search }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const filteredNodes = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase();
+    if (!term) return treeNodes;
+    const matches = (ot: Partial<OTBase>) =>
+      [ot.codigo, ot.cliente, ot.cotizacionCodigo]
+        .some((value) => value?.toLocaleLowerCase().includes(term));
+    return treeNodes.flatMap(({ node, children }) => {
+      if (matches(node)) return [{ node, children }];
+      const hijosCoincidentes = children.filter(matches);
+      return hijosCoincidentes.length > 0 ? [{ node, children: hijosCoincidentes }] : [];
+    });
+  }, [treeNodes, search]);
 
   const renderNode = (ot: Partial<OTBase>, depth: number) => (
     <div
@@ -1337,10 +1394,10 @@ export const TreeView: React.FC<{
     </div>
   );
 
-  if (treeNodes.length === 0) {
+  if (filteredNodes.length === 0) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-400">
-        No hay órdenes de trabajo.
+        {search.trim() ? "No se encontraron órdenes con el criterio de búsqueda." : "No hay órdenes de trabajo."}
       </div>
     );
   }
@@ -1353,7 +1410,7 @@ export const TreeView: React.FC<{
         </span>
       </div>
       <div className="p-2 divide-y divide-slate-50">
-        {treeNodes.map(({ node, children }) => {
+        {filteredNodes.map(({ node, children }) => {
           const hasChildren = children.length > 0;
           const isOpen = expanded[node.id!] ?? false;
           return (
@@ -1385,19 +1442,20 @@ export const TreeView: React.FC<{
 // ==========================================
 // 3. COMPONENTE PADRE
 // ==========================================
-import { obtenerDatosIniciales } from "@/app/action_module/ordenes";
-import { useDbTable, useDbActions, useDbLoading, OrdenTrabajoModel, UsuarioModel, CotizacionModel, RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";
+import { obtenerTecnicosOrdenes } from "@/app/action_module/ordenes";
+import { useDbTable, useDbActions, useDbLoading, useRevisionTablas, OrdenTrabajoModel } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
-  const usuarios = useDbTable("usuarios");
-  const roles = useDbTable("roles");
   const ordenesTrabajo = useDbTable("ordenes_trabajo");
   const clientes = useDbTable("clientes");
-  const documentos = useDbTable("documentos");
   const tarifas = useDbTable("tarifas");
-  const { mergeTable, setTableLoading, loadTable } = useDbActions();
+  const { loadTable } = useDbActions();
   const loadingOrdenes = useDbLoading("ordenes_trabajo");
+  // El hook global se activa desde un effect; sin este estado local, el primer
+  // render puede mostrar el tablero vacío antes de que empiece la consulta.
+  const [cargaInicialOrdenes, setCargaInicialOrdenes] = useState(true);
+  const [errorCargaOrdenes, setErrorCargaOrdenes] = useState(false);
 
   // Vista actual (kanban, lista o detalle de OT)
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
@@ -1407,6 +1465,8 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   const [selectedOT, setSelectedOT] = useState<OTType | null>(null);
   // Edición del formulario R-CM05 habilitada
   const [editingOrder, setEditingOrder] = useState(false);
+  const [savingOT, setSavingOT] = useState(false);
+  const savingOTRef = useRef(false);
   // Edición de asignación de técnicos
   const [editingTechnician, setEditingTechnician] = useState(false);
   // Borrador actual del formulario
@@ -1422,7 +1482,6 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
     Certificado_enviado: false,
   });
   // Máquina activa en el panel de asignación
-  const [activeMachine, setActiveMachine] = useState<string | null>(null);
 
   /**
    * Alterna la visibilidad de una columna del Kanban (colapsada/expandida).
@@ -1431,51 +1490,47 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
     setCollapsedColumns((prev) => ({ ...prev, [columnKey]: !prev[columnKey] }));
   };
 
-  /**
-   * Obtiene los técnicos con roles específicos desde los datos de usuarios y roles.
-   */
-  const technicians: Tecnico[] = useMemo(() => {
-    // 1. Evita mutaciones innecesarias con el spread, usa filter directamente sobre 'usuarios'
-    const tecnicos = usuarios.filter((u) => {
-      // 2. Buscamos el rol ESPECÍFICO de este usuario
-      const rolDelUsuario = roles.find((rol) => rol.idRol === u.idRol);
-      
-      // 3. Verificamos que el rol exista y sea uno de los permitidos
-      const esRolPermitido = rolDelUsuario && (
-        rolDelUsuario.nombreRol === "Técnico" ||
-        rolDelUsuario.nombreRol === "Coordinadora" ||
-        rolDelUsuario.nombreRol === "Director Técnico"
-      );
-
-      // 4. Retornamos true solo si tiene el rol correcto y está activo
-      return esRolPermitido && u.elminado === false && u.estado === true;
-    });
-
-    return tecnicos.map((e) => ({
-      idUsuario: e.idUsuario,
-      nombreCompleto: e.nombreCompleto
-    }));
-    
-  // 5. Dependencias correctas (las referencias de los arreglos, sin spread)
-  }, [usuarios, roles]);
+  const revisionTecnicos = useRevisionTablas("usuarios", "roles");
+  const [technicians, setTechnicians] = useState<Tecnico[]>([]);
+  useEffect(() => {
+    let activo = true;
+    obtenerTecnicosOrdenes().then((tecnicos) => {
+      if (activo) setTechnicians(tecnicos);
+    }).catch((error) => console.error("No se pudieron cargar los técnicos:", error));
+    return () => { activo = false; };
+  }, [revisionTecnicos]);
 
   console.log(technicians,"esto essss")
 
 
-const instrumentos_cot = useMemo(() => {
-    return instrumentDrafts.map((inst) => ({
-      asignado: inst.asignado ?? 0,
-      // Usamos directamente el ID del draft (que es un string seguro)
-      id_instrumento: inst.id, 
-      instrumento: inst.instrumento,
-    }));
-  }, [instrumentDrafts]); // La UI ahora reaccionará a los cambios del Draft
+const ordenSeleccionadaActual = ordenesTrabajo.find(
+    (orden) => String(orden.idOrdenTrabajo) === selectedOT?.id,
+  );
+  const instrumentos_cot = useMemo(() => {
+    const detallesActuales = ordenSeleccionadaActual?.instrumentos;
+    return instrumentDrafts.map((inst) => {
+      const actual = detallesActuales?.find((detalle) => String(detalle.idDetalle) === inst.id);
+      return {
+        asignado: inst.asignado ?? 0,
+        id_instrumento: inst.id,
+        instrumento: inst.instrumento,
+        listoParaAsignar: actual?.listoParaAsignar ?? inst.listoParaAsignar ?? false,
+        calibracionIniciada: actual?.calibracionIniciada ?? inst.calibracionIniciada ?? false,
+        certificadoCreado: actual?.certificadoCreado ?? inst.certificadoCreado ?? false,
+      };
+    });
+  }, [instrumentDrafts, ordenSeleccionadaActual]);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3000);
+  }, []);
 
   /**
    * Abre una OT desde la vista de lista/tablero: busca los datos completos en dbState,
    * arma el objeto OTType y lo establece como seleccionada.
    */
-  const openOT = (otPreview: Partial<OTBase>) => {
+  const openOT = useCallback((otPreview: Partial<OTBase>) => {
     const otCompleta = ordenesTrabajo.find(
       (o) => o.idOrdenTrabajo.toString() === otPreview.id
     );
@@ -1504,6 +1559,9 @@ const instrumentos_cot = useMemo(() => {
         intervaloRango: detalle.intervaloRango ?? null,
         resolucion: detalle.resolucion ?? null,
         asignado: detalle.asignado ?? 0,
+        listoParaAsignar: detalle.listoParaAsignar ?? false,
+        calibracionIniciada: detalle.calibracionIniciada ?? false,
+        certificadoCreado: detalle.certificadoCreado ?? false,
         declaracionConformidad: detalle.declaracionConformidad ?? false,
         limiteControlEMC: detalle.limiteControlEMC ?? null,
         docEspecificacion: detalle.docEspecificacion ?? null,
@@ -1511,59 +1569,43 @@ const instrumentos_cot = useMemo(() => {
       })
     );
 
-    // Obtener la última versión de los documentos asociados a la cotización
-    const version = (() => {
-      if (otCompleta.idCotizacion == null) return 0;
-      const docs = documentos.filter(
-        (d) => d.idCotizacion === otCompleta.idCotizacion
-      );
-      const ultima = docs
-        .flatMap((d) => d.versiones)
-        .sort((a, b) => b.version - a.version)[0];
-      return ultima?.version ?? 0;
-    })();
-
     const otCompleto: OTType = {
       id: otPreview.id || otCompleta.idOrdenTrabajo.toString(),
       cliente: clienteData?.razonSocial || "Sin cliente",
       tecnico: otCompleta.responsable || "Sin asignar",
-      fecha: otCompleta.fechaCalibracion?.toString() || "",
+      fecha: fechaISOParaInput(otCompleta.fechaCalibracion),
       estado: (otCompleta.estado ?? "Creada") as EstadoOrden,
-      retraso: otPreview.retraso || false,
+      retraso: estaVencidaLaFechaLimite(otCompleta.fechaLimiteFacturacion),
       certificadosPendientesRevision: otCompleta.certificadosPendientesRevision ?? false,
       equipos: instrumentosMapeados.length,
       tipo: "Acreditado",
       razonSocialCert: limpiarPlaceholder(otCompleta.Razon_social) || clienteData?.razonSocial || "",
       nitCert: limpiarPlaceholder(otCompleta.NIT) || clienteData?.nitCedula || "",
       correoCertificados: otCompleta.correoCertificado || clienteData?.correo || "",
-      fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion ? new Date(otCompleta.fechaLimiteFacturacion).toISOString().split('T')[0] : '',
+      fechaLimiteFacturacion: fechaISOParaInput(otCompleta.fechaLimiteFacturacion),
       direccionCert: limpiarPlaceholder(otCompleta.dirrecion) || clienteData?.dirrecion || "",
       ciudadCert: limpiarPlaceholder(otCompleta.ciudad) || clienteData?.ciudad || "",
       correoFactura: otCompleta.correoFactura || clienteData?.correo || "",
-      lugarCalibracion: otCompleta.esInternoUSC
-        ? "Interno USC"
-        : otCompleta.esEnSitio
-        ? "En sitio"
-        : "Laboratorio permanente",
+      lugarCalibracion: normalizarLugarCalibracion(otCompleta),
       personaContactar: otCompleta.personaContacto || clienteData?.nombreContacto || "",
       telefonoCalibracion: otCompleta.telefonoContacto || clienteData?.telefono || "",
-      fechaCalibracion: otCompleta.fechaCalibracion?.toString() || "",
-      horaCalibracion: otCompleta.hora?.toString() || "",
+      fechaCalibracion: fechaISOParaInput(otCompleta.fechaCalibracion),
+      horaCalibracion: horaISOParaInput(otCompleta.hora),
       razonSocialSolicitante: otCompleta.cliente?.razonSocial || "",
       nitSolicitante: otCompleta.cliente?.nitCedula ?? "",
       direccionSolicitante: otCompleta.cliente?.dirrecion ?? "",
       ciudadSolicitante: otCompleta.cliente?.ciudad || "sin ciudad",
-      contactoSolicitante: otCompleta.cliente?.nombreContacto || "sin contacto",
+      contactoSolicitante: otCompleta.personaContacto_solicitante?.trim() || otCompleta.cliente?.nombreContacto?.trim() || "",
       telefonoSolicitante: otCompleta?.telefonoContacto_solcitante || clienteData?.telefono || "",
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
       responsableUsc: otCompleta.responsable || "",
-      fechaDiligenciamiento: otCompleta.createdAt ? new Date(otCompleta.createdAt).toISOString().split('T')[0] : "",
+      fechaDiligenciamiento: fechaISOParaInput(otCompleta.fecha_dilgenciamento),
       requiereAnexo: otCompleta.requireAnexo ? "Si" : "No",
       estadoOrden: otCompleta.estado ?? "",
       observacionesGenerales: otCompleta.observaciones || "",
       estado_revision: otCompleta.estadoRevision ?? undefined,
-      ultima_version: version.toString(),
+      ultima_version: String(otCompleta.version ?? 1),
       maquinas: [],
       tecnicos: otCompleta.responsable ? [otCompleta.responsable] : [],
       asignaciones: {},
@@ -1574,8 +1616,18 @@ const instrumentos_cot = useMemo(() => {
     setEditingTechnician(false);
     setOrderDraft(buildOrderDraft(otCompleto));
     setInstrumentDrafts(instrumentosMapeados);
-    setActiveMachine(null);
-  };
+  }, [ordenesTrabajo, clientes, showToast]);
+
+  // Mantiene el detalle abierto sincronizado con el snapshot autoritativo que
+  // llega por HTTP/realtime, sin reemplazar borradores mientras se editan.
+  const selectedOTId = selectedOT?.id;
+  useEffect(() => {
+    if (!selectedOTId || editingOrder || editingTechnician) return;
+    const otActual = ordenesTrabajo.find((ot) => String(ot.idOrdenTrabajo) === selectedOTId);
+    if (!otActual) return;
+    const timer = window.setTimeout(() => openOT({ id: selectedOTId }), 0);
+    return () => window.clearTimeout(timer);
+  }, [ordenesTrabajo, selectedOTId, editingOrder, editingTechnician, openOT]);
 
   /**
    * Cierra la vista de detalle de la OT y resetea los estados relacionados.
@@ -1586,7 +1638,6 @@ const instrumentos_cot = useMemo(() => {
     setEditingTechnician(false);
     setOrderDraft(null);
     setInstrumentDrafts(defaultInstrumentos);
-    setActiveMachine(null);
   };
 
   // Preselección de OT proveniente del módulo de importación ("Ver").
@@ -1596,9 +1647,10 @@ const instrumentos_cot = useMemo(() => {
     const ot = ordenesTrabajo.find((o) => o.idOrdenTrabajo === otToOpen);
     if (ot) {
       lastOpenedRef.current = otToOpen;
-      openOT({ id: String(otToOpen) });
+      const timer = window.setTimeout(() => openOT({ id: String(otToOpen) }), 0);
+      return () => window.clearTimeout(timer);
     }
-  }, [otToOpen, ordenesTrabajo]);
+  }, [otToOpen, ordenesTrabajo, openOT]);
 
   // Handlers para la sección de asignación de técnicos/máquinas
 
@@ -1623,7 +1675,9 @@ const instrumentos_cot = useMemo(() => {
   };
 
 const saveOrderEdits = async () => {
-    if (!selectedOT || !orderDraft) return;
+    if (!selectedOT || !orderDraft || savingOTRef.current) return;
+    savingOTRef.current = true;
+    setSavingOT(true);
 
     // 🟢 1. Validaciones
     try {
@@ -1633,6 +1687,10 @@ const saveOrderEdits = async () => {
       const payload = {
         responsableUsc: orderDraft.responsableUsc || null,
         fechaDiligenciamiento: orderDraft.fechaDiligenciamiento,
+        contactoSolicitante: orderDraft.contactoSolicitante === selectedOT.contactoSolicitante
+          ? undefined : orderDraft.contactoSolicitante.trim() || null,
+        fechaLimiteFacturacion: orderDraft.fechaLimiteFacturacion === selectedOT.fechaLimiteFacturacion
+          ? undefined : orderDraft.fechaLimiteFacturacion || null,
         fechaCalibracion: orderDraft.lugarCalibracion === "En sitio" && orderDraft.fechaCalibracion
           ? orderDraft.fechaCalibracion.slice(0, 10)
           : null,
@@ -1690,91 +1748,32 @@ const saveOrderEdits = async () => {
         loadTable("recepciones_equipo", true),
       ]);
       setEditingOrder(false);
-      showToast(`✅ Orden R-CM05 Consolidada. Job documental en curso (${response.id_job})`);
+      setEditingTechnician(false);
+      showToast(response.id_job
+        ? `✅ Orden consolidada. Generación documental en curso (${response.id_job})`
+        : "✅ Cambios guardados. No hubo cambios que requirieran una nueva versión documental.");
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
-      showToast(`❌ ${error.message}`);
+      showToast(`❌ ${error instanceof Error ? error.message : "No se pudo guardar la orden."}`);
+    } finally {
+      savingOTRef.current = false;
+      setSavingOT(false);
     }
   };
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(""), 3000);
-  };
-
-  /**
-   * Carga inicial de datos: usuarios, órdenes, clientes, tarifas, roles y documentos.
-   * Se ejecuta una sola vez al montar el componente.
-   */
   useEffect(() => {
-    async function initdata() {
-      setTableLoading("ordenes_trabajo", true);
-      try {
-        const res = await obtenerDatosIniciales();
-       
-
-        // Procesamos cada conjunto de datos
-        for (let i = 0; i < 6; i++) {
-          switch (i) {
-            case 0: {
-              // Usuarios: omitimos el campo contraseña por seguridad
-              const parsedUsers = res?.usuarios.map((e): Omit<UsuarioModel, "contraseña"> => ({
-                idUsuario: e.idUsuario,
-                correo: e.correo,
-                createdAt: e.createdAt,
-                elminado: e.elminado, // typo conocido en BD: "elminado"
-                estado: e.estado,
-                idRol: e.idRol,
-                intentos: e.intentos,
-                nombreCompleto: e.nombreCompleto,
-                updatedAt: e.updatedAt,
-              }));
-           
-
-              mergeTable("usuarios", parsedUsers as any);
-              break;
-            }
-            case 1: {
-              mergeTable("ordenes_trabajo", res?.ordenes as any);
-              break;
-            }
-            case 2: {
-              mergeTable("clientes", res?.clientes as any);
-              break;
-            }
-            case 3: {
-              // Tarifas: mapeamos el historial de precios
-              const parsedTarifas = ((res.tarifas || []) as TarifaModel[]).map(
-                (tarifa): TarifaModel => ({
-                  ...tarifa,
-                  historial: tarifa.historial}
-              ));
-              mergeTable("tarifas", parsedTarifas as any);
-              break;
-            }
-            case 4: {
-              mergeTable("roles", res.roles as any);
-              break;
-            }
-            case 5: {
-              // Documentos con sus versiones (si vienen en la respuesta)
-              mergeTable("documentos", res.version as any);
-              break;
-            }
-            default:
-              break;
-          }
-        }
-        console.log(...usuarios,"aqui estaaa")
-      } catch (error) {
-        console.error("Error al obtener datos iniciales:", error);
-      } finally {
-        setTableLoading("ordenes_trabajo", false);
-      }
+    let activo = true;
+    for (const tabla of ["clientes", "tarifas"] as const) {
+      void loadTable(tabla);
     }
-    initdata();
-  }, []);
+    void loadTable("ordenes_trabajo", true).then((ok) => {
+      if (!activo) return;
+      setErrorCargaOrdenes(!ok);
+      setCargaInicialOrdenes(false);
+    });
+    return () => { activo = false; };
+  }, [loadTable]);
 
   /**
    * Calcula las advertencias (warnings) para la OT seleccionada.
@@ -1888,9 +1887,38 @@ const saveOrderEdits = async () => {
    * La Master se muestra como nodo padre (encabezado de grupo) solo si tiene hijas.
    */
   const treeNodes = useMemo(() => {
-    const vigentes = ordenesTrabajo
-      .filter((orden) => orden.vigente !== false)
-      .map((orden) => mapearOTResumen(orden));
+    const ultimaPorFamiliaYSitio = new Map<string, OrdenTrabajoModel>();
+    const prioridadVersion = (orden: OrdenTrabajoModel) => {
+      const version = orden.version ?? 1;
+      const sufijo = orden.codigo.match(/([A-Z])$/i)?.[1]?.toUpperCase() ?? "";
+      const letra = sufijo ? sufijo.charCodeAt(0) - 64 : 0;
+      return [version, letra, orden.idOrdenTrabajo] as const;
+    };
+
+    for (const orden of ordenesTrabajo.filter((item) => item.vigente !== false)) {
+      const familia = orden.idOtRaiz != null
+        ? `raiz:${orden.idOtRaiz}`
+        : orden.idOrdenTrabajoPadre != null
+          ? `padre:${orden.idOrdenTrabajoPadre}`
+          : orden.idCotizacion != null
+            ? `cotizacion:${orden.idCotizacion}`
+            : `ot:${orden.idOrdenTrabajo}`;
+      const clave = `${familia}|sitio:${orden.sitioCalibracion ?? "UNICO"}`;
+      const actual = ultimaPorFamiliaYSitio.get(clave);
+      if (!actual) {
+        ultimaPorFamiliaYSitio.set(clave, orden);
+        continue;
+      }
+      const nueva = prioridadVersion(orden);
+      const previa = prioridadVersion(actual);
+      if (nueva[0] > previa[0] ||
+        (nueva[0] === previa[0] && nueva[1] > previa[1]) ||
+        (nueva[0] === previa[0] && nueva[1] === previa[1] && nueva[2] > previa[2])) {
+        ultimaPorFamiliaYSitio.set(clave, orden);
+      }
+    }
+
+    const vigentes = [...ultimaPorFamiliaYSitio.values()].map(mapearOTResumen);
 
     const porId = new Map(vigentes.map((n) => [n.id, n]));
 
@@ -1921,37 +1949,6 @@ const saveOrderEdits = async () => {
     );
   }, [search, otss]);
 // Agregar instrumento (campos del schema OrdenTrabajoDetalle)
-const handleAddInstrument = () => {
-  setInstrumentDrafts((prev) => [
-    ...prev,
-    {
-      id: crypto.randomUUID(),
-      item: prev.length + 1,
-      tipoServicio: "",
-      instrumento: "",
-      fabricante: null,
-      modelo: null,
-      serie: null,
-      codigoInventario: null,
-      ubicacion: null,
-      puntosCalibrar: [],
-      unidad: null,
-      intervaloRango: null,
-      resolucion: null,
-      asignado: 0,
-      declaracionConformidad: false,
-      limiteControlEMC: null,
-      docEspecificacion: null,
-      reglaDecision: null,
-    },
-  ]);
-};
-
-// Eliminar instrumento
-const handleRemoveInstrument = (id: string) => {
-  setInstrumentDrafts((prev) => prev.filter((inst) => inst.id !== id));
-};
-
   // Opciones de tarifa para combos (DTO mínimo del catálogo)
   const tarifaOptions: TarifaOptionBase[] = useMemo(() => {
     return (tarifas || []).map((t) => ({
@@ -1972,14 +1969,19 @@ const handleRemoveInstrument = (id: string) => {
         setViewMode={setViewMode}
         onBack={closeOT}
         totalOTs={otss.length}
-        warnings={warnings}
       />
+
+      {!selectedOT && errorCargaOrdenes && ordenesTrabajo.length === 0 && (
+        <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          No se pudieron cargar las órdenes de trabajo. Recarga el módulo para volver a consultar los datos.
+        </div>
+      )}
 
       {selectedOT && (
         <div className="space-y-6 max-w-7xl mx-auto">
           <OrderAlertsBanner selectedOT={selectedOT} warnings={warnings} />
 <StaffAssignmentSection
-            estadoActual={selectedOT.estado} 
+            estadoActual={(ordenSeleccionadaActual?.estado as EstadoOrden | null) ?? selectedOT.estado}
             instrumentosCot={instrumentos_cot}
             technicians={technicians}
             editingTechnician={editingTechnician}
@@ -1988,6 +1990,8 @@ const handleRemoveInstrument = (id: string) => {
             onAssignTechnician={(idUsuario: number, id_instrumentos: string | number) => 
               updateInstrumentDraft(id_instrumentos.toString(), "asignado", idUsuario)
             }
+            onSaveAssignments={saveOrderEdits}
+            saving={savingOT}
           />
 
           <OrderFormRCM05
@@ -1999,15 +2003,13 @@ const handleRemoveInstrument = (id: string) => {
             updateInstrumentDraft={updateInstrumentDraft}
             technicians={technicians}
             saveOrderEdits={saveOrderEdits}
-            onAddInstrument={handleAddInstrument}
-            onRemoveInstrument={handleRemoveInstrument}
             tarifas={tarifaOptions}
           />
         </div>
       )}
 
-      {!selectedOT && viewMode === "kanban" && (
-        loadingOrdenes ? (
+      {!selectedOT && (!errorCargaOrdenes || ordenesTrabajo.length > 0) && viewMode === "kanban" && (
+        loadingOrdenes || cargaInicialOrdenes ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
             {[1, 2, 3, 4].map((n) => (
               <div key={n} className="space-y-3">
@@ -2022,25 +2024,24 @@ const handleRemoveInstrument = (id: string) => {
             collapsedColumns={collapsedColumns}
             toggleColumnCollapse={toggleColumnCollapse}
             onOpenOT={openOT}
-            warnigs={warnings} 
           />
         )
       )}
 
-      {!selectedOT && viewMode === "tree" && (
-        loadingOrdenes ? (
+      {!selectedOT && (!errorCargaOrdenes || ordenesTrabajo.length > 0) && viewMode === "tree" && (
+        loadingOrdenes || cargaInicialOrdenes ? (
           <div className="space-y-2 animate-pulse">
             {[1, 2, 3, 4, 5].map((n) => (
               <div key={n} className="h-10 rounded-lg bg-slate-200" />
             ))}
           </div>
         ) : (
-          <TreeView treeNodes={treeNodes} onOpenOT={openOT} />
+          <TreeView treeNodes={treeNodes} onOpenOT={openOT} search={search} />
         )
       )}
 
-      {!selectedOT && viewMode === "list" && (
-        loadingOrdenes ? (
+      {!selectedOT && (!errorCargaOrdenes || ordenesTrabajo.length > 0) && viewMode === "list" && (
+        loadingOrdenes || cargaInicialOrdenes ? (
           <div className="space-y-2 animate-pulse">
             {[1, 2, 3, 4, 5].map((n) => (
               <div key={n} className="h-10 rounded-lg bg-slate-200" />

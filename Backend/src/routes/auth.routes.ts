@@ -43,7 +43,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         throw new AppError(401, 'Usuario no encontrado', 'user_not_found');
       }
 
-      if (user.intentos >= 3 || user.ESTADO === false) {
+      if (user.intentos >= 3 || user.ESTADO === false || user.elminado) {
         throw new AppError(401, 'Usuario bloqueado o inactivo', 'user_blocked_or_inactive');
       }
 
@@ -53,13 +53,14 @@ export default async function authRoutes(fastify: FastifyInstance) {
         if (nuevosIntentos >= 3) {
           await fastify.prisma.usuarios.update({
             where: { ID_USUARIO_AUTO_INCREMENT: user.ID_USUARIO_AUTO_INCREMENT },
-            data: { intentos: nuevosIntentos, ESTADO: false },
+            data: { intentos: nuevosIntentos, ESTADO: false, UPDATE_AT: new Date() },
           });
+          fastify.io.in(`user_room_${user.ID_USUARIO_AUTO_INCREMENT}`).disconnectSockets(true);
 
           await fastify.prisma.notificaciones.create({
             data: {
               ID_USUARIO_FK: 1,
-              MENSAJE: `La cuenta del usuario ${user.CORREO_INSTITUCION} ha sido bloqueada tras 5 intentos fallidos de contraseña. IP de origen: ${ip ?? 'n/a'}`,
+              MENSAJE: `La cuenta del usuario ${user.CORREO_INSTITUCION} ha sido bloqueada tras 3 intentos fallidos de contraseña. IP de origen: ${ip ?? 'n/a'}`,
               MODULO: 'Sistema',
               NIVEL_PRIORIDAD: 'ALTA',
               VISTO: false,
@@ -91,6 +92,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
           CORREO_INSTITUCION: user.CORREO_INSTITUCION,
           NOMBRE_ROL: user.roles.NOMBRE_ROL,
           PERMISOS_JSON: user.roles.PERMISOS_JSON,
+          UPDATE_AT: user.UPDATE_AT,
         }),
       };
     }
@@ -186,8 +188,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
       const contrasenaHasheada = await hashPassword(nuevaContrasena);
       await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: usuario.ID_USUARIO_AUTO_INCREMENT },
-        data: { contrase_a: contrasenaHasheada, intentos: 0, ESTADO: true },
+        data: { contrase_a: contrasenaHasheada, intentos: 0, ESTADO: true, UPDATE_AT: new Date() },
       });
+      fastify.io.in(`user_room_${usuario.ID_USUARIO_AUTO_INCREMENT}`).disconnectSockets(true);
 
       await fastify.prisma.audit_logs.create({
         data: {

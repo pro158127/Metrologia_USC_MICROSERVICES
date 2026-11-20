@@ -1,5 +1,6 @@
 "use client";
 
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   ChevronDown,
@@ -163,11 +164,11 @@ const TimelineCertificado = ({
         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-700 mb-2">
           Trazabilidad · versiones anteriores
         </p>
-        {t.versiones.filter((v) => v.version !== item.versiones[0]?.version).length === 0 ? (
+        {t.versiones.length === 0 ? (
           <p className="text-[11px] text-slate-400">Sin versiones registradas.</p>
         ) : (
           <div className="flex flex-col gap-1">
-            {t.versiones.filter((v) => v.version !== item.versiones[0]?.version).map((v) => (
+            {t.versiones.map((v) => (
               <div
                 key={v.idVersion}
                 className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-md bg-slate-50 border border-slate-100"
@@ -176,11 +177,12 @@ const TimelineCertificado = ({
                   <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded">
                     v{v.version}
                   </span>
+                  {v.nombre && <span className="text-[11px] text-slate-600 truncate">{v.nombre}</span>}
                   <span className="text-[11px] text-slate-600 truncate">{v.usuario ?? "—"}</span>
                   <span className="text-[10px] text-slate-400 shrink-0">{fmt(v.createdAt)}</span>
                 </div>
                 <button
-                  onClick={() => onVerArchivo(v.rutaUrl, `${item.codigoCertificado} (v${v.version})`, item.mimeType)}
+                  onClick={() => onVerArchivo(v.rutaUrl, `${v.nombre ?? item.codigoCertificado} (v${v.version})`, item.mimeType)}
                   className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
                 >
                   <Eye size={12} /> Ver
@@ -219,7 +221,9 @@ const TimelineCertificado = ({
 const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
   const [showFiles, setShowFiles] = useState(false);
   const [docs, setDocs] = useState<DocumentosCotizacionCategorias["categorias"] | null>(null);
-  const [cargando, setCargando] = useState(false);
+  const [pendientes, setPendientes] = useState<DocumentosCotizacionCategorias["pendientes"]>();
+  const [archivados, setArchivados] = useState<DocumentosCotizacionCategorias["archivados"]>();
+  const [consultaCargada, setConsultaCargada] = useState<string>();
   const [openFolder, setOpenFolder] = useState<CategoriaKey | null>(null);
   const [openHistoryFolder, setOpenHistoryFolder] = useState<CategoriaKey | null>(null);
   const [viewer, setViewer] = useState<{ url: string | null; nombre: string; cargando: boolean } | null>(
@@ -236,18 +240,37 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
     EN_SEGUIMIENTO: { label: "En seguimiento", style: "bg-amber-50 text-amber-700 border-amber-200" },
   };
 
-  const cargarDocumentos = useCallback(async () => {
-    setCargando(true);
-    const data = await obtenerDocumentosCotizacion(cotizacion.idCotizacion);
-    setDocs(data?.categorias ?? null);
-    setCargando(false);
-  }, [cotizacion.idCotizacion]);
+  const revision = useRevisionTablas("cotizaciones", "documentos", "version_documentos", "certificados", "recepciones_equipo", "ordenes_trabajo");
 
-  const toggleFiles = useCallback(() => {
-    const next = !showFiles;
-    setShowFiles(next);
-    if (next && !docs && !cargando) cargarDocumentos();
-  }, [showFiles, docs, cargando, cargarDocumentos]);
+  const claveConsulta = `${cotizacion.idCotizacion}:${cotizacion.codigo}:${revision}`;
+  const cargando = showFiles && consultaCargada !== claveConsulta;
+
+  useEffect(() => {
+    if (!showFiles) return;
+    let activo = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await obtenerDocumentosCotizacion(cotizacion.idCotizacion);
+        if (activo && data) {
+          setDocs(data.categorias);
+          setArchivados(data.archivados);
+          setPendientes(data.pendientes);
+        } else if (activo) {
+          setDocs(null);
+          setArchivados(undefined);
+          setPendientes(undefined);
+        }
+      } finally {
+        if (activo) setConsultaCargada(claveConsulta);
+      }
+    }, 150);
+    return () => {
+      activo = false;
+      window.clearTimeout(timer);
+    };
+  }, [showFiles, cotizacion.idCotizacion, claveConsulta]);
+
+  const toggleFiles = useCallback(() => setShowFiles((abierto) => !abierto), []);
 
   const abrirPdf = useCallback(async (rutaUrl: string, nombre: string) => {
     setViewer({ url: null, nombre, cargando: true });
@@ -325,6 +348,11 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
             <div className="flex flex-col gap-1">
               {CARPETA_FOLDERS.map((f) => {
                 const items = docs ? docs[f.key] : [];
+                const clave = f.key;
+                const esFormato = clave === "cotizacion" || clave === "ordenTrabajo" || clave === "recepcion";
+                const historicoArchivado = esFormato ? archivados?.[clave] ?? [] : [];
+                const sinPublicar = esFormato || clave === "certificados" ? pendientes?.[clave] ?? [] : [];
+                const certificadosArchivados = f.key === "certificados" ? archivados?.certificados ?? [] : [];
                 const abierto = openFolder === f.key;
                 return (
                   <div key={f.key} className="rounded-lg border border-slate-100 bg-white">
@@ -345,11 +373,13 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                     </button>
 
                     {abierto &&
-                      (items.length === 0 ? (
+                      (items.length === 0 && historicoArchivado.length === 0 && sinPublicar.length === 0 && certificadosArchivados.length === 0 ? (
                         <div className="text-[11px] text-slate-400 py-3 text-center">
                           No hay documentos en esta carpeta.
                         </div>
                       ) : f.key === "certificados" ? (
+                        <>
+                          {sinPublicar.map((codigo) => <p key={codigo} className="px-3 py-2 text-xs text-slate-500">{codigo} · PDF sellado pendiente de publicación</p>)}
                         <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
                           {(items as DocumentoCertificadoItem[]).map((cert) => (
                             <div
@@ -374,17 +404,26 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                                   <Eye size={12} /> Ver vigente
                                 </button>
                               )}
-                              <button
-                                onClick={() => setTimeline(cert)}
-                                className="flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-slate-200 text-blue-600 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:bg-slate-100 shrink-0"
-                              >
-                                <History size={12} /> Trazabilidad
-                              </button>
                             </div>
                           ))}
                         </div>
+                          <details className="mx-2 mb-2 rounded-md border border-slate-100 bg-slate-50 p-2 text-xs">
+                            <summary className="cursor-pointer font-bold text-slate-600">Trazabilidad</summary>
+                            <div className="mt-2 flex max-h-48 flex-col gap-1 overflow-y-auto">
+                              {[...items as DocumentoCertificadoItem[], ...certificadosArchivados]
+                                .filter((cert) => certificadosArchivados.includes(cert) || cert.versiones.length > 1)
+                                .map((cert) => (
+                                  <button key={cert.idCertificado} type="button" onClick={() => setTimeline(cert)}
+                                    className="rounded bg-white px-2 py-1.5 text-left text-blue-600 hover:bg-blue-50">
+                                    {cert.codigoCertificado} · {cert.trazabilidad.estadoRevision.replaceAll("_", " ").toLowerCase()}
+                                  </button>
+                                ))}
+                            </div>
+                          </details>
+                        </>
                       ) : (
                         <>
+                          {sinPublicar.map((codigo) => <p key={codigo} className="px-3 py-2 text-xs text-slate-500">{codigo} · Archivo vigente pendiente de publicación</p>)}
                           <div className="flex flex-col gap-1 px-2 pb-2 max-h-56 overflow-y-auto">
                             {(items as DocumentoItem[]).map((doc) => {
                             const excel = esExcel(doc.nombre, doc.mimeType, doc.rutaUrl);
@@ -434,7 +473,7 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                           })}
                           </div>
                           {(() => {
-                            const historicos = (items as DocumentoItem[]).flatMap((doc) =>
+                            const historicos = [...items as DocumentoItem[], ...historicoArchivado].flatMap((doc) =>
                               doc.versiones
                                 .filter((version) => version.idVersion !== doc.idVersionActual)
                                 .map((version) => ({ doc, version }))
@@ -461,13 +500,13 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
                                         <div key={`${doc.idDocumento}-${version.idVersion}`} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5">
                                           <div className="flex min-w-0 items-center gap-2">
                                             <History size={12} className="shrink-0 text-slate-400" />
-                                            <span className="truncate text-[10px] text-slate-600">{version.codigoRecepcion ?? version.codigoOT ?? doc.nombre}</span>
+                                            <span className="truncate text-[10px] text-slate-600">{version.nombre ?? doc.nombre}</span>
                                             <span className="shrink-0 text-[10px] font-bold text-slate-500">v{version.version}</span>
                                             <span className="shrink-0 text-[10px] text-slate-400">{version.usuario ?? "—"} · {new Date(version.createdAt).toLocaleDateString("es-CO")}</span>
                                           </div>
                                           <button
                                             type="button"
-                                            onClick={() => verArchivo(version.rutaUrl, `${doc.nombre} (v${version.version})`, doc.mimeType)}
+                                            onClick={() => verArchivo(version.rutaUrl, `${version.nombre ?? doc.nombre} (v${version.version})`, doc.mimeType)}
                                             className="shrink-0 rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-slate-100 cursor-pointer"
                                           >
                                             Ver
@@ -553,30 +592,26 @@ import { obtenerTrazabilidadCliente } from "@/app/action_module/modulo_cliente";
 import FileViewer from "@/app/utils/FileViewer";
 
 export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetailPageProps) {
-  console.log(id_cliente,"hlaaa")
   const [is_open_documento, setIsOpenDocumento] = useState(false);
   const [searchCodigo, setSearchCodigo] = useState("");
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
   const [trazabilidad, setTrazabilidad] = useState<TrazabilidadCliente | null>(null);
   const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
+  const revisionCotizaciones = useRevisionTablas("cotizaciones", "documentos", "version_documentos");
 
   useEffect(() => {
     if (id_cliente === null || id_cliente === undefined) return;
 
-    async function fetchTrazabilidad() {
-      try {
-        const data = await obtenerTrazabilidadCliente(id_cliente || 0);
-        console.log(data,"aqui")
-        const resultado = data?.data ?? null;
-        setTrazabilidad(resultado);
-        console.log("Trazabilidad del cliente:", resultado);
-      } catch (error) {
-        console.error("Error al obtener la trazabilidad del cliente:", error);
-      }
-    }
-
-    fetchTrazabilidad();
-  }, [id_cliente]);
+    let activo = true;
+    const timer = window.setTimeout(async () => {
+      const resultado = await obtenerTrazabilidadCliente(id_cliente);
+      if (activo && resultado?.data) setTrazabilidad(resultado.data);
+    }, 150);
+    return () => {
+      activo = false;
+      window.clearTimeout(timer);
+    };
+  }, [id_cliente, revisionCotizaciones]);
 
   const filteredCotizaciones = useMemo<TrazabilidadCotizacionCard[]>(() => {
     if (!trazabilidad?.cotizaciones) return [];

@@ -13,6 +13,7 @@ export const usuarioLoginDtoSchema = z.object({
   email: z.string(),
   role: z.string(),
   permissions: z.unknown(),
+  sessionVersion: z.number(),
 });
 export type UsuarioLoginDto = z.infer<typeof usuarioLoginDtoSchema>;
 
@@ -23,6 +24,7 @@ export const usuarioLoginRawToDtoSchema = z
     CORREO_INSTITUCION: z.string(),
     NOMBRE_ROL: z.string(),
     PERMISOS_JSON: z.unknown(),
+    UPDATE_AT: z.coerce.date().nullish(),
   })
   .transform((raw): UsuarioLoginDto => ({
     id_user: raw.ID_USUARIO_AUTO_INCREMENT,
@@ -30,6 +32,7 @@ export const usuarioLoginRawToDtoSchema = z
     email: raw.CORREO_INSTITUCION,
     role: raw.NOMBRE_ROL,
     permissions: raw.PERMISOS_JSON,
+    sessionVersion: raw.UPDATE_AT?.getTime() ?? 0,
   }));
 export type UsuarioLoginRaw = z.input<typeof usuarioLoginRawToDtoSchema>;
 

@@ -1,3 +1,4 @@
+import { diasVigenciaCotizacion, inicioVigenciaCotizacion, fechaVencimientoCotizacion } from '../services/vigencia-cotizacion.service.js';
 import 'dotenv/config';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -45,10 +46,9 @@ async function leerParametroNumero(clave: string, porDefecto: number): Promise<n
  * Los días se leen de parametros_sistema en cada ejecución.
  */
 async function procesarCotizacionesVencidas(): Promise<{ rechazadas: number; seguimiento: number }> {
-  const diasRechazo = await leerParametroNumero('DIAS_RECHAZAR_COTIZACION', 15);
+  const diasRechazo = await diasVigenciaCotizacion(prisma);
   const diasSeguimiento = await leerParametroNumero('DIAS_SEGUIMIENTO_COTIZACION', 30);
   const ahora = new Date();
-  const limiteRechazo = new Date(ahora.getTime() - diasRechazo * 24 * 60 * 60 * 1000);
   const limiteSeguimiento = new Date(ahora.getTime() - diasSeguimiento * 24 * 60 * 60 * 1000);
 
   let rechazadas = 0;
@@ -61,17 +61,15 @@ async function procesarCotizacionesVencidas(): Promise<{ rechazadas: number; seg
   });
 
   for (const cotizacion of enviadas) {
-    const historialEnvio = await prisma.historial_estado_cotizacion.findFirst({
-      where: { ID_COTIZACION_FK: cotizacion.ID_COTIZACION, ESTADO_NUEVO: Estados.ENVIADA },
-      orderBy: { CREATED_AT: 'desc' },
-    });
-    const fechaEnvio = historialEnvio?.CREATED_AT ?? cotizacion.UPDATED_AT ?? cotizacion.CREATED_AT;
-    if (!fechaEnvio || fechaEnvio.getTime() > limiteRechazo.getTime()) continue;
+    const fechaEnvio = await inicioVigenciaCotizacion(prisma, { ...cotizacion, ESTADO: 'ENVIADA' });
+    if (fechaVencimientoCotizacion(fechaEnvio, diasRechazo) > ahora) continue;
 
     try {
       await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${cotizacion.ID_COTIZACION} FOR UPDATE`;
         const actual = await tx.cotizaciones.findUnique({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION } });
         if (!actual || actual.ESTADO !== Estados.ENVIADA) return;
+        if (fechaVencimientoCotizacion(await inicioVigenciaCotizacion(tx, actual), diasRechazo) > ahora) return;
 
         await tx.cotizaciones.update({
           where: { ID_COTIZACION: cotizacion.ID_COTIZACION },

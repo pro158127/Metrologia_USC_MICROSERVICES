@@ -33,7 +33,7 @@ export async function uploadBuffer(
   return key;
 }
 
-export async function getObjectBuffer(key: string): Promise<Buffer> {
+export async function getObjectWithMetadata(key: string) {
   const command = new GetObjectCommand({
     Bucket: BUCKET_NAME,
     Key: key,
@@ -42,7 +42,11 @@ export async function getObjectBuffer(key: string): Promise<Buffer> {
   if (!response.Body) {
     throw new Error(`Archivo vacío en MinIO para: ${key}`);
   }
-  return streamToBuffer(response.Body as Readable);
+  return { buffer: await streamToBuffer(response.Body as Readable), contentType: response.ContentType };
+}
+
+export async function getObjectBuffer(key: string): Promise<Buffer> {
+  return (await getObjectWithMetadata(key)).buffer;
 }
 
 export async function deleteObject(key: string): Promise<void> {

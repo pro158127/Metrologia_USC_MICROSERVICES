@@ -46,9 +46,8 @@ export interface FilaInstrumento {
 
 // Estado completo del formulario de recepción
 export interface FormularioRecepcion {
-  idCliente: number | null;
-  clienteNombre: string;
   solicitante: string;
+  idCliente?: number;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
   ordenTrabajoCodigo: string;
@@ -69,7 +68,7 @@ export interface FormularioRecepcion {
 export interface RecepcionConInfo {
   idRecepcion: number;
   codigo: string;
-  clienteNombre: string;
+  solicitante: string;
   fecha: string;
   cantidadInstrumentos: number;
   codigoCotizacion?: string;
@@ -78,13 +77,13 @@ export interface RecepcionConInfo {
 }
 
 export interface FilterBarProps {
-  filtroCliente: string;
+  filtroSolicitante: string;
   filtroAnio: string;
   filtroMes: string;
   filtroDia: string;
-  clientesUnicos: string[];
+  solicitantesUnicos: string[];
   aniosDisponibles: string[];
-  onClienteChange: (val: string) => void;
+  onSolicitanteChange: (val: string) => void;
   onAnioChange: (val: string) => void;
   onMesChange: (val: string) => void;
   onDiaChange: (val: string) => void;
@@ -96,10 +95,11 @@ export interface RecepcionCardProps {
   onSelect: (recepcion: RecepcionEquipoModel) => void;
 }
 
+export type SolicitanteRecepcion = Pick<ClienteModel, "idCliente" | "razonSocial" | "nitCedula">;
+
 export interface DatosGeneralesSectionProps {
-  idCliente: number | null;
-  clienteNombre: string;
   solicitante: string;
+  idCliente?: number;
   nombreQuienEntrega: string;
   cotizacionCodigo: string;
   ordenTrabajoCodigo: string;
@@ -108,7 +108,9 @@ export interface DatosGeneralesSectionProps {
   fechaSalida: string;
   nombreQuienRecibe: string;
   nombreQuienEmpaca: string;
-  clientes: ClienteModel[];
+  solicitantes: SolicitanteRecepcion[];
+  cargandoSolicitantes: boolean;
+  onSeleccionarSolicitante: (cliente?: SolicitanteRecepcion) => void;
   cotizaciones: CotizacionModel[];
   ordenesTrabajo: OrdenTrabajoModel[];
   onUpdateGeneral: (field: string, value: string) => void;

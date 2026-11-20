@@ -246,7 +246,7 @@ export const recepcionEquipoDtoSchema = z.object({
   createdAt: z.coerce.date(),
   documentos: z.array(documentoDtoSchema),
   instrumentos: z.array(recepcionDetalleDtoSchema),
-  cotizacion: cotizacionDtoSchema.nullable(),
+  cotizacion: cotizacionConDetallesDtoSchema.nullable(),
   ordenTrabajo: ordenTrabajoDtoSchema.nullable(),
 });
 export type RecepcionEquipoDto = z.infer<typeof recepcionEquipoDtoSchema>;
@@ -254,7 +254,7 @@ export type RecepcionEquipoDto = z.infer<typeof recepcionEquipoDtoSchema>;
 export const recepcionEnriquecidaDtoSchema = z.object({
   idRecepcion: z.number(),
   codigo: z.string(),
-  clienteNombre: z.string(),
+  solicitante: z.string(),
   fecha: z.string(),
   cantidadInstrumentos: z.number(),
   codigoCotizacion: z.string(),
@@ -716,7 +716,7 @@ export const recepcionEquipoRawToDtoSchema = z
     CREATED_AT: z.coerce.date(),
     documentos: z.array(documentoRawToDtoSchema).nullish(),
     recepcion_equipo_detalles: z.array(recepcionDetalleRawToDtoSchema).nullish(),
-    cotizaciones: cotizacionRawToDtoSchema.nullish(),
+    cotizaciones: cotizacionConDetallesRawToDtoSchema.nullish(),
     ordenes_trabajo: ordenTrabajoRawToDtoSchema.nullish(),
   })
   .transform((raw): RecepcionEquipoDto => ({
@@ -785,8 +785,11 @@ export const estadoIbcInputSchema = z
 export const instrumentoRecepcionInputSchema = z.object({
   idLocal: z.string().optional(),
   idInstrumento: z.number().optional(),
-  instrumento: z.string().min(1),
+  idUnidad: z.string().nullish(),
+  item: z.number().nullish(),
+  instrumento: z.string().trim().min(1),
   tipoServicio: z.string().trim().min(1).optional(),
+  idTarifa: z.number().int().positive().optional(),
   marca: z.string().nullish(),
   modelo: z.string().nullish(),
   serie: z.string().nullish(),
@@ -803,8 +806,9 @@ export type InstrumentoRecepcionInput = z.infer<typeof instrumentoRecepcionInput
 export const recepcionBodySchema = z.object({
   estado: z.string().optional(),
   isNueva: z.boolean().optional(),
-  idCliente: z.number().nullish(),
-  solicitante: z.string().min(1),
+  codigoRecepcionActual: z.string().trim().min(1).optional(),
+  idCliente: z.number().int().positive().nullish(),
+  solicitante: z.string().trim().min(1),
   nombreEntrega: z.string().nullish(),
   cotizacionCodigo: z.string().nullish(),
   ordenTrabajoCodigo: z.string().nullish(),
@@ -861,6 +865,7 @@ export const respuestaHistorialRecepcionSchema = z.object({
 });
 
 export const respuestaSoftDeleteSchema = z.object({
+  grupoDesactivado: z.boolean().optional(),
   ok: z.literal(true),
   message: z.string(),
 });

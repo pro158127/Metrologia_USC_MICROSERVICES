@@ -137,6 +137,7 @@ export const ItemsTable = ({
                   >
                     <option value="Laboratorio">Laboratorio</option>
                     <option value="Sitio">Sitio</option>
+                    <option value="Interno USC">Interno USC</option>
                   </select>
                 </td>
                 <td className="py-2.5 px-3 text-slate-500 font-mono font-medium">{fila.norma}</td>

@@ -45,6 +45,10 @@ async function registrarAuditoria(
   }
 }
 
+function desconectarSesionesUsuario(fastify: FastifyInstance, idUsuario: number) {
+  fastify.io.in(`user_room_${idUsuario}`).disconnectSockets(true);
+}
+
 export default async function usuariosRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
@@ -159,11 +163,16 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       if (datos.estado !== undefined) data.ESTADO = datos.estado;
       if (datos.intentos !== undefined) data.intentos = datos.intentos;
       if (datos.elminado !== undefined) data.elminado = datos.elminado;
+      // Reactivar desde Administración también debe liberar el bloqueo por
+      // intentos fallidos; de lo contrario el login la seguirá rechazando.
+      if (datos.estado === true) data.intentos = 0;
+      if (Object.keys(data).length > 0) data.UPDATE_AT = new Date();
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
         data,
       });
+      if (Object.keys(data).length > 0) desconectarSesionesUsuario(fastify, idUsuario);
 
       const action =
         datos.estado !== undefined
@@ -212,8 +221,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
-        data: { elminado: true, ESTADO: false },
+        data: { elminado: true, ESTADO: false, UPDATE_AT: new Date() },
       });
+      desconectarSesionesUsuario(fastify, idUsuario);
 
       await registrarAuditoria(
         fastify,
@@ -253,8 +263,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
-        data: { elminado: false, ESTADO: true, intentos: 0 },
+        data: { elminado: false, ESTADO: true, intentos: 0, UPDATE_AT: new Date() },
       });
+      desconectarSesionesUsuario(fastify, idUsuario);
 
       await registrarAuditoria(
         fastify,
@@ -296,8 +307,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
-        data: { contrase_a: contrasenaHasheada },
+        data: { contrase_a: contrasenaHasheada, UPDATE_AT: new Date() },
       });
+      desconectarSesionesUsuario(fastify, idUsuario);
 
       await registrarAuditoria(
         fastify,

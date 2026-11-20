@@ -715,6 +715,7 @@ export const reportesKpisDtoSchema = z.object({
 
 export const reportesDataSchema = z.object({
   kpis: reportesKpisDtoSchema,
+  series: z.array(z.object({ mes: z.string(), interno: z.number(), externo: z.number(), tasa: z.number() })),
   certificados: z.array(reportesCertificadoDtoSchema),
   tecnicos: z.array(reportesTecnicoDtoSchema),
   trazabilidad: z.array(reportesTrazabilidadDtoSchema),

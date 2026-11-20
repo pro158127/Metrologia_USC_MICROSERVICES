@@ -1,3 +1,4 @@
+import { mappingConfigSchema } from '../routes/plantillas-generacion.schemas.js';
 // services/plantillas-readiness.service.ts
 // Evalúa si las plantillas operativas de documentos (Cotización, Órdenes de
 // Trabajo y Recepción) están completas: deben tener un archivo adjunto y su
@@ -101,17 +102,26 @@ export async function evaluarCompletitudPlantilla(
   prisma: PrismaClient,
   id: number,
 ): Promise<ResultadoPlantilla> {
+  try {
+    await resolverPlantillaOperativa(prisma, id);
+    return { id, modulo: NOMBRE_MODULO[id], completa: true, tieneArchivo: true, mapeoCompleto: true, faltantes: [] };
+  } catch (error) {
+    if (!(error instanceof AppError) || error.statusCode !== 412) throw error;
+  }
   const version = await prisma.version_plantillas.findFirst({
-    where: { ID_PLANTILLA_FK: id },
+    where: { plantillas: { ACTIVA: true, MODULO: MODULO_OPERATIVO[id] } },
     orderBy: { VERSION: 'desc' },
+    include: { documentos: true },
   });
 
-  const tieneArchivo = version != null && version.ID_DOCUMENTOS_FK != null;
-  const { completo: mapeoCompleto, faltantes } = evaluarMapeo(
+  const tieneArchivo = Boolean(version?.documentos?.RUTA_URL);
+  const { completo: camposCompletos, faltantes } = evaluarMapeo(
     version?.MAPPING_CONFIG ?? null,
     version?.INPUT_SCHEMA ?? null,
   );
 
+  const mapeoCompleto = camposCompletos && mappingConfigSchema.safeParse(version?.MAPPING_CONFIG).success;
+  if (camposCompletos && !mapeoCompleto) faltantes.push('Configuración de mapeo inválida');
   const faltantesFinal = tieneArchivo
     ? faltantes
     : ['Archivo de plantilla (formato) no adjunto', ...faltantes];
@@ -119,7 +129,7 @@ export async function evaluarCompletitudPlantilla(
   return {
     id,
     modulo: NOMBRE_MODULO[id] ?? `Plantilla ${id}`,
-    completa: tieneArchivo && mapeoCompleto,
+    completa: false,
     tieneArchivo,
     mapeoCompleto,
     faltantes: faltantesFinal,
@@ -160,4 +170,32 @@ export async function verificarPlantillasOperativas(prisma: PrismaClient): Promi
   if (!todasCompletas) {
     throw new AppError(412, construirMensaje(detalle));
   }
+}
+
+const MODULO_OPERATIVO: Record<number, string> = { 1: 'COTIZACIONES', 2: 'ORDEN_TRABAJO', 3: 'RECEPCION' };
+
+export async function resolverPlantillaOperativa(
+  tx: Pick<PrismaClient, 'version_plantillas'>,
+  tipo: number,
+  opciones: { versionId?: number; plantillaId?: number; version?: number } = {},
+) {
+  const modulo = MODULO_OPERATIVO[tipo];
+  if (!modulo) throw new AppError(400, 'Tipo de formato operativo inválido.');
+  const candidatas = await tx.version_plantillas.findMany({
+    where: {
+      ...(opciones.versionId != null ? { ID_VERSION_PLANTILLA: opciones.versionId } : {}),
+      ...(opciones.plantillaId != null ? { ID_PLANTILLA_FK: opciones.plantillaId } : {}),
+      ...(opciones.version != null ? { VERSION: opciones.version } : {}),
+      ID_DOCUMENTOS_FK: { not: null },
+      plantillas: { MODULO: modulo, ...(opciones.versionId == null ? { ACTIVA: true } : {}) },
+    },
+    orderBy: [{ VERSION: 'desc' }, { ID_VERSION_PLANTILLA: 'desc' }],
+    include: { documentos: true },
+  });
+  for (const candidata of candidatas) {
+    if (candidata.documentos?.RUTA_URL && mappingConfigSchema.safeParse(candidata.MAPPING_CONFIG).success && evaluarMapeo(candidata.MAPPING_CONFIG, candidata.INPUT_SCHEMA).completo) {
+      return { ...candidata, documentos: candidata.documentos };
+    }
+  }
+  throw new AppError(412, `No hay una versión completa de plantilla para ${modulo}.`);
 }

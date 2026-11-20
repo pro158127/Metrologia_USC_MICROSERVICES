@@ -18,7 +18,7 @@ export const detalleInputSchema = z.object({
   normaTecnica: z.string().nullish(),
   cantidad: z.number().int().min(1),
   valorUnitario: z.number().min(0),
-  sitio: z.enum(['LABORATORIO', 'CLIENTE']).optional(),
+  sitio: z.enum(['LABORATORIO', 'CLIENTE', 'INTERNO_USC']).optional(),
 });
 export type DetalleInput = z.infer<typeof detalleInputSchema>;
 
@@ -52,6 +52,7 @@ export type CrearCotizacionBody = z.infer<typeof crearCotizacionBodySchema>;
 
 export const cambiarEstadoBodySchema = z.object({
   nuevoEstado: estadosEnum,
+  codigo: z.string().trim().min(1).optional(),
   motivoRechazo: z.string().nullish(),
 });
 export type CambiarEstadoBody = z.infer<typeof cambiarEstadoBodySchema>;
@@ -219,6 +220,7 @@ export const cotizacionDtoSchema = z.object({
   idCliente: z.number().nullable(),
   montoTotal: z.number().nullable(),
   createdAt: z.coerce.date(),
+  fechaVencimiento: z.coerce.date().optional(),
   updatedAt: z.coerce.date().nullable(),
   viaticos: z.number(),
   estado: estadosEnum,
