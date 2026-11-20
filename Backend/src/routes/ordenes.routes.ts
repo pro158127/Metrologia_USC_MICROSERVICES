@@ -21,7 +21,7 @@ import {
   validarAsignacionPermitida,
 } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
-import { assertPermission } from '../lib/permissions.js';
+import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
 
 function parsearFechaHoraCalibracion(fecha?: string | null, hora?: string | null): Date | null {
@@ -176,7 +176,10 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      assertPermission(request, 'ordenes_de_trabajo', 'crear_editar');
+      assertAnyPermission(request, [
+        ['ordenes_de_trabajo', 'crear_editar'],
+        ['ordenes_de_trabajo', 'asignar_tecnico'],
+      ]);
       const { id } = request.params;
       const data = request.body;
       const idUsuario = Number(request.user?.sub ?? 0);
@@ -235,6 +238,8 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             const asignado = Number(inst.asignado) > 0 ? Number(inst.asignado) : null;
             return actual != null && asignado !== actual.asignado;
           });
+          if (cambioEscalar) assertPermission(request, 'ordenes_de_trabajo', 'crear_editar');
+          if (cambioAsignacion) assertPermission(request, 'ordenes_de_trabajo', 'asignar_tecnico');
           huboCambioDocumento = cambioEscalar || cambioAsignacion;
           
           // A. Actualizar cabecera de la OT
@@ -398,14 +403,27 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
 
         // 3. Encolar el Worker de Generación R-CM05 (Tipo 2 = OT) DESPUÉS del commit.
         const excelQueue = getGenerationExcelQueue();
-        await excelQueue.add('generar_ot_consolidada', {
-          tipo: 2,
-          id_registro: id,
-          codigo_actual: codigoOT,
-          tipo_entry: 'prod',
-          id_job: quoteJobId,
-          id_usuario: idUsuario,
-        });
+        try {
+          await excelQueue.add('generar_ot_consolidada', {
+            tipo: 2,
+            id_registro: id,
+            codigo_actual: codigoOT,
+            tipo_entry: 'prod',
+            id_job: quoteJobId,
+            id_usuario: idUsuario,
+          });
+        } catch (error) {
+          await fastify.prisma.quote.update({
+            where: { id: quoteJobId },
+            data: { status: 'FAILED', data: { error: 'No se pudo encolar la generación documental.' } },
+          });
+          request.log.error({ err: error, id_job: quoteJobId }, 'No se pudo encolar la generación de OT');
+          return reply.code(503).send({
+            ok: false,
+            error: 'Los cambios de la OT quedaron guardados, pero no se pudo iniciar la generación del archivo. El trabajo quedó marcado como fallido.',
+            id_job: quoteJobId,
+          });
+        }
 
         return reply.code(200).send({ 
           ok: true, 
@@ -415,8 +433,10 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
         });
 
       } catch (error) {
-        fastify.log.error(error);
-        return reply.code(500).send({ ok: false, message: 'Error consolidando la Orden de Trabajo' });
+        if (error instanceof AppError) {
+          return reply.code(error.statusCode).send({ ok: false, error: error.message });
+        }
+        throw error;
       }
     }
   );

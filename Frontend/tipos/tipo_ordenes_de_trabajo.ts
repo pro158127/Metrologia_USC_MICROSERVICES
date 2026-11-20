@@ -269,6 +269,8 @@ export interface StaffAssignmentSectionProps {
   estadoActual: EstadoOrden;
   // 🟢 Actualizar la firma de la función aquí también
   onAssignTechnician: (idUsuario: number, id_instrumento: string | number) => void;
+  onSaveAssignments: () => void;
+  saving: boolean;
 }
 export interface InstrumentosTableProps {
   instrumentDrafts: Instrument[];

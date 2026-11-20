@@ -84,6 +84,18 @@ const limpiarPlaceholder = (v?: string | null): string => {
   return s.toLowerCase().startsWith("sin ") ? "" : s;
 };
 
+const fechaISOParaInput = (valor?: string | Date | null): string => {
+  if (!valor) return "";
+  const fecha = valor instanceof Date ? valor : new Date(valor);
+  return Number.isNaN(fecha.getTime()) ? "" : fecha.toISOString().slice(0, 10);
+};
+
+const horaISOParaInput = (valor?: string | Date | null): string => {
+  if (!valor) return "";
+  const fecha = valor instanceof Date ? valor : new Date(valor);
+  return Number.isNaN(fecha.getTime()) ? "" : fecha.toISOString().slice(11, 16);
+};
+
 const buildOrderDraft = (ot: OTType): EditableOrderFields => ({
   razonSocialCert: ot.razonSocialCert ?? ot.cliente ?? "",
   nitCert: ot.nitCert ?? "",
@@ -236,6 +248,8 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   instrumentosCot,
   technicians,
   onAssignTechnician,
+  onSaveAssignments,
+  saving,
   estadoActual, // <-- Nuevo prop
 }) => {
  const todosCertificados = instrumentosCot.length > 0 && instrumentosCot.every((item) => item.certificadoCreado);
@@ -303,6 +317,16 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
               )}
             </div>
           ))}
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={onSaveAssignments}
+              disabled={saving}
+              className="rounded-xl bg-blue-600 text-white px-5 py-2 font-bold text-xs hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? "Guardando asignaciones…" : "Guardar asignaciones"}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -1399,7 +1423,7 @@ export const TreeView: React.FC<{
 // 3. COMPONENTE PADRE
 // ==========================================
 import { obtenerDatosIniciales } from "@/app/action_module/ordenes";
-import { useDbTable, useDbActions, useDbLoading, OrdenTrabajoModel, UsuarioModel, CotizacionModel, RecepcionEquipoDetalleModel, TarifaModel } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading, OrdenTrabajoModel, UsuarioModel, ClienteModel, RolesModel, TarifaModel, DocumentoModel } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
@@ -1424,6 +1448,8 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   const [selectedOT, setSelectedOT] = useState<OTType | null>(null);
   // Edición del formulario R-CM05 habilitada
   const [editingOrder, setEditingOrder] = useState(false);
+  const [savingOT, setSavingOT] = useState(false);
+  const savingOTRef = useRef(false);
   // Edición de asignación de técnicos
   const [editingTechnician, setEditingTechnician] = useState(false);
   // Borrador actual del formulario
@@ -1490,11 +1516,16 @@ const instrumentos_cot = useMemo(() => {
     }));
   }, [instrumentDrafts]); // La UI ahora reaccionará a los cambios del Draft
 
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3000);
+  }, []);
+
   /**
    * Abre una OT desde la vista de lista/tablero: busca los datos completos en dbState,
    * arma el objeto OTType y lo establece como seleccionada.
    */
-  const openOT = (otPreview: Partial<OTBase>) => {
+  const openOT = useCallback((otPreview: Partial<OTBase>) => {
     const otCompleta = ordenesTrabajo.find(
       (o) => o.idOrdenTrabajo.toString() === otPreview.id
     );
@@ -1548,7 +1579,7 @@ const instrumentos_cot = useMemo(() => {
       id: otPreview.id || otCompleta.idOrdenTrabajo.toString(),
       cliente: clienteData?.razonSocial || "Sin cliente",
       tecnico: otCompleta.responsable || "Sin asignar",
-      fecha: otCompleta.fechaCalibracion?.toString() || "",
+      fecha: fechaISOParaInput(otCompleta.fechaCalibracion),
       estado: (otCompleta.estado ?? "Creada") as EstadoOrden,
       retraso: otPreview.retraso || false,
       certificadosPendientesRevision: otCompleta.certificadosPendientesRevision ?? false,
@@ -1568,8 +1599,8 @@ const instrumentos_cot = useMemo(() => {
         : "Laboratorio permanente",
       personaContactar: otCompleta.personaContacto || clienteData?.nombreContacto || "",
       telefonoCalibracion: otCompleta.telefonoContacto || clienteData?.telefono || "",
-      fechaCalibracion: otCompleta.fechaCalibracion?.toString() || "",
-      horaCalibracion: otCompleta.hora?.toString() || "",
+      fechaCalibracion: fechaISOParaInput(otCompleta.fechaCalibracion),
+      horaCalibracion: horaISOParaInput(otCompleta.hora),
       razonSocialSolicitante: otCompleta.cliente?.razonSocial || "",
       nitSolicitante: otCompleta.cliente?.nitCedula ?? "",
       direccionSolicitante: otCompleta.cliente?.dirrecion ?? "",
@@ -1596,7 +1627,7 @@ const instrumentos_cot = useMemo(() => {
     setOrderDraft(buildOrderDraft(otCompleto));
     setInstrumentDrafts(instrumentosMapeados);
     setActiveMachine(null);
-  };
+  }, [ordenesTrabajo, clientes, documentos, showToast]);
 
   /**
    * Cierra la vista de detalle de la OT y resetea los estados relacionados.
@@ -1617,9 +1648,10 @@ const instrumentos_cot = useMemo(() => {
     const ot = ordenesTrabajo.find((o) => o.idOrdenTrabajo === otToOpen);
     if (ot) {
       lastOpenedRef.current = otToOpen;
-      openOT({ id: String(otToOpen) });
+      const timer = window.setTimeout(() => openOT({ id: String(otToOpen) }), 0);
+      return () => window.clearTimeout(timer);
     }
-  }, [otToOpen, ordenesTrabajo]);
+  }, [otToOpen, ordenesTrabajo, openOT]);
 
   // Handlers para la sección de asignación de técnicos/máquinas
 
@@ -1644,7 +1676,9 @@ const instrumentos_cot = useMemo(() => {
   };
 
 const saveOrderEdits = async () => {
-    if (!selectedOT || !orderDraft) return;
+    if (!selectedOT || !orderDraft || savingOTRef.current) return;
+    savingOTRef.current = true;
+    setSavingOT(true);
 
     // 🟢 1. Validaciones
     try {
@@ -1711,17 +1745,18 @@ const saveOrderEdits = async () => {
         loadTable("recepciones_equipo", true),
       ]);
       setEditingOrder(false);
-      showToast(`✅ Orden R-CM05 Consolidada. Job documental en curso (${response.id_job})`);
+      setEditingTechnician(false);
+      showToast(response.id_job
+        ? `✅ Orden consolidada. Generación documental en curso (${response.id_job})`
+        : "✅ Cambios guardados. No hubo cambios que requirieran una nueva versión documental.");
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error);
-      showToast(`❌ ${error.message}`);
+      showToast(`❌ ${error instanceof Error ? error.message : "No se pudo guardar la orden."}`);
+    } finally {
+      savingOTRef.current = false;
+      setSavingOT(false);
     }
-  };
-
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(""), 3000);
   };
 
   /**
@@ -1753,15 +1788,15 @@ const saveOrderEdits = async () => {
               }));
            
 
-              mergeTable("usuarios", parsedUsers as any);
+              mergeTable("usuarios", parsedUsers as unknown as UsuarioModel[]);
               break;
             }
             case 1: {
-              mergeTable("ordenes_trabajo", res?.ordenes as any);
+              mergeTable("ordenes_trabajo", res.ordenes as unknown as OrdenTrabajoModel[]);
               break;
             }
             case 2: {
-              mergeTable("clientes", res?.clientes as any);
+              mergeTable("clientes", res.clientes as unknown as ClienteModel[]);
               break;
             }
             case 3: {
@@ -1771,16 +1806,16 @@ const saveOrderEdits = async () => {
                   ...tarifa,
                   historial: tarifa.historial}
               ));
-              mergeTable("tarifas", parsedTarifas as any);
+              mergeTable("tarifas", parsedTarifas);
               break;
             }
             case 4: {
-              mergeTable("roles", res.roles as any);
+              mergeTable("roles", res.roles as unknown as RolesModel[]);
               break;
             }
             case 5: {
               // Documentos con sus versiones (si vienen en la respuesta)
-              mergeTable("documentos", res.version as any);
+              mergeTable("documentos", res.version as unknown as DocumentoModel[]);
               break;
             }
             default:
@@ -1911,9 +1946,38 @@ const saveOrderEdits = async () => {
    * La Master se muestra como nodo padre (encabezado de grupo) solo si tiene hijas.
    */
   const treeNodes = useMemo(() => {
-    const vigentes = ordenesTrabajo
-      .filter((orden) => orden.vigente !== false)
-      .map((orden) => mapearOTResumen(orden));
+    const ultimaPorFamiliaYSitio = new Map<string, OrdenTrabajoModel>();
+    const prioridadVersion = (orden: OrdenTrabajoModel) => {
+      const version = orden.version ?? 1;
+      const sufijo = orden.codigo.match(/([A-Z])$/i)?.[1]?.toUpperCase() ?? "";
+      const letra = sufijo ? sufijo.charCodeAt(0) - 64 : 0;
+      return [version, letra, orden.idOrdenTrabajo] as const;
+    };
+
+    for (const orden of ordenesTrabajo.filter((item) => item.vigente !== false)) {
+      const familia = orden.idOtRaiz != null
+        ? `raiz:${orden.idOtRaiz}`
+        : orden.idOrdenTrabajoPadre != null
+          ? `padre:${orden.idOrdenTrabajoPadre}`
+          : orden.idCotizacion != null
+            ? `cotizacion:${orden.idCotizacion}`
+            : `ot:${orden.idOrdenTrabajo}`;
+      const clave = `${familia}|sitio:${orden.sitioCalibracion ?? "UNICO"}`;
+      const actual = ultimaPorFamiliaYSitio.get(clave);
+      if (!actual) {
+        ultimaPorFamiliaYSitio.set(clave, orden);
+        continue;
+      }
+      const nueva = prioridadVersion(orden);
+      const previa = prioridadVersion(actual);
+      if (nueva[0] > previa[0] ||
+        (nueva[0] === previa[0] && nueva[1] > previa[1]) ||
+        (nueva[0] === previa[0] && nueva[1] === previa[1] && nueva[2] > previa[2])) {
+        ultimaPorFamiliaYSitio.set(clave, orden);
+      }
+    }
+
+    const vigentes = [...ultimaPorFamiliaYSitio.values()].map(mapearOTResumen);
 
     const porId = new Map(vigentes.map((n) => [n.id, n]));
 
@@ -2017,6 +2081,8 @@ const handleRemoveInstrument = (id: string) => {
             onAssignTechnician={(idUsuario: number, id_instrumentos: string | number) => 
               updateInstrumentDraft(id_instrumentos.toString(), "asignado", idUsuario)
             }
+            onSaveAssignments={saveOrderEdits}
+            saving={savingOT}
           />
 
           <OrderFormRCM05
