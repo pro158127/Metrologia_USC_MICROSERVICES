@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 // services/certificatePdf.service.ts
 // Lógica de generación de certificados PDF desacoplada del ciclo HTTP.
 // Es consumida tanto por el worker asíncrono (producción) como por rutas internas.
@@ -196,7 +197,7 @@ export async function generarCertificadoFinal(
   });
 
   const outputName = `${cert.CODIGO_CERTIFICADO}.pdf`;
-  const outputKey = `${GENERATED_PREFIX}${outputName}`;
+  const outputKey = `${GENERATED_PREFIX}${randomUUID()}/${outputName}`;
   await uploadBuffer(outputKey, Buffer.from(result.bytes), 'application/pdf', {
     originalName: outputName,
   });

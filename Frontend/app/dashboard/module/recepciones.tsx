@@ -469,6 +469,11 @@ const DatosGeneralesSection = ({
 };
 
 // 3.6 TablaInstrumentos con selector desde tarifas
+const opcionTarifaRecepcion = (tarifa: { Instrumento: string; tipoServicio: string; magnitud: string }) =>
+  `${tarifa.Instrumento} — ${tarifa.tipoServicio} · ${tarifa.magnitud}`;
+
+const claveInstrumentoRecepcion = (nombre: string) => nombre.trim().toLocaleLowerCase('es-CO').replace(/\s+/g, " ");
+
 const TablaInstrumentos = ({
   instrumentos,
   tarifasDisponibles,
@@ -479,17 +484,10 @@ const TablaInstrumentos = ({
 }: TablaInstrumentosProps) => {
   const { can } = usePermissions();
   const puedeRegistrar = can("recepcion_de_equipos", "registrar");
-  // Función para sugerir instrumentos desde tarifas
-  const sugerenciasTarifas = useMemo(() => {
-    return tarifasDisponibles.map((t) => ({
-      label: `${t.magnitud} - ${t.tipoServicio} (${t.Instrumento})`,
-      value: t.Instrumento,
-      id: t.idTarifa,
-      magnitud: t.magnitud,
-      tipoServicio: t.tipoServicio,
-      instrumento: t.Instrumento,
-    }));
-  }, [tarifasDisponibles]);
+  const tarifasActivas = useMemo(
+    () => tarifasDisponibles.filter((tarifa) => tarifa.estado === "ACTIVO"),
+    [tarifasDisponibles],
+  );
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
@@ -555,14 +553,8 @@ const TablaInstrumentos = ({
                       className="w-full p-1 border border-slate-200 rounded font-medium"
                     />
                     <datalist id={`instrumentos-${i}`}>
-                      {sugerenciasTarifas.map((sug) => (
-                        <option
-                          key={sug.id}
-                          value={sug.instrumento}
-                          data-id={sug.id}
-                          data-magnitud={sug.magnitud}
-                          data-tipo={sug.tipoServicio}
-                        />
+                      {tarifasActivas.map((tarifa) => (
+                        <option key={tarifa.idTarifa} value={opcionTarifaRecepcion(tarifa)} />
                       ))}
                     </datalist>
                   </div>
@@ -589,7 +581,11 @@ const TablaInstrumentos = ({
                     className="w-full p-1 border border-slate-200 rounded"
                   >
                     <option value="">Seleccione servicio</option>
-                    {[...new Set(tarifasDisponibles.filter((t) => t.estado === "ACTIVO" && t.Instrumento.trim().toLowerCase() === inst.instrumento.trim().toLowerCase()).map((t) => t.tipoServicio))].map((tipo) => (
+                    {[...new Set([
+                      ...tarifasActivas.filter((t) => claveInstrumentoRecepcion(t.Instrumento) === claveInstrumentoRecepcion(inst.instrumento))
+                        .map((t) => t.tipoServicio),
+                      inst.tipoServicio,
+                    ].filter(Boolean))].map((tipo) => (
                       <option key={tipo} value={tipo}>{tipo}</option>
                     ))}
                   </select>
@@ -1084,10 +1080,14 @@ export function MainRenderers() {
         const instrumentos = [...prev.instrumentos];
         const cambios: Partial<FilaInstrumento> = { [propiedad]: valor };
         if (propiedad === "instrumento") {
-          const tarifas = (tarifasStore ?? []).filter((t) => t.estado === "ACTIVO" && t.Instrumento.trim().toLowerCase() === String(valor).trim().toLowerCase());
-          const tipos = [...new Set(tarifas.map((t) => t.tipoServicio))];
+          const activas = (tarifasStore ?? []).filter((tarifa) => tarifa.estado === "ACTIVO");
+          const elegida = activas.find((tarifa) => opcionTarifaRecepcion(tarifa) === valor);
+          const coincidencias = elegida ? [elegida] : activas.filter((tarifa) =>
+            claveInstrumentoRecepcion(tarifa.Instrumento) === claveInstrumentoRecepcion(String(valor)));
+          const tipos = [...new Set(coincidencias.map((tarifa) => tarifa.tipoServicio))];
+          if (elegida) cambios.instrumento = elegida.Instrumento;
           cambios.tipoServicio = tipos.length === 1 ? tipos[0] : "";
-          cambios.idTarifaSeleccionada = tarifas.length === 1 ? tarifas[0].idTarifa : undefined;
+          cambios.idTarifaSeleccionada = coincidencias.length === 1 ? coincidencias[0].idTarifa : undefined;
         }
         instrumentos[index] = { ...instrumentos[index], ...cambios } as FilaInstrumento;
         return { ...prev, instrumentos };

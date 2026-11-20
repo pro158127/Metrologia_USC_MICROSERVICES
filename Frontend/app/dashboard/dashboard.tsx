@@ -1,7 +1,7 @@
 "use client";
 
 // 1. Imports
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Wrench,
   FileText,
@@ -40,10 +40,16 @@ import type {
   SystemStat,
   RecentActivityItem,
 } from "@/tipos/dashboard";
-import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading, useRevisionTablas } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { obtenerCertificadosRevision, type CertificadoRevisionItem } from "@/app/action_module/certificados";
+import { obtenerMetricasCotizacionesDashboard } from "@/app/action_module/cotizacion";
 import { useSession } from "next-auth/react";
 
 // ========== UTILIDADES DE FORMATO ==========
+const mesBogota = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", timeZone: "America/Bogota" });
+const diaBogota = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "America/Bogota" });
+const fechaCortaBogota = new Intl.DateTimeFormat("es-CO", { month: "short", timeZone: "America/Bogota" });
 const formatMoneda = (val: number) =>
   new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(val);
 
@@ -154,14 +160,20 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps & {
         <table className="min-w-full text-left text-xs text-slate-700">
           <thead className="bg-slate-50 border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-400 font-bold">
             <tr>
-              {['N° OT', 'Cliente', 'Técnico', 'Tipo', 'Fecha', 'Acción'].map((heading) => (
+              {(navigateTo === "revision"
+                ? ['Certificado', 'Instrumento', 'N° OT', 'Cliente', 'Técnico', 'Tipo', 'Fecha', 'Acción']
+                : ['N° OT', 'Cliente', 'Técnico', 'Tipo', 'Fecha', 'Acción']).map((heading) => (
                 <th key={heading} className="px-4 py-3.5 font-bold">{heading}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {pendingCerts.map((row, index) => (
-              <tr key={index} className="transition-colors hover:bg-slate-50/50">
+              <tr key={row.idCertificado ?? index} className="transition-colors hover:bg-slate-50/50">
+                {navigateTo === "revision" && <>
+                  <td className="px-4 py-3.5 font-semibold">{row.codigoCertificado}</td>
+                  <td className="px-4 py-3.5">{row.instrumento}</td>
+                </>}
                 <td className="px-4 py-3.5 font-semibold text-slate-700">{row.ot}</td>
                 <td className="px-4 py-3.5 text-slate-600 font-medium">{row.cliente}</td>
                 <td className="px-4 py-3.5 text-slate-500">{row.tecnico}</td>
@@ -173,7 +185,7 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps & {
                 <td className="px-4 py-3.5 text-slate-400 font-mono">{row.fecha}</td>
                 <td className="px-4 py-3.5">
                   <button
-                    onClick={() => onNavigate(navigateTo)}
+                    onClick={() => onNavigate(navigateTo, row.idCertificado)}
                     className="rounded-lg bg-[#5680F9] px-3 py-1.5 text-[10px] font-bold text-white transition hover:bg-[#4069E2] cursor-pointer"
                   >
                     {actionLabel}
@@ -274,7 +286,7 @@ const ServiceDistributionPieChartSection: React.FC<ServiceDistributionPieChartSe
     <section className={cardContainerStyle}>
       <div>
         <h2 className="text-base font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3">
-          Distribución de servicios
+          Distribución de OTs por estado
         </h2>
       </div>
       <div className="mt-6 h-72">
@@ -319,6 +331,25 @@ const FooterSection: React.FC = () => {
 
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { data: session } = useSession();
+  const { can } = usePermissions();
+  const puedeAcreditados = can("revision", "revisar_aprobar_acreditados");
+  const puedeNoAcreditados = can("revision", "revisar_aprobar_no_acreditados");
+  const puedeRevisar = puedeAcreditados || puedeNoAcreditados;
+  const revisionCertificados = useRevisionTablas("certificados", "calibraciones", "orden_trabajo_detalles");
+  const revisionCotizaciones = useRevisionTablas("cotizaciones", "historial_estado_cotizacion");
+  const [bandejaRevision, setBandejaRevision] = useState<CertificadoRevisionItem[]>([]);
+  const [metricasCotizaciones, setMetricasCotizaciones] = useState<Awaited<ReturnType<typeof obtenerMetricasCotizacionesDashboard>>>(null);
+  useEffect(() => {
+    let vigente = true;
+    obtenerMetricasCotizacionesDashboard().then((datos) => { if (vigente) setMetricasCotizaciones(datos); });
+    return () => { vigente = false; };
+  }, [revisionCotizaciones]);
+  useEffect(() => {
+    if (!puedeRevisar) return;
+    let vigente = true;
+    obtenerCertificadosRevision().then((datos) => { if (vigente) setBandejaRevision(datos); });
+    return () => { vigente = false; };
+  }, [puedeRevisar, revisionCertificados]);
   const cotizaciones = useDbTable("cotizaciones");
   const ordenes = useDbTable("ordenes_trabajo");
   const certificados = useDbTable("certificados");
@@ -345,22 +376,29 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     loadTable("clientes");
   }, [loadTable]);
 
-  const ordenesActivas = useMemo(
-    () => ordenes.filter((o) => o.estado !== "Certificado_enviado").length,
-    [ordenes]
-  );
-
-  const cotizacionesPendientes = useMemo(
-    () =>
-      cotizaciones.filter((c) => c.estado === "BORRADOR" || c.estado === "ENVIADA").length,
-    [cotizaciones]
-  );
+  const operativasVigentes = useMemo(() => {
+    const padres = new Set(ordenes.flatMap((o) => o.idOrdenTrabajoPadre == null ? [] : [o.idOrdenTrabajoPadre]));
+    const porGrupo = new Map<string, typeof ordenes[number]>();
+    for (const orden of ordenes) {
+      if (orden.vigente !== true || padres.has(orden.idOrdenTrabajo)) continue;
+      const familia = orden.idCotizacion ?? orden.idOtRaiz ?? orden.idOrdenTrabajo;
+      const clave = `${orden.idCotizacion != null ? "cotizacion" : "ot"}:${familia}:${orden.sitioCalibracion ?? "LABORATORIO"}`;
+      const anterior = porGrupo.get(clave);
+      if (!anterior || (orden.version ?? 1) > (anterior.version ?? 1) ||
+          ((orden.version ?? 1) === (anterior.version ?? 1) && orden.idOrdenTrabajo > anterior.idOrdenTrabajo)) porGrupo.set(clave, orden);
+    }
+    return [...porGrupo.values()];
+  }, [ordenes]);
+  const ordenesActivas = useMemo(() =>
+    operativasVigentes.filter((o) => o.estado !== "Certificado_enviado"), [operativasVigentes]);
+  const cotizacionesPendientes = metricasCotizaciones?.filter((c) => c.estado === "BORRADOR" || c.estado === "ENVIADA").length;
+  const certificadosEmitidos = certificados.filter((cert) => cert.estadoRevision === "APROBADO").length;
 
   const facturasMes = useMemo(() => {
-    const now = new Date();
-    return facturas.filter((f) => {
-      const d = new Date(f.fecha);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    const mesActual = mesBogota.format(new Date());
+    return facturas.filter((factura) => {
+      const fecha = new Date(factura.fecha);
+      return Number.isFinite(fecha.getTime()) && mesBogota.format(fecha) === mesActual;
     });
   }, [facturas]);
 
@@ -370,14 +408,14 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   );
 
   const kpiData = useMemo<KpiData[]>(() => {
-    const mesActual = new Date().toLocaleString("es-CO", { month: "long" });
+    const mesActual = new Date().toLocaleString("es-CO", { month: "long", timeZone: "America/Bogota" });
     return [
       {
         icon: <Wrench size={22} className="text-slate-900" />,
         label: "OT Activas",
-        value: String(ordenesActivas),
-        sub: `de ${ordenes.length} OTs totales`,
-        trend: porcentaje(ordenesActivas, ordenes.length),
+        value: String(ordenesActivas.length),
+        sub: `de ${operativasVigentes.length} OTs operativas vigentes`,
+        trend: porcentaje(ordenesActivas.length, operativasVigentes.length),
         up: true,
         color: "#6366F1",
         bg: "#EEF2FF",
@@ -385,9 +423,9 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       {
         icon: <FileText size={22} className="text-slate-900" />,
         label: "Cotizaciones pendientes",
-        value: String(cotizacionesPendientes),
-        sub: `de ${cotizaciones.length} cotizaciones`,
-        trend: porcentaje(cotizacionesPendientes, cotizaciones.length),
+        value: cotizacionesPendientes == null ? "—" : String(cotizacionesPendientes),
+        sub: metricasCotizaciones ? `de ${metricasCotizaciones.length} cotizaciones` : "Métricas no disponibles",
+        trend: porcentaje(cotizacionesPendientes ?? 0, metricasCotizaciones?.length ?? 0),
         up: false,
         color: "#F59E0B",
         bg: "#FFFBEB",
@@ -405,41 +443,33 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       {
         icon: <Award size={22} className="text-slate-900" />,
         label: "Certificados emitidos",
-        value: String(certificados.length),
-        sub: "emitidos en total",
-        trend: porcentaje(certificados.length, certificados.length),
+        value: String(certificadosEmitidos),
+        sub: "certificados aprobados",
+        trend: porcentaje(certificadosEmitidos, certificados.length),
         up: true,
         color: "#8B5CF6",
         bg: "#F5F3FF",
       },
     ];
-  }, [ordenesActivas, ordenes, cotizacionesPendientes, cotizaciones, ingresosMes, facturasMes, facturas, certificados]);
+  }, [ordenesActivas, operativasVigentes, cotizacionesPendientes, metricasCotizaciones, ingresosMes, facturasMes, facturas, certificados, certificadosEmitidos]);
 
   const barData = useMemo<BarChartPoint[]>(() => {
-    const now = new Date();
+    const [anio, mesActual] = mesBogota.format(new Date()).split("-").map(Number);
     const points: BarChartPoint[] = [];
     for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const mes = d.toLocaleString("es-CO", { month: "short" });
-      const emitidas = cotizaciones.filter((c) => {
-        const cd = new Date(c.createdAt);
-        return cd.getMonth() === d.getMonth() && cd.getFullYear() === d.getFullYear();
-      }).length;
-      const aprobadas = cotizaciones.filter((c) => {
-        const cd = new Date(c.createdAt);
-        return (
-          cd.getMonth() === d.getMonth() &&
-          cd.getFullYear() === d.getFullYear() &&
-          c.estado === "APROBADA"
-        );
-      }).length;
+      const d = new Date(Date.UTC(anio, mesActual - 1 - i, 15, 12));
+      const mes = fechaCortaBogota.format(d);
+      const claveMes = mesBogota.format(d);
+      const coincideMes = (fecha: string | null) => fecha != null && mesBogota.format(new Date(fecha)) === claveMes;
+      const emitidas = (metricasCotizaciones ?? []).filter((c) => coincideMes(c.emitidaAt)).length;
+      const aprobadas = (metricasCotizaciones ?? []).filter((c) => coincideMes(c.aprobadaAt)).length;
       points.push({ mes, emitidas, aprobadas });
     }
     return points;
-  }, [cotizaciones]);
+  }, [metricasCotizaciones]);
 
   const pieData = useMemo<PieSlice[]>(() => {
-    const estados = ordenes.reduce<Record<string, number>>((acc, o) => {
+    const estados = operativasVigentes.reduce<Record<string, number>>((acc, o) => {
       const key = o.estado ?? "Sin estado";
       acc[key] = (acc[key] ?? 0) + 1;
       return acc;
@@ -447,10 +477,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     const colors = ["#6366F1", "#8B5CF6", "#A5B4FC", "#22C55E", "#F59E0B", "#F87171", "#94A3B8"];
     return Object.entries(estados).map(([name, value], index) => ({
       name,
-      value,
+      value: Math.round(value * 1000 / operativasVigentes.length) / 10,
       color: colors[index % colors.length],
     }));
-  }, [ordenes]);
+  }, [operativasVigentes]);
 
   const rol = (session?.user?.role as string) || "";
   const esTecnico = rol === "Técnico";
@@ -480,7 +510,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     }
     return {
       title: "Certificados pendientes de revisión",
-      subtitle: "Resumen de las órdenes con prioridad alta y próximas entregas.",
+      subtitle: "Certificados pendientes que puedes revisar.",
       navigateTo: "revision",
       actionLabel: "Revisar",
     };
@@ -489,10 +519,9 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const pendingCerts = useMemo<PendingCertRow[]>(() => {
     if (esTecnico) {
       const miId = Number(session?.user?.id_user);
-      return ordenes
+      return ordenesActivas
         .filter((o) => (o.instrumentos ?? []).some((inst) => Number(inst.asignado) === miId))
         .filter((o) => o.estado === "Asignada" || o.estado === "En_calibración")
-        .slice(0, 4)
         .map((o) => ({
           ot: o.codigo,
           cliente: o.cliente?.razonSocial ?? "",
@@ -502,9 +531,8 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         }));
     }
     if (esSecretaria) {
-      return ordenes
+      return ordenesActivas
         .filter((o) => o.estado === "Certificado_aprobado" && o.estado_pago !== "PAGADO")
-        .slice(0, 4)
         .map((o) => ({
           ot: o.codigo,
           cliente: o.cliente?.razonSocial ?? "",
@@ -513,25 +541,24 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           fecha: formatFechaCorta(o.createdAt),
         }));
     }
-    return ordenes
-      .filter((o) => o.estadoRevision === "PENDIENTE_REVISION")
-      .slice(0, 4)
-      .map((o) => ({
-        ot: o.codigo,
-        cliente: o.cliente?.razonSocial ?? "",
-        tecnico: o.responsable ?? "",
-        tipo: o.estado ?? "",
-        fecha: formatFechaCorta(o.createdAt),
-      }));
-  }, [esTecnico, esSecretaria, ordenes, session]);
+    return puedeRevisar ? bandejaRevision.filter((cert) =>
+      cert.estadoRevision === "PENDIENTE_REVISION" &&
+      (cert.acreditado ? puedeAcreditados : puedeNoAcreditados),
+    ).map((cert) => ({
+      idCertificado: cert.idCertificado, codigoCertificado: cert.codigo, instrumento: cert.instrumento,
+      ot: cert.codigoOT, cliente: cert.cliente, tecnico: cert.tecnico,
+      tipo: cert.acreditado ? "Acreditado" : "No acreditado", fecha: formatFechaCorta(cert.createdAt),
+    })) : [];
+  }, [esTecnico, esSecretaria, ordenesActivas, session, puedeRevisar, bandejaRevision, puedeAcreditados, puedeNoAcreditados]);
 
   const alerts = useMemo<AlertItem[]>(() => {
-    const otsSinResponsable = ordenes.filter((o) => !o.responsable).length;
-    const otsConRetraso = ordenes.filter((o) => {
+    const otsSinResponsable = ordenesActivas.filter((o) => !o.responsable || o.responsable === "Sin asignar").length;
+    const otsConRetraso = ordenesActivas.filter((o) => {
       if (!o.fechaLimiteFacturacion) return false;
-      return new Date(o.fechaLimiteFacturacion) < new Date();
+      const fecha = new Date(o.fechaLimiteFacturacion);
+      return Number.isFinite(fecha.getTime()) && fecha.toISOString().slice(0, 10) < diaBogota.format(new Date());
     }).length;
-    const pendientes = ordenes.filter((o) => o.estadoRevision === "PENDIENTE_REVISION").length;
+    const pendientes = !esTecnico && !esSecretaria ? pendingCerts.length : 0;
     const items: AlertItem[] = [];
     if (otsConRetraso > 0) {
       items.push({
@@ -564,16 +591,16 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       });
     }
     return items;
-  }, [ordenes]);
+  }, [ordenesActivas, esTecnico, esSecretaria, pendingCerts]);
 
   const systemStats = useMemo<SystemStat[]>(() => {
     return [
       { label: "Clientes", value: String(clientes.length) },
-      { label: "Cotizaciones", value: String(cotizaciones.length) },
-      { label: "OT activas", value: String(ordenesActivas) },
+      { label: "Cotizaciones", value: metricasCotizaciones ? String(metricasCotizaciones.length) : "—" },
+      { label: "OT activas", value: String(ordenesActivas.length) },
       { label: "Facturas", value: String(facturas.length) },
     ];
-  }, [clientes, cotizaciones, ordenesActivas, facturas]);
+  }, [clientes, metricasCotizaciones, ordenesActivas, facturas]);
 
   const recentActivity = useMemo<RecentActivityItem[]>(() => {
     const actividades: RecentActivityItem[] = [];
@@ -621,15 +648,15 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           <WelcomeHeaderSection systemStats={systemStats} userName={session?.user?.name} />
           <KpiGridSection kpiData={kpiData} />
           <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
-            <PendingCertificatesSection
+            {(puedeRevisar || esTecnico || esSecretaria) && <PendingCertificatesSection
               onNavigate={onNavigate}
-              pendingCerts={pendingCerts}
+              pendingCerts={pendingCerts.slice(0, 4)}
               pendingCount={pendingCerts.length}
               title={pendingSection.title}
               subtitle={pendingSection.subtitle}
               navigateTo={pendingSection.navigateTo}
               actionLabel={pendingSection.actionLabel}
-            />
+            />}
             <SystemAlertsSection alerts={alerts} recentActivity={recentActivity} />
           </div>
           <div className="grid gap-4 xl:grid-cols-[3fr_2fr] mb-6">

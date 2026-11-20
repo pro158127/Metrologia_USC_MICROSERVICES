@@ -469,7 +469,7 @@ function mapRevision(data: CertificadoRevisionItem[]): CertificadoRevision[] {
   });
 }
 
-export function RevisionCertificados() {
+export function RevisionCertificados({ certificadoInicial = null }: { certificadoInicial?: number | null }) {
   const { data: session } = useSession();
   const revision = useRevisionTablas("certificados", "calibraciones");
   const { can } = usePermissions();
@@ -483,7 +483,7 @@ export function RevisionCertificados() {
   );
   const [certsRaw, setCertsRaw] = useState<CertificadoRevision[]>([]);
   const [cargando, setCargando] = useState(true);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(certificadoInicial);
   const [showDevolver, setShowDevolver] = useState<number | null>(null);
   const [showAprobar, setShowAprobar] = useState<number | null>(null);
   const [motivo, setMotivo] = useState("");

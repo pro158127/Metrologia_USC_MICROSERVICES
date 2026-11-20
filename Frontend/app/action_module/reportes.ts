@@ -42,6 +42,7 @@ export interface TrazabilidadReporte {
 }
 
 export interface DatosReporte {
+  series: { mes: string; interno: number; externo: number; tasa: number }[];
   kpis: {
     cotizacionesEmitidas: number;
     tasaConversion: number;

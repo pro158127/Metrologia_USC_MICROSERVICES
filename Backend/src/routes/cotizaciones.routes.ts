@@ -113,7 +113,9 @@ const respuestaDocumentosCotizacionSchema = z.object({
   data: z.object({
     idCotizacion: z.number(),
     codigo: z.string(),
-    archivados: z.object({ cotizacion: z.array(documentoItemSchema), ordenTrabajo: z.array(documentoItemSchema), recepcion: z.array(documentoItemSchema) }),
+    archivados: z.object({ cotizacion: z.array(documentoItemSchema), ordenTrabajo: z.array(documentoItemSchema),
+      recepcion: z.array(documentoItemSchema), certificados: z.array(documentoCertificadoItemSchema) }),
+    pendientes: z.object({ cotizacion: z.array(z.string()), ordenTrabajo: z.array(z.string()), recepcion: z.array(z.string()), certificados: z.array(z.string()) }),
     categorias: z.object({
       recepcion: z.array(documentoItemSchema),
       cotizacion: z.array(documentoItemSchema),
@@ -1556,6 +1558,25 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
     }
   );
 
+  app.get('/api/v1/cotizaciones/metricas-dashboard', { preHandler: [fastify.authenticate] }, async () => {
+    const cotizaciones = await fastify.prisma.cotizaciones.findMany({
+      select: {
+        ESTADO: true,
+        CREATED_AT: true,
+        historial_estado_cotizacion: {
+          where: { ESTADO_NUEVO: { in: [Estados.ENVIADA, Estados.APROBADA] } },
+          orderBy: { CREATED_AT: 'asc' },
+          select: { ESTADO_NUEVO: true, CREATED_AT: true },
+        },
+      },
+    });
+    return cotizaciones.map((c) => ({
+      estado: c.ESTADO,
+      emitidaAt: c.historial_estado_cotizacion.find((h) => h.ESTADO_NUEVO === Estados.ENVIADA)?.CREATED_AT ?? (c.ESTADO !== Estados.BORRADOR ? c.CREATED_AT : null),
+      aprobadaAt: c.historial_estado_cotizacion.find((h) => h.ESTADO_NUEVO === Estados.APROBADA)?.CREATED_AT ?? null,
+    }));
+  });
+
   app.get(
     '/api/v1/cotizaciones',
     {
@@ -1665,6 +1686,8 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           VERSION: true,
           VIGENTE: true,
           SITIO_CALIBRACION: true,
+          ES_EN_SITIO: true,
+          ES_INTERNO_USC: true,
           CREATED_AT: true,
         },
       });
@@ -1754,7 +1777,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             include: {
               usuarios: { select: { NOMBRE_COMPLETO: true } },
               recepcion_equipo_detalles: {
-                select: { INSTRUMENTO: true, SERIE: true },
+                select: { INSTRUMENTO: true, SERIE: true, ID_RECEPCION_FK: true, activacion: true },
               },
             },
           },
@@ -1820,53 +1843,39 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         versiones: doc.version_documentos.map(toVersion),
       });
 
+      const compararVigencia = (a: { VERSION: number | null; CREATED_AT: Date | null }, b: typeof a) =>
+        (b.VERSION ?? 1) - (a.VERSION ?? 1) || (b.CREATED_AT?.getTime() ?? 0) - (a.CREATED_AT?.getTime() ?? 0);
+
       const seleccionarFormato = (
         docs: typeof documentos,
         tipo: TipoDocumentoGenerado,
-        codigoVigente: string,
+        codigo: string,
+        perteneceAlVigente: (doc: (typeof documentos)[number]) => boolean,
       ) => {
-        const archivos = docs.flatMap<ReturnType<typeof toItem>>((doc) => {
-          const item = toItem(doc);
-          const versiones = doc.version_documentos
-            .filter((version) => esPdfGenerado(version.RUTA_URL, tipo, codigoVigente))
-            .map(toVersion);
-          if (versiones.length > 0) {
-            return versiones.map((version) => ({
-              ...item,
-              nombre: version.nombre,
-              rutaUrl: version.rutaUrl,
-              mimeType: 'application/pdf',
-              createdAt: version.createdAt,
-              versionActual: version.version,
-              idVersionActual: version.idVersion,
-              versiones: [version],
-            }));
-          }
-          return esPdfGenerado(doc.RUTA_URL, tipo, codigoVigente)
-            ? [{
-                ...item,
-                nombre: nombreArchivoDocumento(doc.RUTA_URL),
-                rutaUrl: doc.RUTA_URL,
-                mimeType: 'application/pdf',
-                idVersionActual: undefined,
-                versionActual: 1,
-                versiones: [],
-              }]
-            : [];
-        }).sort((a, b) =>
-          Number(b.nombre === `${codigoVigente}.pdf`) - Number(a.nombre === `${codigoVigente}.pdf`) ||
-          b.createdAt.getTime() - a.createdAt.getTime() ||
-          (b.idVersionActual ?? 0) - (a.idVersionActual ?? 0)
-        );
-        const [actual, ...anteriores] = archivos;
-        if (!actual) return null;
-        const rutas = new Set([actual.rutaUrl]);
-        const versiones = anteriores.flatMap((archivo) => archivo.versiones).filter((version) => {
-          if (rutas.has(version.rutaUrl)) return false;
+        const archivos = docs.flatMap((doc) => {
+          const candidatos = doc.version_documentos.map(toVersion);
+          if (!candidatos.some((v) => v.rutaUrl === doc.RUTA_URL)) candidatos.push({
+            idVersion: -doc.ID_DOCUMENTO, version: 1, rutaUrl: doc.RUTA_URL,
+            nombre: nombreArchivoDocumento(doc.RUTA_URL), createdAt: doc.CREATED_AT, usuario: null,
+          });
+          return candidatos.filter((v) => esPdfGenerado(v.rutaUrl, tipo, codigo)).map((version) => ({ doc, version }));
+        }).sort((a, b) => b.version.createdAt.getTime() - a.version.createdAt.getTime() || b.version.idVersion - a.version.idVersion);
+        const vigente = archivos.find(({ doc, version }) => perteneceAlVigente(doc) &&
+          version.nombre.toUpperCase() === `${codigo.toUpperCase()}.PDF`);
+        const rutas = new Set(vigente ? [vigente.version.rutaUrl] : []);
+        const anteriores = archivos.flatMap(({ version }) => {
+          if (rutas.has(version.rutaUrl)) return [];
           rutas.add(version.rutaUrl);
-          return true;
+          return [version];
         });
-        return { ...actual, versiones };
+        const proyectar = ({doc, version}: (typeof archivos)[number]) => ({
+          ...toItem(doc), nombre: version.nombre, rutaUrl: version.rutaUrl, mimeType: 'application/pdf',
+          createdAt: version.createdAt, versionActual: version.version, idVersionActual: version.idVersion, versiones: anteriores,
+        });
+        return {
+          vigente: vigente ? { ...proyectar(vigente), nombre: `${codigo}.pdf` } : null,
+          archivado: !vigente && archivos[0] ? { ...proyectar(archivos[0]), idVersionActual: undefined } : null,
+        };
       };
 
       const categorias = {
@@ -1877,108 +1886,89 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         certificados: [] as z.infer<typeof documentoCertificadoItemSchema>[],
       };
 
-      const archivados = { cotizacion: [] as ReturnType<typeof toItem>[], ordenTrabajo: [] as ReturnType<typeof toItem>[], recepcion: [] as ReturnType<typeof toItem>[] };
-      const guardarArchivados = (docs: typeof documentosSinCertificados, tipo: TipoDocumentoGenerado, codigo: string) => {
-        const formato = seleccionarFormato(docs, tipo, codigo);
-        if (!formato) return;
-        const versiones = [
-          { idVersion: formato.idVersionActual ?? -formato.idDocumento, version: formato.versionActual,
-            rutaUrl: formato.rutaUrl, createdAt: formato.createdAt, usuario: null, nombre: formato.nombre },
-          ...formato.versiones,
-        ];
-        archivados[tipo === 1 ? 'cotizacion' : tipo === 2 ? 'ordenTrabajo' : 'recepcion'].push({ ...formato, idVersionActual: undefined, versiones });
-      };
-
+      const archivados = { cotizacion: [] as ReturnType<typeof toItem>[], ordenTrabajo: [] as ReturnType<typeof toItem>[],
+        recepcion: [] as ReturnType<typeof toItem>[], certificados: [] as z.infer<typeof documentoCertificadoItemSchema>[] };
+      const pendientes = { cotizacion: [] as string[], ordenTrabajo: [] as string[], recepcion: [] as string[], certificados: [] as string[] };
       const formatos = documentosSinCertificados.filter((doc) => doc.ordenPagoId == null);
       categorias.comprobantes = documentosSinCertificados
         .filter((doc) => doc.ordenPagoId != null && otIds.includes(doc.ordenPagoId))
-        .map(toItem);
-      const formatoVigente = (docs: typeof documentosSinCertificados, tipo: TipoDocumentoGenerado, codigo: string) => {
-        const formato = seleccionarFormato(docs, tipo, codigo);
-        if (!formato || formato.nombre.toUpperCase() !== `${codigo.toUpperCase()}.PDF`) {
-          guardarArchivados(docs, tipo, codigo);
-          return null;
-        }
-        return formato;
+        .map((doc) => {
+          const item = toItem(doc);
+          return { ...item, nombre: nombreArchivoDocumento(item.rutaUrl) };
+        });
+
+      const guardarFormato = (
+        categoria: Exclude<keyof typeof pendientes, 'certificados'>, tipo: TipoDocumentoGenerado, codigo: string,
+        docs: typeof documentos, perteneceAlVigente?: (doc: (typeof documentos)[number]) => boolean,
+      ) => {
+        const { vigente, archivado } = seleccionarFormato(docs, tipo, codigo, perteneceAlVigente ?? (() => false));
+        if (vigente) categorias[categoria].push(vigente);
+        else if (perteneceAlVigente) pendientes[categoria].push(codigo);
+        if (archivado) archivados[categoria].push(archivado);
       };
-      const formatoCotizacion = formatoVigente(
-        formatos.filter((doc) => doc.ID_COTIZACION_FK === idCotizacion &&
-          doc.ID_ORDEN_TRABAJO_FK == null && doc.ID_RECEPCION_FK == null),
-        1, cotizacion.CODIGO_COTIZACION,
+      guardarFormato('cotizacion', 1, cotizacion.CODIGO_COTIZACION,
+        formatos.filter((doc) => doc.ID_COTIZACION_FK === idCotizacion && doc.ID_ORDEN_TRABAJO_FK == null && doc.ID_RECEPCION_FK == null),
+        () => true,
       );
-      if (formatoCotizacion) categorias.cotizacion.push(formatoCotizacion);
 
-      // Las OTs maestras son contenedores del grupo heterogéneo; mostrar solo
-      // una OT vigente por sitio/raíz evita duplicar documentos de versiones.
-      const ordenesPorLinaje = new Map<string, typeof ordenes>();
+      const padres = new Set(ordenes.flatMap((orden) => orden.ID_OT_PADRE_FK == null ? [] : [orden.ID_OT_PADRE_FK]));
+      const otVigentePorSitio = new Map<string, typeof ordenes[number]>();
+      for (const orden of [...ordenes].sort((a, b) => compararVigencia(a, b) || b.ID_ORDEN_TRABAJO - a.ID_ORDEN_TRABAJO)) {
+        if (!orden.VIGENTE || padres.has(orden.ID_ORDEN_TRABAJO)) continue;
+        const sitio = orden.SITIO_CALIBRACION ?? (orden.ES_INTERNO_USC ? 'INTERNO_USC' : orden.ES_EN_SITIO ? 'CLIENTE' : 'LABORATORIO');
+        if (!otVigentePorSitio.has(sitio)) otVigentePorSitio.set(sitio, orden);
+      }
+      const idsOtVigentes = new Set([...otVigentePorSitio.values()].map((orden) => orden.ID_ORDEN_TRABAJO));
       for (const orden of ordenes) {
-        const raiz = orden.ID_OT_RAIZ ?? orden.ID_OT_PADRE_FK ?? orden.ID_ORDEN_TRABAJO;
-        const sitio = orden.SITIO_CALIBRACION ?? 'MASTER';
-        const clave = `${raiz}:${sitio}`;
-        const grupo = ordenesPorLinaje.get(clave) ?? [];
-        grupo.push(orden);
-        ordenesPorLinaje.set(clave, grupo);
-      }
-      for (const grupo of ordenesPorLinaje.values()) {
-        const ordenadas = [...grupo].sort(
-          (a, b) => (b.VERSION ?? 1) - (a.VERSION ?? 1) ||
-            (b.CREATED_AT?.getTime() ?? 0) - (a.CREATED_AT?.getTime() ?? 0)
-        );
-        const vigente = ordenadas.find((orden) => orden.VIGENTE);
-        if (vigente && ordenes.some((orden) => orden.VIGENTE &&
-            orden.ID_OT_PADRE_FK === vigente.ID_ORDEN_TRABAJO)) continue;
-        const ids = new Set(grupo.map((orden) => orden.ID_ORDEN_TRABAJO));
-        const docs = formatos.filter((doc) => doc.ID_ORDEN_TRABAJO_FK != null && ids.has(doc.ID_ORDEN_TRABAJO_FK));
-        if (!vigente) {
-          guardarArchivados(docs, 2, ordenadas[0].CODIGO_OT);
-          continue;
-        }
-        const formato = formatoVigente(docs, 2, vigente.CODIGO_OT);
-        if (formato) categorias.ordenTrabajo.push(formato);
+        const vigente = idsOtVigentes.has(orden.ID_ORDEN_TRABAJO);
+        const docs = formatos.filter((doc) => doc.ID_ORDEN_TRABAJO_FK === orden.ID_ORDEN_TRABAJO && doc.ID_RECEPCION_FK == null);
+        guardarFormato('ordenTrabajo', 2, orden.CODIGO_OT, docs, vigente ? () => true : undefined);
       }
 
-      // Una recepción vigente por OT. Las recepciones reemplazadas y los
-      // documentos previos se conservan únicamente en la trazabilidad.
-      const recepcionesPorOT = new Map<string, typeof recepciones>();
-      for (const recepcion of recepciones) {
-        const claveOT = recepcion.ID_ORDEN_TRABAJO_FK != null
-          ? `ot:${recepcion.ID_ORDEN_TRABAJO_FK}`
-          : `raiz:${recepcion.ID_RECEPCION_RAIZ ?? recepcion.ID_RECEPCION}`;
-        const grupo = recepcionesPorOT.get(claveOT) ?? [];
-        grupo.push(recepcion);
-        recepcionesPorOT.set(claveOT, grupo);
+      const recVigentePorGrupo = new Map<string, typeof recepciones[number]>();
+      for (const recepcion of [...recepciones].sort((a, b) => compararVigencia(a, b) || b.ID_RECEPCION - a.ID_RECEPCION)) {
+        if (!recepcion.VIGENTE || recepcion.activacion === false ||
+            (recepcion.ID_ORDEN_TRABAJO_FK != null && !idsOtVigentes.has(recepcion.ID_ORDEN_TRABAJO_FK))) continue;
+        const grupo = recepcion.ID_ORDEN_TRABAJO_FK != null ? `ot:${recepcion.ID_ORDEN_TRABAJO_FK}`
+          : `rec:${recepcion.ID_RECEPCION_RAIZ ?? recepcion.ID_RECEPCION}`;
+        if (!recVigentePorGrupo.has(grupo)) recVigentePorGrupo.set(grupo, recepcion);
       }
-      for (const grupo of recepcionesPorOT.values()) {
-        const ordenadas = [...grupo].sort(
-          (a, b) => (b.VERSION ?? 1) - (a.VERSION ?? 1) || b.CREATED_AT.getTime() - a.CREATED_AT.getTime()
-        );
-        const vigente = ordenadas.find((recepcion) => recepcion.VIGENTE && recepcion.activacion !== false);
-        const ids = new Set(grupo.map((recepcion) => recepcion.ID_RECEPCION));
-        const docs = formatos.filter((doc) => doc.ID_RECEPCION_FK != null && ids.has(doc.ID_RECEPCION_FK));
-        if (!vigente) {
-          guardarArchivados(docs, 3, ordenadas[0].CODIGO_RECEPCION);
-          continue;
-        }
-        const formato = formatoVigente(docs, 3, vigente.CODIGO_RECEPCION);
-        if (formato) categorias.recepcion.push(formato);
+      const idsRecVigentes = new Set([...recVigentePorGrupo.values()].map((recepcion) => recepcion.ID_RECEPCION));
+      for (const recepcion of recepciones) {
+        const docs = formatos.filter((doc) => doc.ID_RECEPCION_FK === recepcion.ID_RECEPCION);
+        guardarFormato('recepcion', 3, recepcion.CODIGO_RECEPCION, docs,
+          idsRecVigentes.has(recepcion.ID_RECEPCION) ? () => true : undefined);
       }
 
       for (const cert of certificados) {
-        const versiones = cert.documentos?.version_documentos ?? [];
+        const versiones = (cert.documentos?.version_documentos ?? []).map(toVersion);
+        if (!versiones.length && cert.documentos?.RUTA_URL) {
+          versiones.push({
+            idVersion: -cert.ID_DOCUMENTO_FK, version: 1, rutaUrl: cert.documentos.RUTA_URL,
+            nombre: nombreArchivoDocumento(cert.documentos.RUTA_URL), createdAt: cert.documentos.CREATED_AT,
+            usuario: null,
+          });
+        }
         const calibracion = cert.calibraciones;
         const detalle = calibracion?.recepcion_equipo_detalles ?? null;
 
-        categorias.certificados.push({
+        const esVigente = cert.ESTADO_REVISION === 'APROBADO' && detalle?.activacion !== false &&
+          detalle != null && idsRecVigentes.has(detalle.ID_RECEPCION_FK);
+        const codigoArchivo = `${cert.CODIGO_CERTIFICADO}.pdf`;
+        const archivoFinal = versiones.find((version) =>
+          version.rutaUrl.startsWith('certificados-generados/') &&
+          version.nombre.replace(/^\d+_/, '') === codigoArchivo &&
+          (!cert.REVISADO_AT || version.idVersion < 0 || version.createdAt >= cert.REVISADO_AT));
+        if (esVigente && !archivoFinal) pendientes.certificados.push(cert.CODIGO_CERTIFICADO);
+        (esVigente && archivoFinal ? categorias.certificados : archivados.certificados).push({
           idCertificado: cert.ID_CERTIFICADO,
           codigoCertificado: cert.CODIGO_CERTIFICADO,
           idDocumento: cert.ID_DOCUMENTO_FK,
-          nombre: versiones[0]
-            ? nombreArchivoDocumento(versiones[0].RUTA_URL)
-            : cert.documentos?.NOMBRE ?? cert.CODIGO_CERTIFICADO,
-          rutaUrl: versiones[0]?.RUTA_URL ?? null,
+          nombre: codigoArchivo,
+          rutaUrl: archivoFinal?.rutaUrl ?? versiones[0]?.rutaUrl ?? null,
           mimeType: cert.documentos?.MIME_TYPE ?? 'application/pdf',
           createdAt: cert.documentos?.CREATED_AT ?? calibracion?.CREATED_AT ?? new Date(),
-          versiones: versiones.map(toVersion),
+          versiones,
           trazabilidad: {
             instrumento: detalle?.INSTRUMENTO ?? null,
             serie: detalle?.SERIE ?? null,
@@ -1988,7 +1978,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             revisadoAt: cert.REVISADO_AT ?? null,
             revisor: cert.ID_REVISOR_FK != null ? revisorMap.get(cert.ID_REVISOR_FK) ?? null : null,
             motivoRechazo: cert.MOTIVO_RECHAZO ?? null,
-            versiones: versiones.map(toVersion),
+            versiones,
             sellos: cert.certificado_sellos.map((cs) => cs.sellos.NOMBRE),
           },
         });
@@ -2001,6 +1991,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           codigo: cotizacion.CODIGO_COTIZACION,
           categorias,
           archivados,
+          pendientes,
         },
       };
     }

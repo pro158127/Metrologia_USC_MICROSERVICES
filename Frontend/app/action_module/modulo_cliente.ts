@@ -372,7 +372,8 @@ export interface DocumentoCertificadoItem {
 export interface DocumentosCotizacionCategorias {
   idCotizacion: number;
   codigo: string;
-  archivados?: { cotizacion: DocumentoItem[]; ordenTrabajo: DocumentoItem[]; recepcion: DocumentoItem[] };
+  archivados?: { cotizacion: DocumentoItem[]; ordenTrabajo: DocumentoItem[]; recepcion: DocumentoItem[]; certificados?: DocumentoCertificadoItem[] };
+  pendientes?: { cotizacion: string[]; ordenTrabajo: string[]; recepcion: string[]; certificados?: string[] };
   categorias: {
     recepcion: DocumentoItem[];
     cotizacion: DocumentoItem[];

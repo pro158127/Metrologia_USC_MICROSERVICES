@@ -1,7 +1,7 @@
 // services/reportes.service.ts
 // Consolida los datos de reportes con joins correctos y genera los archivos
 // de exportación (PDF / Excel) sin depender de Fastify ni del worker.
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readFile } from 'node:fs/promises';
@@ -55,6 +55,7 @@ export interface DatosReporte {
     ingresos: number;
     ordenesInternas: number;
   };
+  series: { mes: string; interno: number; externo: number; tasa: number }[];
   certificados: CertificadoReporte[];
   tecnicos: TecnicoReporte[];
   trazabilidad: TrazabilidadReporte[];
@@ -64,8 +65,8 @@ export interface DatosReporte {
 function enRangoFecha(fecha: Date | null | undefined, inicio?: string, fin?: string): boolean {
   if (!fecha) return false;
   const t = fecha.getTime();
-  if (inicio && t < new Date(`${inicio}T00:00:00`).getTime()) return false;
-  if (fin && t > new Date(`${fin}T23:59:59`).getTime()) return false;
+  if (inicio && t < new Date(`${inicio}T00:00:00-05:00`).getTime()) return false;
+  if (fin && t > new Date(`${fin}T23:59:59.999-05:00`).getTime()) return false;
   return true;
 }
 
@@ -140,6 +141,7 @@ export async function obtenerDatosReporte(
   // ======================================================================
   const calibraciones = await prisma.calibraciones.findMany({
     include: {
+      certificados: { select: { ESTADO_REVISION: true } },
       usuarios: true,
       recepcion_equipo_detalles: {
         include: {
@@ -178,8 +180,10 @@ export async function obtenerDatosReporte(
       diasPorOT: new Map<number, number>(),
       equipos: 0,
     };
+    if (!cal.certificados) continue;
     g.equipos += 1;
-    if (ot?.ID_ORDEN_TRABAJO && ot.CREATED_AT && cal.CREATED_AT) {
+    if (ot?.VIGENTE && (ot.estado === 'Certificado_aprobado' || ot.estado === 'Certificado_enviado') &&
+        ot.CREATED_AT && cal.CREATED_AT) {
       const dias = Math.max(0, (cal.CREATED_AT.getTime() - ot.CREATED_AT.getTime()) / 86400000);
       const previo = g.diasPorOT.get(ot.ID_ORDEN_TRABAJO) ?? 0;
       g.diasPorOT.set(ot.ID_ORDEN_TRABAJO, Math.max(previo, dias));
@@ -286,31 +290,95 @@ export async function obtenerDatosReporte(
     .filter((t) => {
       if (filtros.cliente && !norm(t.cliente).includes(norm(filtros.cliente))) return false;
       if ((filtros.fechaInicio || filtros.fechaFin) && !enRangoFecha(t.fecha ? new Date(t.fecha) : null, filtros.fechaInicio, filtros.fechaFin)) return false;
-      if (filtros.tecnico && !norm(t.tecnico).includes(norm(filtros.tecnico))) return false;
-      if (filtros.tipoServicio && !norm(t.tipoServicio).includes(norm(filtros.tipoServicio))) return false;
+      if (filtros.tecnico && !t.tecnico.split(', ').some((nombre) => norm(nombre) === norm(filtros.tecnico))) return false;
+      if (filtros.tipoServicio && !t.tipoServicio.split(', ').some((tipo) => norm(tipo) === norm(filtros.tipoServicio))) return false;
       return true;
     });
 
   // ======================================================================
   // 4. KPIs
   // ======================================================================
-  const [totalCotizaciones, cotizacionesAprobadas, facturasMonto, ordenesInternas] =
-    await Promise.all([
-      prisma.cotizaciones.count(),
-      prisma.cotizaciones.count({ where: { ESTADO: 'APROBADA' } }),
-      prisma.facturas.aggregate({ _sum: { VALOR: true } }),
-      prisma.ordenes_trabajo.count({ where: { ES_INTERNO_USC: true } }),
-    ]);
-
+  const otPorTecnico = filtros.tecnico
+    ? calibraciones.filter((cal) => norm(cal.usuarios?.NOMBRE_COMPLETO) === norm(filtros.tecnico))
+      .map((cal) => cal.recepcion_equipo_detalles?.recepciones_equipo?.ordenes_trabajo).filter((ot) => ot != null)
+    : [];
+  const idsCotizacionesPorTecnico = [...new Set(otPorTecnico.flatMap((ot) => ot.ID_COTIZACION_FK == null ? [] : [ot.ID_COTIZACION_FK]))];
+  const idsOtPorTecnico = [...new Set(otPorTecnico.map((ot) => ot.ID_ORDEN_TRABAJO))];
+  const cliente = filtros.cliente ? { RAZON_SOCIAL: { contains: filtros.cliente, mode: 'insensitive' as const } } : undefined;
+  const servicio = filtros.tipoServicio ? { equals: filtros.tipoServicio, mode: 'insensitive' as const } : undefined;
+  const [cotizaciones, ordenes] = await Promise.all([
+    prisma.cotizaciones.findMany({
+      where: {
+        ...(cliente ? { clientes: cliente } : {}),
+        ...(servicio ? { cotizacion_detalles: { some: { activacion: true, TIPO_SERVICIO: servicio } } } : {}),
+        ...(filtros.tecnico ? { ID_COTIZACION: { in: idsCotizacionesPorTecnico } } : {}),
+      },
+      select: { CREATED_AT: true, ESTADO: true, historial_estado_cotizacion: {
+        where: { ESTADO_NUEVO: { in: ['ENVIADA', 'APROBADA'] } },
+        orderBy: { CREATED_AT: 'asc' },
+        select: { ESTADO_NUEVO: true, CREATED_AT: true },
+      } },
+    }),
+    prisma.ordenes_trabajo.findMany({
+      where: {
+        VIGENTE: true,
+        estado: { not: 'Certificado_enviado' },
+        orden_trabajo_hijas: { none: {} },
+        recepciones_equipo: { some: { VIGENTE: true, activacion: true } },
+        ...(cliente ? { clientes: cliente } : {}),
+        ...(servicio ? { orden_trabajo_detalles: { some: { AND: [
+          { OR: [{ activacion: true }, { activacion: null }] },
+          { TIPO_SERVICIO: servicio },
+        ] } } } : {}),
+        ...(filtros.tecnico ? { ID_ORDEN_TRABAJO: { in: idsOtPorTecnico } } : {}),
+      },
+      orderBy: [{ VERSION: 'desc' }, { ID_ORDEN_TRABAJO: 'desc' }],
+      select: { ID_COTIZACION_FK: true, ID_OT_RAIZ: true, ID_ORDEN_TRABAJO: true, CREATED_AT: true,
+        SITIO_CALIBRACION: true, ES_INTERNO_USC: true, ES_EN_SITIO: true },
+    }),
+  ]);
+  const enPeriodo = (fecha: Date | null | undefined) => (!filtros.fechaInicio && !filtros.fechaFin) ||
+    enRangoFecha(fecha, filtros.fechaInicio, filtros.fechaFin);
+  const emitidas = cotizaciones.flatMap((cot) => {
+    const evento = cot.historial_estado_cotizacion.find((h) => h.ESTADO_NUEVO === 'ENVIADA');
+    const fecha = evento?.CREATED_AT ?? (cot.ESTADO !== 'BORRADOR' ? cot.CREATED_AT : null);
+    if (!fecha || !enPeriodo(fecha)) return [];
+    return [{ fecha, aprobada: cot.historial_estado_cotizacion.some((h) => h.ESTADO_NUEVO === 'APROBADA') ||
+      cot.ESTADO === 'APROBADA' || cot.ESTADO === 'EN_SEGUIMIENTO' }];
+  });
+  const porGrupo = new Map<string, { fecha: Date | null; interno: boolean }>();
+  for (const ot of ordenes) {
+    const sitio = ot.SITIO_CALIBRACION ?? (ot.ES_INTERNO_USC ? 'INTERNO_USC' : ot.ES_EN_SITIO ? 'CLIENTE' : 'LABORATORIO');
+    const familia = ot.ID_COTIZACION_FK != null ? `cot:${ot.ID_COTIZACION_FK}` : `ot:${ot.ID_OT_RAIZ ?? ot.ID_ORDEN_TRABAJO}`;
+    const grupo = `${familia}:${sitio}`;
+    if (!porGrupo.has(grupo)) porGrupo.set(grupo, { fecha: ot.CREATED_AT, interno: sitio === 'INTERNO_USC' });
+  }
+  const operativas = [...porGrupo.values()].filter((ot) => enPeriodo(ot.fecha));
+  const calcularConversion = (cotizacionesDelPeriodo: typeof emitidas) => cotizacionesDelPeriodo.length
+    ? Math.round(cotizacionesDelPeriodo.filter((cot) => cot.aprobada).length / cotizacionesDelPeriodo.length * 100)
+    : 0;
+  const zona = 'America/Bogota';
+  const claveMes = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone: zona });
+  const etiquetaMes = new Intl.DateTimeFormat('es-CO', { month: 'short', year: '2-digit', timeZone: zona });
+  const fechaReferencia = filtros.fechaFin ? new Date(`${filtros.fechaFin}T12:00:00-05:00`) : new Date();
+  const ultimoDia = Number.isNaN(fechaReferencia.getTime()) ? new Date() : fechaReferencia;
+  const [anio, mes] = claveMes.format(ultimoDia).split('-').map(Number);
+  const series = Array.from({ length: 6 }, (_, indice) => {
+    const fecha = new Date(Date.UTC(anio, mes - 6 + indice, 15, 12));
+    const clave = claveMes.format(fecha);
+    const ordenesDelMes = operativas.filter((ot) => ot.fecha && claveMes.format(ot.fecha) === clave);
+    const interno = ordenesDelMes.filter((ot) => ot.interno).length;
+    return { mes: etiquetaMes.format(fecha), interno, externo: ordenesDelMes.length - interno,
+      tasa: calcularConversion(emitidas.filter((cot) => claveMes.format(cot.fecha) === clave)) };
+  });
   const kpis = {
-    cotizacionesEmitidas: totalCotizaciones,
-    tasaConversion:
-      totalCotizaciones > 0 ? Math.round((cotizacionesAprobadas / totalCotizaciones) * 100) : 0,
-    ingresos: Number(facturasMonto._sum.VALOR ?? 0),
-    ordenesInternas: ordenesInternas,
+    cotizacionesEmitidas: emitidas.length,
+    tasaConversion: calcularConversion(emitidas),
+    ingresos: Number(trazabilidad.reduce((total, factura) => total.plus(factura.valor), new Prisma.Decimal(0))),
+    ordenesInternas: operativas.filter((ot) => ot.interno).length,
   };
 
-  return { kpis, certificados: certs, tecnicos, trazabilidad, filtrosAplicados: filtros };
+  return { kpis, series, certificados: certs, tecnicos, trazabilidad, filtrosAplicados: filtros };
 }
 
 async function cargarLogoReporte(): Promise<Buffer | null> {

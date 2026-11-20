@@ -30,6 +30,9 @@ export interface PieSlice {
 }
 
 export interface PendingCertRow {
+  idCertificado?: number;
+  codigoCertificado?: string;
+  instrumento?: string;
   ot: string;
   cliente: string;
   tecnico: string;
@@ -57,11 +60,11 @@ export interface RecentActivityItem {
 }
 
 export interface DashboardProps {
-  onNavigate: (module: ModuleKey) => void;
+  onNavigate: (module: ModuleKey, idCertificado?: number) => void;
 }
 
 export interface PendingCertsTableProps {
-  onNavigate: (module: ModuleKey) => void;
+  onNavigate: (module: ModuleKey, idCertificado?: number) => void;
   pendingCerts: PendingCertRow[];
   pendingCount: number;
 }

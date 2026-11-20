@@ -246,7 +246,7 @@ export const recepcionEquipoDtoSchema = z.object({
   createdAt: z.coerce.date(),
   documentos: z.array(documentoDtoSchema),
   instrumentos: z.array(recepcionDetalleDtoSchema),
-  cotizacion: cotizacionDtoSchema.nullable(),
+  cotizacion: cotizacionConDetallesDtoSchema.nullable(),
   ordenTrabajo: ordenTrabajoDtoSchema.nullable(),
 });
 export type RecepcionEquipoDto = z.infer<typeof recepcionEquipoDtoSchema>;
@@ -716,7 +716,7 @@ export const recepcionEquipoRawToDtoSchema = z
     CREATED_AT: z.coerce.date(),
     documentos: z.array(documentoRawToDtoSchema).nullish(),
     recepcion_equipo_detalles: z.array(recepcionDetalleRawToDtoSchema).nullish(),
-    cotizaciones: cotizacionRawToDtoSchema.nullish(),
+    cotizaciones: cotizacionConDetallesRawToDtoSchema.nullish(),
     ordenes_trabajo: ordenTrabajoRawToDtoSchema.nullish(),
   })
   .transform((raw): RecepcionEquipoDto => ({
