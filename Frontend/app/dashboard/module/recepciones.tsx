@@ -1365,7 +1365,7 @@ useEffect(() => {
         } | null;
         const detallesCotizacion = cotizaciones.find((cotizacion) => cotizacion.idCotizacion === recepcion.idCotizacion)?.detalles ?? recepcion.cotizacion?.detalles ?? [];
         const detalleCotizacion = (det.idUnidad
-          ? detallesCotizacion.find((detalle) => detalle.idUnidades.includes(det.idUnidad!))
+          ? detallesCotizacion.find((detalle) => Array.isArray(detalle.idUnidades) && detalle.idUnidades.includes(det.idUnidad!))
           : undefined) ?? detallesCotizacion.find((detalle) => detalle.equipoDescripcion.trim().toLowerCase() === det.instrumento.trim().toLowerCase());
         
         return {
