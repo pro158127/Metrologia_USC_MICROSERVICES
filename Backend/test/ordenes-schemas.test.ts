@@ -17,8 +17,13 @@ test('convierte detalles de instrumentos una vez y añade su estado de calibraci
       asignado: null,
     }],
     recepciones_equipo: [{
+      FECHA_RECEPCION: new Date('2026-11-20'),
+      NOMBRE_ENTREGA: 'Cliente',
+      NOMBRE_RECIBE: 'Laboratorio',
       recepcion_equipo_detalles: [{
         ID_UNIDAD_FK: idUnidad,
+        ESTAMPILLA: 'USC-4',
+        ESTADO_IBC: { entrada: { E: true, T: false, D: true, A: false } },
         calibraciones: {
           certificados: { ID_CERTIFICADO: 4, ESTADO_REVISION: 'APROBADO' },
         },
@@ -29,6 +34,7 @@ test('convierte detalles de instrumentos una vez y añade su estado de calibraci
   assert.equal(orden.instrumentos.length, 1);
   assert.equal(orden.instrumentos[0].idDetalle, 31);
   assert.equal(orden.instrumentos[0].instrumento, 'Manómetro');
+  assert.equal(orden.instrumentos[0].listoParaAsignar, true);
   assert.equal(orden.instrumentos[0].calibracionIniciada, true);
   assert.equal(orden.instrumentos[0].certificadoCreado, true);
 });

@@ -135,6 +135,7 @@ export type Instrument = Omit<OrdenTrabajoDetalleBase, "idOrdenTrabajo" | "idDet
   /** Identificador temporal solo para la UI (row key). */
   id: string;
   idUnidad?: string | null;
+  listoParaAsignar?: boolean;
   calibracionIniciada?: boolean;
   certificadoCreado?: boolean;
 };
@@ -356,6 +357,7 @@ export interface OTasiignemet {
   // 🟢 Permitir string (para los UUIDs) o number (para la BD)
   id_instrumento: string | number; 
   instrumento: string;
+  listoParaAsignar: boolean;
   calibracionIniciada: boolean;
   certificadoCreado: boolean;
 }

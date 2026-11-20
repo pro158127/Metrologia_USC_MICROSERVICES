@@ -16,7 +16,6 @@ import {
 import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
-  obtenerTodasLasTarifas,
   crearTarifa,
   actualizarPrecioTarifa,
   cambiarEstadoTarifa,
@@ -545,7 +544,7 @@ const CatalogRow = ({
 // ----------------------------------------------------------------------
 export const CatalogTableView = () => {
   const tarifas = useDbTable("tarifas");
-  const { mergeTable, loadTable, setTableLoading } = useDbActions();
+  const { loadTable } = useDbActions();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMagnitud, setSelectedMagnitud] = useState("TODAS");
   const [selectedTipoServicio, setSelectedTipoServicio] = useState("TODOS");
@@ -584,17 +583,7 @@ export const CatalogTableView = () => {
     });
   };
 
-  const recargarTarifas = async () => {
-    setTableLoading("tarifas", true);
-    try {
-      const res = await obtenerTodasLasTarifas();
-      if (res.ok && res.data) {
-        mergeTable("tarifas", res.data as unknown as TarifaModel[]);
-      }
-    } finally {
-      setTableLoading("tarifas", false);
-    }
-  };
+  const recargarTarifas = () => loadTable("tarifas", true);
 
   useEffect(() => {
     loadTable("tarifas");

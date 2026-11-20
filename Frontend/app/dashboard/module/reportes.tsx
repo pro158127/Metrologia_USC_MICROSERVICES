@@ -14,7 +14,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Download, Search, FileText, X } from "lucide-react";
-import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbLoading, useDbActions, useRevisionTablas } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   obtenerReportes,
@@ -440,37 +440,36 @@ export function MainRendererreport() {
     setTimeout(() => setToast(""), 3500);
   }, []);
 
-  const cargarReporte = useCallback(async (f: FiltrosReporte) => {
-    const d = await obtenerReportes(f);
-    setDatos(d);
-    setCargandoReporte(false);
-  }, []);
+  const revision = useRevisionTablas(
+    "cotizaciones", "ordenes_trabajo", "certificados", "calibraciones", "facturas", "recepciones_equipo",
+  );
 
   React.useEffect(() => {
-    loadTable("cotizaciones");
-    loadTable("ordenes_trabajo");
-    loadTable("clientes");
-    loadTable("tarifas");
-    let activo = true;
-    obtenerReportes({}).then((d) => {
-      if (activo) {
-        setDatos(d);
-        setCargandoReporte(false);
-      }
-    });
-    return () => {
-      activo = false;
-    };
+    for (const tabla of ["cotizaciones", "ordenes_trabajo", "clientes", "tarifas"] as const) {
+      void loadTable(tabla);
+    }
   }, [loadTable]);
 
-  const aplicarFiltros = useCallback(
-    (f: FiltrosReporte) => {
-      setFiltros(f);
-      setCargandoReporte(true);
-      cargarReporte(f);
-    },
-    [cargarReporte]
-  );
+  React.useEffect(() => {
+    let activo = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const reporte = await obtenerReportes(filtros);
+        if (activo) setDatos(reporte);
+      } finally {
+        if (activo) setCargandoReporte(false);
+      }
+    }, 150);
+    return () => {
+      activo = false;
+      window.clearTimeout(timer);
+    };
+  }, [filtros, revision]);
+
+  const aplicarFiltros = useCallback((f: FiltrosReporte) => {
+    setCargandoReporte(true);
+    setFiltros({ ...f });
+  }, []);
 
   // ==========================================
   // GRÁFICAS (desde el store)

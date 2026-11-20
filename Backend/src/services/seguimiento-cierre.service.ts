@@ -5,8 +5,10 @@ type Tx = Prisma.TransactionClient;
 /** True only when every current OT has paid, sent certificates and completed receipts. */
 export async function cotizacionListaParaSeguimiento(tx: Tx, idCotizacion: number): Promise<boolean> {
   const ots = await tx.ordenes_trabajo.findMany({
-    where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: { not: null }, VIGENTE: true },
+    where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true },
     select: {
+      ID_ORDEN_TRABAJO: true,
+      ID_OT_PADRE_FK: true,
       estado: true,
       estado_pago: true,
       recepciones_equipo: {
@@ -16,7 +18,9 @@ export async function cotizacionListaParaSeguimiento(tx: Tx, idCotizacion: numbe
     },
   });
 
-  return ots.length > 0 && ots.every((ot) =>
+  const maestras = new Set(ots.map((ot) => ot.ID_OT_PADRE_FK));
+  const operativas = ots.filter((ot) => !maestras.has(ot.ID_ORDEN_TRABAJO));
+  return operativas.length > 0 && operativas.every((ot) =>
     ot.estado === 'Certificado_enviado' &&
     ot.estado_pago === 'PAGADO' &&
     ot.recepciones_equipo.length > 0 &&

@@ -1,4 +1,5 @@
 'use client';
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import { generarPrevisualizacionSello } from '@/app/action_module/sellos';
 import { toast } from 'sonner';
 import { validarArchivo } from '@/app/lib/upload';
@@ -165,6 +166,7 @@ function PdfTemplateCanvas({
 // ============================================================================
 
 export function SelloManagementDashboard() {
+  const revision = useRevisionTablas("plantillas_sellos", "sellos");
   const [seals, setSeals] = useState<SealConfig[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +176,7 @@ export function SelloManagementDashboard() {
 
   const applySellosResult = useCallback((res: Awaited<ReturnType<typeof obtenerPlantillasSellos>>) => {
     if (res.success && res.data) {
+      setError(null);
       setSeals(res.data);
     } else {
       setError(res.error ?? 'Error al cargar los sellos');
@@ -194,7 +197,7 @@ export function SelloManagementDashboard() {
     return () => {
       active = false;
     };
-  }, [applySellosResult]);
+  }, [applySellosResult, revision]);
 
   const handleCreateNew = () => {
     setEditingSeal({
@@ -467,6 +470,7 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
     }
 
     if (config.templatePdfKey) {
+      setSecureRenderSource(null);
       let isMounted = true;
 
       const fetchSecureFile = async () => {
@@ -490,17 +494,17 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
     }
   }, [templateFile, config.templatePdfKey]);
 
-  // 3. Adaptamos la validación
-  const isImage = useMemo(() => {
-    if (!secureRenderSource) return false;
-    if (secureRenderSource instanceof File) return secureRenderSource.type.startsWith('image/');
-    
-    if (config.templatePdfKey) {
-      const keyStr = config.templatePdfKey.toLowerCase();
-      return keyStr.endsWith('.png') || keyStr.endsWith('.jpg') || keyStr.endsWith('.jpeg');
-    }
-    return false;
-  }, [secureRenderSource, config.templatePdfKey]);
+  const [imagenLocal, setImagenLocal] = useState<{ file: File; url: string } | null>(null);
+  useEffect(() => {
+    if (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/")) return;
+    const url = URL.createObjectURL(secureRenderSource);
+    setImagenLocal({ file: secureRenderSource, url });
+    return () => URL.revokeObjectURL(url);
+  }, [secureRenderSource]);
+
+  const imageSource = secureRenderSource instanceof File
+    ? (imagenLocal?.file === secureRenderSource ? imagenLocal.url : null)
+    : (secureRenderSource?.startsWith("data:image/") ? secureRenderSource : null);
 
   const hasTemplate = !!config.templatePdfUrl || !!templateFile || !!config.templatePdfKey;
 
@@ -789,10 +793,10 @@ const handleDownloadBackendPreview = async () => {
                     className="relative bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
                     style={{ width: renderBox.width, height: renderBox.height }}
                   >
-                   {secureRenderSource &&
-                      (isImage ? (
+                   {secureRenderSource && (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/") || imageSource) &&
+                      (imageSource ? (
                         <img
-                          src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+                          src={imageSource}
                           alt="Plantilla base"
                           className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
                           onLoad={(e) => {
@@ -1013,10 +1017,10 @@ const handleDownloadBackendPreview = async () => {
         >
           {/* CAPA 1 (z-0): Plantilla Base / Logo de la USC al fondo */}
          <div className="absolute inset-0 z-0 pointer-events-none">
-            {secureRenderSource &&
-              (isImage ? (
+            {secureRenderSource && (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/") || imageSource) &&
+              (imageSource ? (
                 <img
-                  src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+                  src={imageSource}
                   alt="Plantilla base"
                   className="w-full h-full object-contain select-none"
                 />

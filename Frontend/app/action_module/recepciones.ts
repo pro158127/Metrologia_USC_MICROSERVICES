@@ -47,6 +47,10 @@ export async function getRecepcionPorId(idRecepcion: number): Promise<RecepcionE
   return res.data;
 }
 
+export async function obtenerRecepcionesVigentes(): Promise<RecepcionEquipoModel[]> {
+  return fastifyRequest(await auth(), '/api/v1/recepciones/listado');
+}
+
 export async function getInitialData(): Promise<InitialDataResponse> {
   try {
     const session = await auth();
@@ -64,6 +68,7 @@ export async function getInitialData(): Promise<InitialDataResponse> {
 export interface InstrumentoRecepcionPayload {
   idLocal?: string;
   idInstrumento?: number;
+  idUnidad?: string | null;
   instrumento: string;
   tipoServicio?: string;
   marca?: string;
@@ -81,6 +86,7 @@ export interface InstrumentoRecepcionPayload {
 export interface RecepcionMutationPayload {
   estado?: string;
   isNueva?: boolean;
+  codigoRecepcionActual?: string;
   solicitante: string;
   nombreEntrega?: string;
   cotizacionCodigo?: string;
@@ -139,6 +145,7 @@ export async function actualizarRecepcion(
 }
 
 export interface RespuestaSoftDelete {
+  grupoDesactivado?: boolean;
   ok: boolean;
   message?: string;
   error?: string;

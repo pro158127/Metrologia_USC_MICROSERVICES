@@ -8,6 +8,7 @@ import { composeCertificate } from '../services/pdf-stamper.service.js';
 import {
   deleteObject,
   getObjectBuffer,
+  getObjectWithMetadata,
   getSignedObjectUrl,
   uploadBuffer,
 } from '../lib/minioClient.js';
@@ -51,7 +52,7 @@ async function resolverTamanoPagina(
   if (!templatePdfKey) return null;
   try {
     const redis = getRedisConnection();
-    const cacheKey = `${PAGE_SIZE_CACHE_PREFIX}${selloId}`;
+    const cacheKey = `${PAGE_SIZE_CACHE_PREFIX}${selloId}:${templatePdfKey}`;
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached) as { width: number; height: number };
     const buffer = await getObjectBuffer(templatePdfKey);
@@ -168,14 +169,14 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        const buffer = await getObjectBuffer(key);
-        
-        // Determinar el tipo MIME correcto para que el navegador lo renderice
-        const ext = key.split('.').pop()?.toLowerCase();
-        let mime = 'application/octet-stream';
-        if (ext === 'pdf') mime = 'application/pdf';
-        else if (ext === 'png') mime = 'image/png';
-        else if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+        const { buffer, contentType } = await getObjectWithMetadata(key);
+        const extension = key.split('.').pop()?.toLowerCase() ?? '';
+        const mimePorExtension: Record<string, string> = {
+          pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        };
+        const mime = contentType && ALLOWED_MIMETYPES.includes(contentType)
+          ? contentType
+          : (mimePorExtension[extension] ?? 'application/octet-stream');
 
         return reply
           .header('Content-Type', mime)
@@ -316,7 +317,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         try { await deleteObject(existing.TEMPLATE_PDF_KEY); } catch { /* conservar el nuevo aunque la limpieza del anterior falle */ }
       }
       if (uploadedReplacementKey) {
-        try { await getRedisConnection().del(`${PAGE_SIZE_CACHE_PREFIX}${request.params.id}`); } catch { /* la caché se recalculará al vencer */ }
+        try { await getRedisConnection().del(`${PAGE_SIZE_CACHE_PREFIX}${request.params.id}:${existing.TEMPLATE_PDF_KEY}`); } catch { /* la caché se recalculará al vencer */ }
       }
 
       return {

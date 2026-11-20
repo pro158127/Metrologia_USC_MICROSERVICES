@@ -119,6 +119,7 @@ export type CotizacionVista = {
   montoTotal: number;
   estado: Estados;
   createdAt: Date | string;
+  fechaVencimiento?: Date | string;
   updatedAt: Date | string | null;
   viaticos: number;
   descuento: number;

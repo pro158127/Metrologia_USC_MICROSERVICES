@@ -805,6 +805,7 @@ export type InstrumentoRecepcionInput = z.infer<typeof instrumentoRecepcionInput
 export const recepcionBodySchema = z.object({
   estado: z.string().optional(),
   isNueva: z.boolean().optional(),
+  codigoRecepcionActual: z.string().trim().min(1).optional(),
   idCliente: z.number().nullish(),
   solicitante: z.string().min(1),
   nombreEntrega: z.string().nullish(),
@@ -863,6 +864,7 @@ export const respuestaHistorialRecepcionSchema = z.object({
 });
 
 export const respuestaSoftDeleteSchema = z.object({
+  grupoDesactivado: z.boolean().optional(),
   ok: z.literal(true),
   message: z.string(),
 });

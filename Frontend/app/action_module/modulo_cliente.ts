@@ -330,8 +330,7 @@ export interface DocumentoVersionItem {
   rutaUrl: string;
   createdAt: string;
   usuario: string | null;
-  codigoRecepcion?: string;
-  codigoOT?: string;
+  nombre?: string;
 }
 
 export interface DocumentoItem {
@@ -373,6 +372,7 @@ export interface DocumentoCertificadoItem {
 export interface DocumentosCotizacionCategorias {
   idCotizacion: number;
   codigo: string;
+  archivados?: { cotizacion: DocumentoItem[]; ordenTrabajo: DocumentoItem[]; recepcion: DocumentoItem[] };
   categorias: {
     recepcion: DocumentoItem[];
     cotizacion: DocumentoItem[];

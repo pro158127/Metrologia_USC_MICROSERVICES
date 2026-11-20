@@ -29,6 +29,15 @@ export async function obtenerIdsUnidadesCertificadas(tx: Tx, idCotizacion: numbe
     .filter((id): id is string => id !== null));
 }
 
+export async function obtenerIdsUnidadesEnCalibracion(tx: Tx, idCotizacion: number): Promise<Set<string>> {
+  const calibraciones = await tx.calibraciones.findMany({
+    where: { recepcion_equipo_detalles: { recepciones_equipo: { ID_COTIZACION_FK: idCotizacion } } },
+    select: { recepcion_equipo_detalles: { select: { ID_UNIDAD_FK: true } } },
+  });
+  return new Set(calibraciones.flatMap((calibracion) =>
+    calibracion.recepcion_equipo_detalles.ID_UNIDAD_FK ? [calibracion.recepcion_equipo_detalles.ID_UNIDAD_FK] : []));
+}
+
 export function ajustarIdsUnidades(
   actuales: string[],
   cantidad: number,

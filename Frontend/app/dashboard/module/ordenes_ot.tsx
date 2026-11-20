@@ -212,7 +212,7 @@ const HeaderSection = ({
      
       {selectedOT  && (
         <div className="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-bold border border-blue-100">
-          {`CONSECUTIVO: ${selectedOT.noOrdenTrabajo} · VERSIÓN: ${selectedOT.ultima_version} · VIGENCIA: ${selectedOT.fechaLimiteFacturacion}`}
+          {`CONSECUTIVO: ${selectedOT.noOrdenTrabajo} · VERSIÓN: ${selectedOT.noOrdenTrabajo?.match(/[A-Z]$/)?.[0] ?? "—"} · VIGENCIA: ${selectedOT.fechaLimiteFacturacion}`}
         </div>
       )}
     </div>
@@ -265,9 +265,12 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
   estadoActual, // <-- Nuevo prop
 }) => {
  const todosCertificados = instrumentosCot.length > 0 && instrumentosCot.every((item) => item.certificadoCreado);
- const estadoFinalCertificados = estadoActual === "Certificado_aprobado" || estadoActual === "Certificado_enviado";
- const asignacionBloqueada = todosCertificados || estadoFinalCertificados;
- const puedeAsignar = estadoActual !== "Creada" && !asignacionBloqueada;
+ const certificadosEnviados = estadoActual === "Certificado_enviado";
+ const asignacionBloqueada = todosCertificados || certificadosEnviados;
+ const instrumentosListos = instrumentosCot.filter((item) => item.listoParaAsignar);
+ const pendientesRecepcion = instrumentosCot.length - instrumentosListos.length;
+ const puedeAsignar = estadoActual !== "Creada" && !asignacionBloqueada &&
+   instrumentosListos.some((item) => !item.calibracionIniciada);
  const { can } = usePermissions();
  const tienePermisoAsignar = can("ordenes_de_trabajo", "asignar_tecnico");
 
@@ -279,14 +282,16 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
             <Layers size={13} /> Gestión de Personal y Equipamiento
           </h3>
           <p className="text-[11px] text-slate-400">
-            Asignación directa de metrólogos por cada equipo en la orden de trabajo.
+            {pendientesRecepcion > 0
+              ? `Equipos pendientes de estampilla o IBC de entrada: ${pendientesRecepcion}.`
+              : "Asignación de metrólogos por equipo."}
           </p>
         </div>
         
         {/* Renderizado condicional basado en el estado */}
         {asignacionBloqueada ? (
           <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
-            {estadoFinalCertificados ? "Todos los certificados están aprobados" : "Todos los instrumentos ya tienen certificado"}
+            {certificadosEnviados ? "Los certificados ya se enviaron" : "Todos los instrumentos ya tienen certificado"}
           </span>
         ) : puedeAsignar && tienePermisoAsignar ? (
           <button
@@ -303,7 +308,7 @@ export const StaffAssignmentSection: React.FC<StaffAssignmentSectionProps> = ({
       </div>
       {editingTechnician && puedeAsignar && tienePermisoAsignar && (
         <div className="space-y-3 animate-fadeIn">
-          {instrumentosCot.map((item) => (
+          {instrumentosListos.map((item) => (
             <div
               key={item.id_instrumento}
               className="flex items-center justify-between p-3 border border-slate-200 rounded-xl bg-slate-50"
@@ -793,7 +798,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   onChange={(v) => updateOrderDraft('correoCertificados', v)}
                 />
                 <Field
-                  label="Fechalimite para facturacion "
+                  label="Fecha límite para facturación"
                   type="date"
                   value={orderDraft.fechaLimiteFacturacion}
                   onChange={(v) => updateOrderDraft('fechaLimiteFacturacion', v)}
@@ -1437,17 +1442,15 @@ export const TreeView: React.FC<{
 // ==========================================
 // 3. COMPONENTE PADRE
 // ==========================================
-import { obtenerDatosIniciales } from "@/app/action_module/ordenes";
-import { useDbTable, useDbActions, useDbLoading, OrdenTrabajoModel, UsuarioModel, ClienteModel, RolesModel, TarifaModel, DocumentoModel } from "@/app/componets/tables_recharge";
+import { obtenerTecnicosOrdenes } from "@/app/action_module/ordenes";
+import { useDbTable, useDbActions, useDbLoading, useRevisionTablas, OrdenTrabajoModel } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
-  const usuarios = useDbTable("usuarios");
-  const roles = useDbTable("roles");
   const ordenesTrabajo = useDbTable("ordenes_trabajo");
   const clientes = useDbTable("clientes");
   const tarifas = useDbTable("tarifas");
-  const { mergeTable, setTableLoading, loadTable } = useDbActions();
+  const { loadTable } = useDbActions();
   const loadingOrdenes = useDbLoading("ordenes_trabajo");
   // El hook global se activa desde un effect; sin este estado local, el primer
   // render puede mostrar el tablero vacío antes de que empiece la consulta.
@@ -1487,47 +1490,36 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
     setCollapsedColumns((prev) => ({ ...prev, [columnKey]: !prev[columnKey] }));
   };
 
-  /**
-   * Obtiene los técnicos con roles específicos desde los datos de usuarios y roles.
-   */
-  const technicians: Tecnico[] = useMemo(() => {
-    // 1. Evita mutaciones innecesarias con el spread, usa filter directamente sobre 'usuarios'
-    const tecnicos = usuarios.filter((u) => {
-      // 2. Buscamos el rol ESPECÍFICO de este usuario
-      const rolDelUsuario = roles.find((rol) => rol.idRol === u.idRol);
-      
-      // 3. Verificamos que el rol exista y sea uno de los permitidos
-      const esRolPermitido = rolDelUsuario && (
-        rolDelUsuario.nombreRol === "Técnico" ||
-        rolDelUsuario.nombreRol === "Coordinadora" ||
-        rolDelUsuario.nombreRol === "Director Técnico"
-      );
-
-      // 4. Retornamos true solo si tiene el rol correcto y está activo
-      return esRolPermitido && u.elminado === false && u.estado === true;
-    });
-
-    return tecnicos.map((e) => ({
-      idUsuario: e.idUsuario,
-      nombreCompleto: e.nombreCompleto
-    }));
-    
-  // 5. Dependencias correctas (las referencias de los arreglos, sin spread)
-  }, [usuarios, roles]);
+  const revisionTecnicos = useRevisionTablas("usuarios", "roles");
+  const [technicians, setTechnicians] = useState<Tecnico[]>([]);
+  useEffect(() => {
+    let activo = true;
+    obtenerTecnicosOrdenes().then((tecnicos) => {
+      if (activo) setTechnicians(tecnicos);
+    }).catch((error) => console.error("No se pudieron cargar los técnicos:", error));
+    return () => { activo = false; };
+  }, [revisionTecnicos]);
 
   console.log(technicians,"esto essss")
 
 
-const instrumentos_cot = useMemo(() => {
-    return instrumentDrafts.map((inst) => ({
-      asignado: inst.asignado ?? 0,
-      // Usamos directamente el ID del draft (que es un string seguro)
-      id_instrumento: inst.id, 
-      instrumento: inst.instrumento,
-      calibracionIniciada: inst.calibracionIniciada ?? false,
-      certificadoCreado: inst.certificadoCreado ?? false,
-    }));
-  }, [instrumentDrafts]); // La UI ahora reaccionará a los cambios del Draft
+const ordenSeleccionadaActual = ordenesTrabajo.find(
+    (orden) => String(orden.idOrdenTrabajo) === selectedOT?.id,
+  );
+  const instrumentos_cot = useMemo(() => {
+    const detallesActuales = ordenSeleccionadaActual?.instrumentos;
+    return instrumentDrafts.map((inst) => {
+      const actual = detallesActuales?.find((detalle) => String(detalle.idDetalle) === inst.id);
+      return {
+        asignado: inst.asignado ?? 0,
+        id_instrumento: inst.id,
+        instrumento: inst.instrumento,
+        listoParaAsignar: actual?.listoParaAsignar ?? inst.listoParaAsignar ?? false,
+        calibracionIniciada: actual?.calibracionIniciada ?? inst.calibracionIniciada ?? false,
+        certificadoCreado: actual?.certificadoCreado ?? inst.certificadoCreado ?? false,
+      };
+    });
+  }, [instrumentDrafts, ordenSeleccionadaActual]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -1567,6 +1559,7 @@ const instrumentos_cot = useMemo(() => {
         intervaloRango: detalle.intervaloRango ?? null,
         resolucion: detalle.resolucion ?? null,
         asignado: detalle.asignado ?? 0,
+        listoParaAsignar: detalle.listoParaAsignar ?? false,
         calibracionIniciada: detalle.calibracionIniciada ?? false,
         certificadoCreado: detalle.certificadoCreado ?? false,
         declaracionConformidad: detalle.declaracionConformidad ?? false,
@@ -1589,7 +1582,7 @@ const instrumentos_cot = useMemo(() => {
       razonSocialCert: limpiarPlaceholder(otCompleta.Razon_social) || clienteData?.razonSocial || "",
       nitCert: limpiarPlaceholder(otCompleta.NIT) || clienteData?.nitCedula || "",
       correoCertificados: otCompleta.correoCertificado || clienteData?.correo || "",
-      fechaLimiteFacturacion: otCompleta.fechaLimiteFacturacion ? new Date(otCompleta.fechaLimiteFacturacion).toISOString().split('T')[0] : '',
+      fechaLimiteFacturacion: fechaISOParaInput(otCompleta.fechaLimiteFacturacion),
       direccionCert: limpiarPlaceholder(otCompleta.dirrecion) || clienteData?.dirrecion || "",
       ciudadCert: limpiarPlaceholder(otCompleta.ciudad) || clienteData?.ciudad || "",
       correoFactura: otCompleta.correoFactura || clienteData?.correo || "",
@@ -1602,7 +1595,7 @@ const instrumentos_cot = useMemo(() => {
       nitSolicitante: otCompleta.cliente?.nitCedula ?? "",
       direccionSolicitante: otCompleta.cliente?.dirrecion ?? "",
       ciudadSolicitante: otCompleta.cliente?.ciudad || "sin ciudad",
-      contactoSolicitante: otCompleta.cliente?.nombreContacto || "sin contacto",
+      contactoSolicitante: otCompleta.personaContacto_solicitante?.trim() || otCompleta.cliente?.nombreContacto?.trim() || "",
       telefonoSolicitante: otCompleta?.telefonoContacto_solcitante || clienteData?.telefono || "",
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
@@ -1694,6 +1687,10 @@ const saveOrderEdits = async () => {
       const payload = {
         responsableUsc: orderDraft.responsableUsc || null,
         fechaDiligenciamiento: orderDraft.fechaDiligenciamiento,
+        contactoSolicitante: orderDraft.contactoSolicitante === selectedOT.contactoSolicitante
+          ? undefined : orderDraft.contactoSolicitante.trim() || null,
+        fechaLimiteFacturacion: orderDraft.fechaLimiteFacturacion === selectedOT.fechaLimiteFacturacion
+          ? undefined : orderDraft.fechaLimiteFacturacion || null,
         fechaCalibracion: orderDraft.lugarCalibracion === "En sitio" && orderDraft.fechaCalibracion
           ? orderDraft.fechaCalibracion.slice(0, 10)
           : null,
@@ -1765,79 +1762,18 @@ const saveOrderEdits = async () => {
     }
   };
 
-  /**
-   * Carga inicial de datos: usuarios, órdenes, clientes, tarifas, roles y documentos.
-   * Se ejecuta una sola vez al montar el componente.
-   */
   useEffect(() => {
-    async function initdata() {
-      setTableLoading("ordenes_trabajo", true);
-      try {
-        const res = await obtenerDatosIniciales();
-       
-
-        // Procesamos cada conjunto de datos
-        for (let i = 0; i < 6; i++) {
-          switch (i) {
-            case 0: {
-              // Usuarios: omitimos el campo contraseña por seguridad
-              const parsedUsers = res?.usuarios.map((e): Omit<UsuarioModel, "contraseña"> => ({
-                idUsuario: e.idUsuario,
-                correo: e.correo,
-                createdAt: e.createdAt,
-                elminado: e.elminado, // typo conocido en BD: "elminado"
-                estado: e.estado,
-                idRol: e.idRol,
-                intentos: e.intentos,
-                nombreCompleto: e.nombreCompleto,
-                updatedAt: e.updatedAt,
-              }));
-           
-
-              mergeTable("usuarios", parsedUsers as unknown as UsuarioModel[]);
-              break;
-            }
-            case 1: {
-              mergeTable("ordenes_trabajo", res.ordenes as unknown as OrdenTrabajoModel[]);
-              break;
-            }
-            case 2: {
-              mergeTable("clientes", res.clientes as unknown as ClienteModel[]);
-              break;
-            }
-            case 3: {
-              // Tarifas: mapeamos el historial de precios
-              const parsedTarifas = ((res.tarifas || []) as TarifaModel[]).map(
-                (tarifa): TarifaModel => ({
-                  ...tarifa,
-                  historial: tarifa.historial}
-              ));
-              mergeTable("tarifas", parsedTarifas);
-              break;
-            }
-            case 4: {
-              mergeTable("roles", res.roles as unknown as RolesModel[]);
-              break;
-            }
-            case 5: {
-              // Documentos con sus versiones (si vienen en la respuesta)
-              mergeTable("documentos", res.version as unknown as DocumentoModel[]);
-              break;
-            }
-            default:
-              break;
-          }
-        }
-      } catch (error) {
-        console.error("Error al obtener datos iniciales:", error);
-        setErrorCargaOrdenes(true);
-      } finally {
-        setTableLoading("ordenes_trabajo", false);
-        setCargaInicialOrdenes(false);
-      }
+    let activo = true;
+    for (const tabla of ["clientes", "tarifas"] as const) {
+      void loadTable(tabla);
     }
-    initdata();
-  }, [mergeTable, setTableLoading]);
+    void loadTable("ordenes_trabajo", true).then((ok) => {
+      if (!activo) return;
+      setErrorCargaOrdenes(!ok);
+      setCargaInicialOrdenes(false);
+    });
+    return () => { activo = false; };
+  }, [loadTable]);
 
   /**
    * Calcula las advertencias (warnings) para la OT seleccionada.
@@ -2035,7 +1971,7 @@ const saveOrderEdits = async () => {
         totalOTs={otss.length}
       />
 
-      {!selectedOT && errorCargaOrdenes && (
+      {!selectedOT && errorCargaOrdenes && ordenesTrabajo.length === 0 && (
         <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           No se pudieron cargar las órdenes de trabajo. Recarga el módulo para volver a consultar los datos.
         </div>
@@ -2045,7 +1981,7 @@ const saveOrderEdits = async () => {
         <div className="space-y-6 max-w-7xl mx-auto">
           <OrderAlertsBanner selectedOT={selectedOT} warnings={warnings} />
 <StaffAssignmentSection
-            estadoActual={selectedOT.estado} 
+            estadoActual={(ordenSeleccionadaActual?.estado as EstadoOrden | null) ?? selectedOT.estado}
             instrumentosCot={instrumentos_cot}
             technicians={technicians}
             editingTechnician={editingTechnician}
@@ -2072,7 +2008,7 @@ const saveOrderEdits = async () => {
         </div>
       )}
 
-      {!selectedOT && !errorCargaOrdenes && viewMode === "kanban" && (
+      {!selectedOT && (!errorCargaOrdenes || ordenesTrabajo.length > 0) && viewMode === "kanban" && (
         loadingOrdenes || cargaInicialOrdenes ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
             {[1, 2, 3, 4].map((n) => (
@@ -2092,7 +2028,7 @@ const saveOrderEdits = async () => {
         )
       )}
 
-      {!selectedOT && !errorCargaOrdenes && viewMode === "tree" && (
+      {!selectedOT && (!errorCargaOrdenes || ordenesTrabajo.length > 0) && viewMode === "tree" && (
         loadingOrdenes || cargaInicialOrdenes ? (
           <div className="space-y-2 animate-pulse">
             {[1, 2, 3, 4, 5].map((n) => (
@@ -2104,7 +2040,7 @@ const saveOrderEdits = async () => {
         )
       )}
 
-      {!selectedOT && !errorCargaOrdenes && viewMode === "list" && (
+      {!selectedOT && (!errorCargaOrdenes || ordenesTrabajo.length > 0) && viewMode === "list" && (
         loadingOrdenes || cargaInicialOrdenes ? (
           <div className="space-y-2 animate-pulse">
             {[1, 2, 3, 4, 5].map((n) => (

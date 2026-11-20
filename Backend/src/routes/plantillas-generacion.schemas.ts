@@ -93,6 +93,7 @@ export const columnMappingSchema: z.ZodType<ColumnMapping> = z.lazy(() =>
 export const tableMappingSchema = z.object({
   key: z.string(),
   startRow: z.number(),
+  endRow: z.number().optional(),
   sheet: z.string().optional(),
   star_header: z.number().optional(),
   columns: z.array(columnMappingSchema),

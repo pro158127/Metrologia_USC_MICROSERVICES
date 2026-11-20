@@ -23,6 +23,14 @@ export interface DatosInicialesOrdenes {
   version: DocumentoModel[];
 }
 
+export async function obtenerTecnicosOrdenes(): Promise<{ idUsuario: number; nombreCompleto: string }[]> {
+  return fastifyRequest(await auth(), '/api/v1/ordenes/tecnicos');
+}
+
+export async function obtenerOrdenesListado(): Promise<OrdenTrabajoModel[]> {
+  return fastifyRequest(await auth(), '/api/v1/ordenes/listado');
+}
+
 export async function obtenerDatosIniciales(): Promise<DatosInicialesOrdenes> {
   try {
     const session = await auth();
@@ -101,6 +109,8 @@ export interface InstrumentoConsolidar {
 export interface ConsolidarOtPayload {
   responsableUsc: string | null;
   fechaDiligenciamiento: string | null;
+  contactoSolicitante?: string | null;
+  fechaLimiteFacturacion?: string | null;
   requiereAnexo: string;
   observacionesGenerales: string | null;
   lugarCalibracion: string;

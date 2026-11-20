@@ -219,6 +219,7 @@ export const cotizacionDtoSchema = z.object({
   idCliente: z.number().nullable(),
   montoTotal: z.number().nullable(),
   createdAt: z.coerce.date(),
+  fechaVencimiento: z.coerce.date().optional(),
   updatedAt: z.coerce.date().nullable(),
   viaticos: z.number(),
   estado: estadosEnum,

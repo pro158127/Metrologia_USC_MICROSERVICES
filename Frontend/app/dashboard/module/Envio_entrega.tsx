@@ -4,7 +4,7 @@
 // ============================================================
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Send,
   Eye,
@@ -17,10 +17,12 @@ import {
   Clock,
   Paperclip,
 } from "lucide-react";
-import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   getDocumentosEnvioCotizacion,
+  obtenerListadoEnvios,
+  type CotizacionListaEnvio,
   subirComprobanteCotizacion,
   enviarCertificadosCotizacion,
   type DocumentosEnvioCotizacion,
@@ -87,9 +89,9 @@ const GestionPanel: React.FC<{
   onRefresh: () => void;
   onOpenOt: (id: number) => void;
 }> = ({ idCotizacion, codigoCotizacion, onClose, onToast, onRefresh, onOpenOt }) => {
-  const documentosRealtime = useDbTable("documentos");
-  const certificadosRealtime = useDbTable("certificados");
-  const ordenesRealtime = useDbTable("ordenes_trabajo");
+  const revision = useRevisionTablas(
+    "documentos", "version_documentos", "certificados", "ordenes_trabajo", "recepciones_equipo", "facturas",
+  );
   const [docs, setDocs] = useState<DocumentosEnvioCotizacion | null>(null);
   const [cargando, setCargando] = useState(true);
   const [subiendo, setSubiendo] = useState(false);
@@ -108,7 +110,7 @@ const GestionPanel: React.FC<{
     if (cargando) return;
     const timer = window.setTimeout(recargar, 150);
     return () => window.clearTimeout(timer);
-  }, [documentosRealtime, certificadosRealtime, ordenesRealtime, cargando, recargar]);
+  }, [revision, cargando, recargar]);
 
   useEffect(() => {
     let activo = true;
@@ -403,15 +405,33 @@ const GestionPanel: React.FC<{
 // -----------------------------------------------------------------------------
 
 export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }) {
-  const ordenes = useDbTable("ordenes_trabajo");
-  const clientes = useDbTable("clientes");
-  const { loadTable } = useDbActions();
-  const loadingEnvio = useDbLoading("ordenes_trabajo");
+  const revision = useRevisionTablas(
+    "ordenes_trabajo", "orden_trabajo_detalles", "recepciones_equipo",
+    "recepcion_equipo_detalles", "calibraciones", "certificados", "clientes", "cotizaciones",
+  );
+  const [listado, setListado] = useState<CotizacionListaEnvio[]>([]);
+  const [loadingEnvio, setLoadingEnvio] = useState(true);
+  const [errorListado, setErrorListado] = useState(false);
+  const [recarga, setRecarga] = useState(0);
 
   useEffect(() => {
-    void loadTable("ordenes_trabajo", true);
-    void loadTable("clientes", true);
-  }, [loadTable]);
+    let activo = true;
+    const timer = window.setTimeout(() => {
+      obtenerListadoEnvios().then((datos) => {
+        if (!activo) return;
+        setListado(datos);
+        setErrorListado(false);
+      }).catch(() => {
+        if (activo) setErrorListado(true);
+      }).finally(() => {
+        if (activo) setLoadingEnvio(false);
+      });
+    }, 150);
+    return () => {
+      activo = false;
+      window.clearTimeout(timer);
+    };
+  }, [revision, recarga]);
 
   const [busqueda, setBusqueda] = useState<string>("");
   const [gestion, setGestion] = useState<{ idCotizacion: number; codigoCotizacion: string } | null>(null);
@@ -422,74 +442,10 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
     setTimeout(() => setToast(""), 4000);
   }, []);
 
-  // Una OT con sitio null puede ser una OT homogénea operativa (legacy) o la
-  // maestra de un grupo heterogéneo. Excluirla solo cuando tiene hijas vigentes.
-  const ordenesOperativas = useMemo(() => {
-    const vigentes = ordenes.filter((ot) => ot.vigente !== false && ot.idCotizacion != null);
-    const padresConHijasVigentes = new Set(
-      vigentes
-        .map((ot) => ot.idOrdenTrabajoPadre)
-        .filter((id): id is number => id != null)
-    );
-    return vigentes.filter(
-      (ot) => !(ot.sitioCalibracion == null && padresConHijasVigentes.has(ot.idOrdenTrabajo))
-    );
-  }, [ordenes]);
-
-  // Una cotización aparece cuando todas sus OTs operativas tienen certificados aprobados.
-  const grupos = useMemo(() => {
-    const map = new Map<number, typeof ordenesOperativas>();
-    for (const h of ordenesOperativas) {
-      if (h.idCotizacion == null) continue;
-      const lista = map.get(h.idCotizacion) ?? [];
-      lista.push(h);
-      map.set(h.idCotizacion, lista);
-    }
-    return Array.from(map.entries())
-      .map(([idCotizacion, hs]) => {
-        const master = ordenes.find(
-          (o) => o.idCotizacion === idCotizacion &&
-            o.sitioCalibracion == null &&
-            ordenesOperativas.some((operativa) => operativa.idOrdenTrabajoPadre === o.idOrdenTrabajo)
-        );
-        const cliente =
-          clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.razonSocial ??
-          hs[0]?.cliente?.razonSocial ??
-          "—";
-        const todosAprobados = hs.every((h) => h.estado === "Certificado_aprobado");
-        return {
-          idCotizacion,
-          codigoCotizacion: hs[0]?.cotizacion?.codigo ?? "—",
-          masterCodigo: master?.codigo ?? (hs.length === 1 ? hs[0]?.codigo : "—"),
-          cliente,
-          correo:
-            hs[0]?.correoCertificado ??
-            clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.correo ??
-            "—",
-          totalHijas: hs.length,
-          todosAprobados,
-          fecha: hs[0]?.createdAt,
-        };
-      })
-      .filter((g) => g.todosAprobados)
-      .filter((g) => {
-        if (!busqueda) return true;
-        const q = busqueda.toLowerCase();
-        return (
-          g.cliente.toLowerCase().includes(q) ||
-          g.codigoCotizacion.toLowerCase().includes(q) ||
-          g.masterCodigo.toLowerCase().includes(q)
-        );
-      });
-  }, [ordenes, ordenesOperativas, clientes, busqueda]);
-
-  const ordenesHijasVigentes = useMemo(
-    () => ordenesOperativas,
-    [ordenesOperativas]
-  );
-  const ordenesPendientesAprobacion = useMemo(
-    () => ordenesHijasVigentes.filter((ot) => ot.estado !== "Certificado_aprobado"),
-    [ordenesHijasVigentes]
+  const textoBusqueda = busqueda.trim().toLowerCase();
+  const grupos = listado.filter((grupo) =>
+    [grupo.cliente, grupo.codigoCotizacion, grupo.masterCodigo].some((valor) =>
+      valor.toLowerCase().includes(textoBusqueda)),
   );
 
   return (
@@ -549,18 +505,11 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
             ) : grupos.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
-                  {busqueda.trim()
+                  {errorListado
+                    ? "No se pudo consultar el listado de envíos."
+                    : textoBusqueda
                     ? "No hay cotizaciones que coincidan con la búsqueda."
-                    : ordenesHijasVigentes.length === 0
-                    ? "No hay órdenes operativas vigentes asociadas a una cotización."
-                    : ordenesPendientesAprobacion.length === 0
-                    ? "No se encontraron cotizaciones listas. Actualiza la lista o valida que sus OT estén vigentes y asociadas a una cotización."
-                    : `${ordenesPendientesAprobacion.length} de ${ordenesHijasVigentes.length} órdenes aún no tienen todos sus certificados aprobados.`}
-                  {!busqueda.trim() && ordenesPendientesAprobacion.length > 0 && (
-                    <div className="mt-2 text-[10px] font-mono text-slate-400">
-                      {ordenesPendientesAprobacion.slice(0, 5).map((ot) => `${ot.codigo}: ${ot.estado ?? "sin estado"}`).join(" · ")}
-                    </div>
-                  )}
+                    : "No hay cotizaciones con todos los certificados aprobados pendientes de envío."}
                 </td>
               </tr>
             ) : (
@@ -569,9 +518,9 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
                   <td className="px-4 py-3.5 font-mono font-bold text-[#5680F9]">{g.codigoCotizacion}</td>
                   <td className="px-4 py-3.5 font-mono text-slate-500">{g.masterCodigo}</td>
                   <td className="px-4 py-3.5 font-semibold text-slate-700">{g.cliente}</td>
-                  <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">{g.correo}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">{g.correo ?? "—"}</td>
                   <td className="px-4 py-3.5 text-slate-600">{g.totalHijas}</td>
-                  <td className="px-4 py-3.5 text-slate-400 font-mono">{formatFecha(g.fecha as string)}</td>
+                  <td className="px-4 py-3.5 text-slate-400 font-mono">{formatFecha(g.fecha)}</td>
                   <td className="px-4 py-3.5">
                     <button
                       onClick={() => setGestion({ idCotizacion: g.idCotizacion, codigoCotizacion: g.codigoCotizacion })}
@@ -598,7 +547,7 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
           codigoCotizacion={gestion.codigoCotizacion}
           onClose={() => setGestion(null)}
           onToast={showToast}
-          onRefresh={() => loadTable("ordenes_trabajo", true)}
+          onRefresh={() => setRecarga((anterior) => anterior + 1)}
           onOpenOt={onOpenOt}
         />
       )}

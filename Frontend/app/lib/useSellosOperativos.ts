@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRevisionTablas } from '@/app/componets/tables_recharge';
 import {
   obtenerEstadoSellos,
   type EstadoSellosOperativos,
@@ -13,6 +14,8 @@ import {
 export function useSellosOperativos() {
   const [estado, setEstado] = useState<EstadoSellosOperativos | null>(null);
   const [cargando, setCargando] = useState(true);
+
+  const revision = useRevisionTablas("plantillas_sellos", "sellos");
 
   useEffect(() => {
     let activo = true;
@@ -27,7 +30,7 @@ export function useSellosOperativos() {
     return () => {
       activo = false;
     };
-  }, []);
+  }, [revision]);
 
   return {
     estado,

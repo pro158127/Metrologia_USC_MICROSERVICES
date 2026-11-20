@@ -180,6 +180,7 @@ export interface CotizacionModel {
   idCliente: number | null;
   montoTotal: number | string | null;
   createdAt: Date | string;
+  fechaVencimiento?: Date | string;
   updatedAt: Date | string | null;
   viaticos: number | string | null;
   estado: Estados;
@@ -196,6 +197,7 @@ export interface OrdenTrabajoDetalleModel {
   idDetalle: number;
   idOrdenTrabajo: number;
   idUnidad: string | null;
+  listoParaAsignar: boolean;
   calibracionIniciada: boolean;
   certificadoCreado: boolean;
   item: number;

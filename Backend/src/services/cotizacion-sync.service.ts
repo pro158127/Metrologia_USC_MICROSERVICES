@@ -4,6 +4,17 @@ import { calcularMontoTotalCotizacion, calcularValorDetalle } from './cotizacion
 
 type Tx = Prisma.TransactionClient;
 type Sitio = 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC';
+type UnidadRecibida = { instrumento: string; idUnidad?: string | null; tipoServicio?: string | null };
+
+const normalizar = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
+export const normalizarServicioCotizado = (s: string): string => normalizar(s).replace(/[_\s]+/g, ' ');
+
+function claveComercial(fila: Omit<DetalleCotizacionExistente, 'idDetalle' | 'idsUnidades'>): string {
+  return JSON.stringify([
+    normalizar(fila.nombre), normalizarServicioCotizado(fila.tipoServicio), normalizar(fila.magnitud),
+    normalizar(fila.norma ?? ''), new Prisma.Decimal(fila.valorUnitario).toFixed(2), fila.sitio,
+  ]);
+}
 
 interface TarifaInfo {
   magnitud: string;
@@ -14,6 +25,8 @@ interface TarifaInfo {
 
 interface DetalleCotizacionExistente {
   idDetalle: number;
+  idsUnidades: string[];
+  nombre: string;
   valorUnitario: number | Prisma.Decimal;
   magnitud: string;
   tipoServicio: string;
@@ -33,20 +46,23 @@ interface DetalleCotizacionExistente {
 export async function sincronizarCotizacionDesdeRecepcion(
   tx: Tx,
   idCotizacion: number,
-  instrumentos: { instrumento: string; idUnidad?: string | null; tipoServicio?: string | null }[],
+  instrumentos: UnidadRecibida[],
   sitio: Sitio,
 ): Promise<boolean> {
   // 1. Detalles activos existentes de la cotización.
   const detalles = await tx.cotizacion_detalles.findMany({
     where: { ID_COTIZACION_FK: idCotizacion, activacion: true },
+    orderBy: { ID_DETALLE: 'asc' },
   });
 
   const existentesPorInstrumento = new Map<string, DetalleCotizacionExistente[]>();
   for (const d of detalles) {
-    const key = d.EQUIPO_DESCRIPCION.trim().toLocaleLowerCase();
+    const key = normalizar(d.EQUIPO_DESCRIPCION);
     const list = existentesPorInstrumento.get(key) ?? [];
     list.push({
       idDetalle: d.ID_DETALLE,
+      idsUnidades: d.ID_UNIDADES ?? [],
+      nombre: d.EQUIPO_DESCRIPCION,
       valorUnitario: d.VALOR_UNITARIO,
       magnitud: d.MAGNITUD,
       tipoServicio: d.TIPO_SERVICIO,
@@ -55,6 +71,12 @@ export async function sincronizarCotizacionDesdeRecepcion(
     });
     existentesPorInstrumento.set(key, list);
   }
+
+  const instantanea = (filas: typeof detalles) => JSON.stringify(filas.map((d) =>
+    [d.ID_DETALLE, d.EQUIPO_DESCRIPCION, d.TIPO_SERVICIO, d.CANTIDAD, String(d.VALOR_UNITARIO),
+      String(d.VALOR_TOTAL), d.sitio, [...(d.ID_UNIDADES ?? [])].sort()],
+  ).sort());
+  const antes = instantanea(detalles);
 
   // 2. Tarifas activas con su precio vigente.
   const tarifas = await tx.tarifas.findMany({
@@ -78,16 +100,14 @@ export async function sincronizarCotizacionDesdeRecepcion(
     },
   }));
 
-  const normalizar = (s: string): string => s.trim().toLowerCase();
-
   const resolverTarifa = (nombre: string, tipoServicio?: string | null, existente?: DetalleCotizacionExistente): TarifaInfo | null => {
     const n = normalizar(nombre);
     if (!n) return null;
     let matches = tarifasPorInstrumento.filter(({ instrumento }) => normalizar(instrumento) === n);
-    if (tipoServicio) matches = matches.filter(({ info }) => normalizar(info.tipoServicio) === normalizar(tipoServicio));
+    if (tipoServicio) matches = matches.filter(({ info }) => normalizarServicioCotizado(info.tipoServicio) === normalizarServicioCotizado(tipoServicio));
     if (existente) {
       matches = matches.filter(({ info }) =>
-        info.tipoServicio.toLocaleLowerCase() === existente.tipoServicio.toLocaleLowerCase() &&
+        normalizarServicioCotizado(info.tipoServicio) === normalizarServicioCotizado(existente.tipoServicio) &&
         info.magnitud.toLocaleLowerCase() === existente.magnitud.toLocaleLowerCase() &&
         (info.norma ?? '').toLocaleLowerCase() === (existente.norma ?? '').toLocaleLowerCase()
       );
@@ -98,109 +118,112 @@ export async function sincronizarCotizacionDesdeRecepcion(
     return matches[0]?.info ?? null;
   };
 
-  // 3. Agrupar instrumentos por nombre → CANTIDAD.
-  const grupos = new Map<string, { nombre: string; tipoServicio?: string | null; unidades: string[] }>();
+  const lineas = [...existentesPorInstrumento.values()].flat();
+  const unidadesOtrosSitios = new Set(lineas.filter((linea) => linea.sitio !== sitio)
+    .flatMap((linea) => linea.idsUnidades));
+  // Resolver primero el servicio y el precio de cada unidad. Una fila sin tipo
+  // explícito y otra con el tipo canónico pueden pertenecer a la misma línea.
+  const grupos = new Map<string, {
+    nombre: string; tipoServicio: string; magnitud: string; norma: string | null;
+    valorUnitario: number | Prisma.Decimal; sitio: Sitio; cantidad: number; idsUnidades: string[];
+  }>();
+  const clavePorUnidad = new Map<string, string>();
   for (const inst of instrumentos) {
-    const name = inst.instrumento?.trim();
-    if (!name) continue;
-    const key = normalizar(name);
-    const groupKey = `${key}|${normalizar(inst.tipoServicio ?? '')}`;
-    const grupo = grupos.get(groupKey);
-    if (grupo) grupo.unidades.push(inst.idUnidad ?? '');
-    else grupos.set(groupKey, { nombre: name, tipoServicio: inst.tipoServicio, unidades: [inst.idUnidad ?? ''] });
-  }
-
-  const filas = [...grupos.values()].map(({ nombre, tipoServicio, unidades }) => {
-    const existentesCompatibles = (existentesPorInstrumento.get(normalizar(nombre)) ?? [])
-      .filter((detalle) => detalle.sitio === sitio && (!tipoServicio || normalizar(detalle.tipoServicio) === normalizar(tipoServicio)));
-    const clavesComerciales = new Set(existentesCompatibles.map((d) =>
-      `${d.tipoServicio.toLocaleLowerCase()}|${d.magnitud.toLocaleLowerCase()}|${(d.norma ?? '').toLocaleLowerCase()}`
-    ));
-    if (clavesComerciales.size > 1) {
-      throw new AppError(409, `La cotización tiene varias tarifas para "${nombre}" en el mismo sitio. No se puede recalcular la recepción sin identificar cuál línea corresponde.`);
+    const nombre = inst.instrumento.trim();
+    if (!nombre) continue;
+    if (inst.idUnidad && unidadesOtrosSitios.has(inst.idUnidad)) {
+      throw new AppError(409, `La unidad de "${nombre}" ya pertenece a otro sitio de la cotización.`);
     }
-    const existente = existentesCompatibles[0];
-    const tarifa = resolverTarifa(nombre, tipoServicio, existente);
+    const compatibles = (existentesPorInstrumento.get(normalizar(nombre)) ?? [])
+      .filter((linea) => linea.sitio === sitio &&
+        (!inst.tipoServicio || normalizarServicioCotizado(linea.tipoServicio) === normalizarServicioCotizado(inst.tipoServicio)));
+    const propias = inst.idUnidad ? compatibles.filter((linea) => linea.idsUnidades.includes(inst.idUnidad!)) : [];
+    const candidatas = propias.length ? propias : compatibles;
+    if (new Set(candidatas.map(claveComercial)).size > 1) {
+      throw new AppError(409, `La cotización tiene varias tarifas para "${nombre}" en el mismo sitio. Selecciona su servicio antes de guardar.`);
+    }
+    const existente = candidatas[0];
+    const tienePrecio = existente && new Prisma.Decimal(existente.valorUnitario).gt(0);
+    const tarifa = tienePrecio ? null : resolverTarifa(nombre, inst.tipoServicio, existente);
     if (!existente && !tarifa) {
       throw new AppError(409, `No existe una tarifa activa con el nombre exacto "${nombre}". No se guardó el cambio en la cotización.`);
     }
-    const precio = existente && new Prisma.Decimal(existente.valorUnitario).gt(0)
-      ? existente.valorUnitario
-      : tarifa?.precioUnitario ?? 0;
-    if (!new Prisma.Decimal(precio).gt(0)) {
+    const valorUnitario = tienePrecio ? existente.valorUnitario : tarifa?.precioUnitario ?? 0;
+    if (!new Prisma.Decimal(valorUnitario).gt(0)) {
       throw new AppError(409, `La tarifa de "${nombre}" no tiene un precio vigente mayor que cero.`);
     }
-    return {
-      nombre,
-      cantidad: unidades.length,
-      idsUnidades: unidades,
-      tipoServicio: existente?.tipoServicio ?? tarifa?.tipoServicio ?? tipoServicio ?? 'Calibración',
-      magnitud: existente?.magnitud ?? tarifa?.magnitud ?? 'n/a',
+    const datos = {
+      nombre: existente?.nombre ?? nombre,
+      tipoServicio: existente?.tipoServicio ?? tarifa?.tipoServicio ?? inst.tipoServicio ?? 'Calibración',
+      magnitud: existente?.magnitud ?? tarifa?.magnitud ?? '',
       norma: existente?.norma ?? tarifa?.norma ?? null,
-      valorUnitario: precio,
+      valorUnitario,
+      sitio,
     };
-  });
-
-  // 4. Mantener la identidad de las líneas comerciales y sus unidades.
-  const idsFilasVigentes = new Set<number>();
-  for (const fila of filas) {
-    const existente = (existentesPorInstrumento.get(normalizar(fila.nombre)) ?? [])
-      .find((detalle) => detalle.sitio === sitio &&
-        detalle.tipoServicio.toLocaleLowerCase() === fila.tipoServicio.toLocaleLowerCase() &&
-        detalle.magnitud.toLocaleLowerCase() === fila.magnitud.toLocaleLowerCase() &&
-        (detalle.norma ?? '').toLocaleLowerCase() === (fila.norma ?? '').toLocaleLowerCase());
-    const idDetalle = existente?.idDetalle;
-    const unidades = fila.idsUnidades.filter(Boolean);
-    if (idDetalle) {
-      const dbDetalle = detalles.find((d) => d.ID_DETALLE === idDetalle)!;
-      const idsDetalle = dbDetalle.ID_UNIDADES ?? [];
-      const idsProtegidos = idsDetalle.length ? await tx.certificados.findMany({
-        where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: idsDetalle } } } },
-        select: { calibraciones: { select: { recepcion_equipo_detalles: { select: { ID_UNIDAD_FK: true } } } } },
-      }) : [];
-      const protegidos = new Set(idsProtegidos.map((c) => c.calibraciones.recepcion_equipo_detalles.ID_UNIDAD_FK).filter(Boolean));
-      if ([...protegidos].some((id) => !unidades.includes(id as string))) {
-        throw new AppError(409, `No se puede quitar una unidad de "${fila.nombre}": ya tiene un certificado creado.`);
+    const clave = claveComercial(datos);
+    if (inst.idUnidad) {
+      const anterior = clavePorUnidad.get(inst.idUnidad);
+      if (anterior !== undefined) {
+        if (anterior !== clave) throw new AppError(409, `La unidad de "${nombre}" tiene datos comerciales incompatibles.`);
+        continue;
       }
-      const datos = {
-        EQUIPO_DESCRIPCION: fila.nombre,
-        CANTIDAD: fila.cantidad,
-        ID_UNIDADES: unidades,
-        VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
-        activacion: true,
-      };
-      const igual = dbDetalle.EQUIPO_DESCRIPCION === datos.EQUIPO_DESCRIPCION && dbDetalle.CANTIDAD === datos.CANTIDAD &&
-        JSON.stringify(idsDetalle) === JSON.stringify(unidades) && new Prisma.Decimal(dbDetalle.VALOR_TOTAL).eq(datos.VALOR_TOTAL) && dbDetalle.activacion;
-      if (!igual) await tx.cotizacion_detalles.update({
-        where: { ID_DETALLE: idDetalle },
-        data: datos,
-      });
-      idsFilasVigentes.add(idDetalle);
-    } else {
-      const created = await tx.cotizacion_detalles.create({ data: {
-        ID_COTIZACION_FK: idCotizacion,
-        EQUIPO_DESCRIPCION: fila.nombre,
-        TIPO_SERVICIO: fila.tipoServicio,
-        MAGNITUD: fila.magnitud,
-        NORMA_TECNICA: fila.norma,
-        CANTIDAD: fila.cantidad,
-        ID_UNIDADES: unidades,
-        VALOR_UNITARIO: fila.valorUnitario,
-        VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
-        sitio,
-        activacion: true,
-      } });
-      idsFilasVigentes.add(created.ID_DETALLE);
+      clavePorUnidad.set(inst.idUnidad, clave);
+    }
+    const grupo = grupos.get(clave) ?? { ...datos, cantidad: 0, idsUnidades: [] };
+    grupo.cantidad++;
+    if (inst.idUnidad) grupo.idsUnidades.push(inst.idUnidad);
+    grupos.set(clave, grupo);
+  }
+
+  const lineasDelSitio = lineas.filter((fila) => fila.sitio === sitio);
+  const unidadesAnteriores = [...new Set(lineasDelSitio.flatMap((fila) => fila.idsUnidades))];
+  const certificados = unidadesAnteriores.length ? await tx.certificados.findMany({
+    where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: unidadesAnteriores } } } },
+    select: { calibraciones: { select: { recepcion_equipo_detalles: { select: { ID_UNIDAD_FK: true } } } } },
+  }) : [];
+  for (const certificado of certificados) {
+    const id = certificado.calibraciones.recepcion_equipo_detalles.ID_UNIDAD_FK;
+    if (id && !lineasDelSitio.some((linea) =>
+      linea.idsUnidades.includes(id) && clavePorUnidad.get(id) === claveComercial(linea))) {
+      throw new AppError(409, 'No se puede retirar ni cambiar el servicio o precio de una unidad con certificado creado.');
     }
   }
 
-  for (const d of detalles) {
-    if ((d.sitio ?? 'LABORATORIO') !== sitio || idsFilasVigentes.has(d.ID_DETALLE)) continue;
-    const certificados = await tx.certificados.count({
-      where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: d.ID_UNIDADES } } } },
-    });
-    if (certificados) throw new AppError(409, `No se puede quitar "${d.EQUIPO_DESCRIPCION}": contiene una unidad con certificado creado.`);
-    await tx.cotizacion_detalles.update({ where: { ID_DETALLE: d.ID_DETALLE }, data: { activacion: false } });
+  const idsVigentes = new Set<number>();
+  const detallesPorId = new Map(detalles.map((detalle) => [detalle.ID_DETALLE, detalle]));
+  for (const [clave, fila] of grupos) {
+    const existente = lineasDelSitio.find((linea) => claveComercial(linea) === clave) ??
+      lineasDelSitio.find((linea) =>
+        !idsVigentes.has(linea.idDetalle) && new Prisma.Decimal(linea.valorUnitario).lte(0) &&
+        claveComercial({ ...linea, valorUnitario: fila.valorUnitario }) === clave);
+    const datos = {
+      EQUIPO_DESCRIPCION: fila.nombre,
+      TIPO_SERVICIO: fila.tipoServicio,
+      MAGNITUD: fila.magnitud,
+      NORMA_TECNICA: fila.norma,
+      CANTIDAD: fila.cantidad,
+      ID_UNIDADES: fila.idsUnidades.sort(),
+      VALOR_UNITARIO: fila.valorUnitario,
+      VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
+      activacion: true,
+    };
+    if (existente) {
+      const previo = detallesPorId.get(existente.idDetalle)!;
+      if (previo.CANTIDAD !== datos.CANTIDAD ||
+          JSON.stringify([...existente.idsUnidades].sort()) !== JSON.stringify(datos.ID_UNIDADES) ||
+          !previo.VALOR_UNITARIO.eq(datos.VALOR_UNITARIO) || !previo.VALOR_TOTAL.eq(datos.VALOR_TOTAL)) {
+        await tx.cotizacion_detalles.update({ where: { ID_DETALLE: existente.idDetalle }, data: datos });
+      }
+      idsVigentes.add(existente.idDetalle);
+    } else {
+      const creada = await tx.cotizacion_detalles.create({ data: { ...datos, sitio, ID_COTIZACION_FK: idCotizacion } });
+      idsVigentes.add(creada.ID_DETALLE);
+    }
+  }
+  for (const linea of lineasDelSitio) {
+    if (!idsVigentes.has(linea.idDetalle)) {
+      await tx.cotizacion_detalles.update({ where: { ID_DETALLE: linea.idDetalle }, data: { activacion: false } });
+    }
   }
 
   // 6. Recalcular MONTO_TOTAL con viáticos y descuento.
@@ -218,13 +241,87 @@ export async function sincronizarCotizacionDesdeRecepcion(
   const descuento = Number(cot?.descuento ?? 0);
   const montoTotal = calcularMontoTotalCotizacion(subtotal, viaticos, descuento);
 
-  const detalleActualizado = await tx.cotizacion_detalles.findMany({ where: { ID_COTIZACION_FK: idCotizacion, activacion: true } });
-  const before = JSON.stringify(detalles.map((d) => [d.ID_DETALLE, d.EQUIPO_DESCRIPCION, d.TIPO_SERVICIO, d.CANTIDAD, String(d.VALOR_TOTAL), d.activacion, d.sitio, d.ID_UNIDADES]).sort());
-  const after = JSON.stringify(detalleActualizado.map((d) => [d.ID_DETALLE, d.EQUIPO_DESCRIPCION, d.TIPO_SERVICIO, d.CANTIDAD, String(d.VALOR_TOTAL), d.activacion, d.sitio, d.ID_UNIDADES]).sort());
-  const changed = before !== after || !new Prisma.Decimal(cot?.MONTO_TOTAL ?? 0).eq(montoTotal);
+  const changed = antes !== instantanea(activos) || !new Prisma.Decimal(cot?.MONTO_TOTAL ?? 0).eq(montoTotal);
   if (changed) await tx.cotizaciones.update({
     where: { ID_COTIZACION: idCotizacion },
     data: { MONTO_TOTAL: montoTotal, UPDATED_AT: new Date() },
   });
   return changed;
+}
+
+/** Retira únicamente las unidades que pertenecían a la recepción desactivada. */
+export async function retirarUnidadesDeCotizacion(
+  tx: Tx,
+  idCotizacion: number,
+  idsUnidades: readonly string[],
+): Promise<boolean> {
+  if (!idsUnidades.length) return false;
+  const ids = new Set(idsUnidades);
+  const detalles = await tx.cotizacion_detalles.findMany({
+    where: { ID_COTIZACION_FK: idCotizacion, activacion: true },
+  });
+  let cambio = false;
+  let subtotal = new Prisma.Decimal(0);
+  for (const detalle of detalles) {
+    const unidades = detalle.ID_UNIDADES ?? [];
+    const restantes = [...new Set(unidades.filter((unidad) => !ids.has(unidad)))];
+    if (!unidades.some((unidad) => ids.has(unidad))) {
+      subtotal = subtotal.plus(detalle.VALOR_TOTAL);
+      continue;
+    }
+    const cantidad = restantes.length + Math.max(0, detalle.CANTIDAD - unidades.length);
+    const valor = calcularValorDetalle(Math.max(0, cantidad), detalle.VALOR_UNITARIO);
+    await tx.cotizacion_detalles.update({
+      where: { ID_DETALLE: detalle.ID_DETALLE },
+      data: { CANTIDAD: Math.max(0, cantidad), ID_UNIDADES: restantes, VALOR_TOTAL: valor, activacion: cantidad > 0 },
+    });
+    subtotal = subtotal.plus(valor);
+    cambio = true;
+  }
+  if (cambio) {
+    const cotizacion = await tx.cotizaciones.findUniqueOrThrow({ where: { ID_COTIZACION: idCotizacion } });
+    await tx.cotizaciones.update({
+      where: { ID_COTIZACION: idCotizacion },
+      data: {
+        MONTO_TOTAL: calcularMontoTotalCotizacion(subtotal, cotizacion.viaticos ?? 0, cotizacion.descuento ?? 0),
+        UPDATED_AT: new Date(),
+      },
+    });
+  }
+  return cambio;
+}
+
+/** Detecta cantidades, unidades repetidas y líneas equivalentes heredadas. */
+export async function cotizacionDesalineadaConRecepcion(
+  tx: Tx,
+  idCotizacion: number,
+  sitio: Sitio,
+  instrumentos: UnidadRecibida[],
+): Promise<boolean> {
+  const lineas = await tx.cotizacion_detalles.findMany({
+    where: { ID_COTIZACION_FK: idCotizacion, activacion: true },
+  });
+  const delSitio = lineas.filter((linea) => (linea.sitio ?? 'LABORATORIO') === sitio);
+  const esperadas = new Map(instrumentos.map((inst) => [inst.idUnidad, inst]));
+  const vistas = new Set<string>();
+  const claves = new Set<string>();
+  for (const linea of delSitio) {
+    const ids = linea.ID_UNIDADES ?? [];
+    const clave = claveComercial({
+      nombre: linea.EQUIPO_DESCRIPCION, tipoServicio: linea.TIPO_SERVICIO, sitio,
+      valorUnitario: linea.VALOR_UNITARIO, magnitud: linea.MAGNITUD, norma: linea.NORMA_TECNICA,
+    });
+    if (claves.has(clave) || linea.CANTIDAD !== ids.length ||
+        !linea.VALOR_TOTAL.eq(calcularValorDetalle(linea.CANTIDAD, linea.VALOR_UNITARIO))) return true;
+    claves.add(clave);
+    for (const id of ids) {
+      const unidad = esperadas.get(id);
+      if (vistas.has(id) || !unidad || normalizar(unidad.instrumento) !== normalizar(linea.EQUIPO_DESCRIPCION) ||
+          (unidad.tipoServicio && normalizarServicioCotizado(unidad.tipoServicio) !== normalizarServicioCotizado(linea.TIPO_SERVICIO))) {
+        return true;
+      }
+      vistas.add(id);
+    }
+  }
+  return vistas.size !== esperadas.size;
 }

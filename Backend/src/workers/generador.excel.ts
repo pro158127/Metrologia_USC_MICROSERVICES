@@ -1,14 +1,19 @@
+import type { GeneracionExcelJob } from '../services/generacion-pendiente.service.js';
+import { diasVigenciaCotizacion, inicioVigenciaCotizacion, fechaVencimientoCotizacion } from '../services/vigencia-cotizacion.service.js';
+import { resolverPlantillaOperativa } from '../services/plantillas-readiness.service.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import exceljs from 'exceljs';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
+import { esPdfGenerado, nombreArchivoDocumento, prefijosDocumentoGenerado } from '../services/documento-generado.service.js';
 import { GenerarExcelBody, MappingConfig, mappingConfigSchema } from '../routes/plantillas-generacion.schemas.js';
 import { s3Client, BUCKET_NAME } from '../lib/s3Client.js';
-import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { promisify } from 'util';
 import { urls_schema,url } from '../routes/schema-checkStatus.js'; 
 import { firmarTokenAprobacion } from '../lib/approval-token.js';
 import { PDFDocument } from 'pdf-lib';
+import { hidratarFormatoOperativo } from '../services/render-documento-operativo.service.js';
 import { createRequire } from 'node:module';
 
 type LibreOfficeConvert = {
@@ -26,85 +31,6 @@ const { convert } = createRequire(import.meta.url)('libreoffice-convert') as Lib
   
 const prisma = new PrismaClient();
 
-function inyectarValorSeguro(cell: exceljs.Cell, newValue: any) {
-  let valorLimpio = newValue;
-  
-  if (valorLimpio === undefined) {
-    valorLimpio = null;
-  } else if (typeof valorLimpio === 'object' && valorLimpio !== null) {
-    if (typeof valorLimpio.toNumber === 'function') {
-      valorLimpio = valorLimpio.toNumber();
-    } else if (!(valorLimpio instanceof Date)) {
-      valorLimpio = valorLimpio.toString(); 
-    }
-  }
-
-  cell.value = valorLimpio;
-  
-  // ✅ CORRECCIÓN: Usar delete en lugar de strike: false
-  if (cell.font) {
-    const fuenteCelda = { ...cell.font };
-    delete fuenteCelda.strike;
-    cell.font = fuenteCelda;
-  }
-}
-
-// ============================================================================
-// ETIQUETAS CANÓNICAS PARA LA ORDEN DE TRABAJO
-// ============================================================================
-const LISTA_UNIDADES = [
-  'psi', 'bar', 'mbar', 'kPa', 'MPa', 'Pa', 'mmHg', 'inHg',
-  'kgf/cm²', 'cmH2O', 'kg', 'g', 'mg', 'lb', '°C', '°F', '%HR',
-];
-
-const LISTAS_DESPLEGABLES_OT: Record<string, string[]> = {
-  tipo_servicio: ['Acreditado', 'No_acreditado'],
-  sitio_calibracion: ['Laboratorio permanente', 'En sitio', 'Interno USC'],
-  unidad: LISTA_UNIDADES,
-};
-
-function mapearTipoServicio(valor?: string | null): string {
-  const v = (valor ?? '').toString().trim();
-  const upper = v.toUpperCase().replace(/_/g, ' ');
-  if (!v) return 'Acreditado';
-  if (upper.includes('NO') && upper.includes('ACREDIT')) return 'No_acreditado';
-  return 'Acreditado';
-}
-
-function mapearSitioCalibracion(valor?: string | null): string {
-  const v = (valor ?? '').toString().trim().toUpperCase();
-  if (v.includes('INTERNO USC') || v.includes('INTERNO_USC')) return 'Interno USC';
-  if (v.startsWith('CLI')) return 'En sitio';
-  return 'Laboratorio permanente';
-}
-
-function aplicarListasDesplegablesOT(workbook: exceljs.Workbook, mappingConfig: MappingConfig): void {
-  for (const table of mappingConfig.mappings.tables) {
-    const maxRows = table.key === 'tabla_instrumentos_anexo' ? 20 : 10;
-    for (const col of table.columns) {
-      const opciones = LISTAS_DESPLEGABLES_OT[col.key];
-      if (!opciones || !col.column) continue;
-
-      const sheet = workbook.getWorksheet(table.sheet || 1) || workbook.worksheets[0];
-      if (!sheet) continue;
-
-      const startRow = table.startRow;
-      const endRow = startRow + maxRows - 1;
-      const rango = `${col.column}${startRow}:${col.column}${endRow}`;
-
-      try {
-        (sheet as any).dataValidations.add(rango, {
-          type: 'list',
-          allowBlank: true,
-          formulae: [`"${opciones.join(',')}"`],
-        });
-      } catch (e) {
-        console.warn(`[generador_excel] No se pudo aplicar validación en ${rango}:`, e);
-      }
-    }
-  }
-}
-
 async function limitarPdfAPaginas(pdfBuffer: Buffer, maxPaginas: number): Promise<Buffer> {
   try {
     const pdfDoc = await PDFDocument.load(pdfBuffer as any);
@@ -121,420 +47,6 @@ async function limitarPdfAPaginas(pdfBuffer: Buffer, maxPaginas: number): Promis
 
   //cotizaciones_pasrse
 
-export function resolverDatosCotizacionConCeldas(cotizacion: any, mappingConfig: MappingConfig) {
-  const scalarsResult: Array<{ key: string; cell: string; value: any; sheet?: string }> = [];
-  
-  // Nueva estructura de retorno para tablas
-  const tablesResult: Array<{
-    key: string;
-    sheetName: string;
-    startRow: number;
-    endRow: number;
-    header_row?: number;
-    rowCells: Array<{ key: string; column: string; row: number; cell: string; value: any }>;
-  }> = [];
-const scalarMap: Record<string, any> = {
-    no_cotizacion: cotizacion.CODIGO_COTIZACION,
-    fecha_cotizacion: cotizacion.CREATED_AT,
-    empresa: cotizacion.clientes?.RAZON_SOCIAL || 'No registrada',
-    nit: cotizacion.clientes?.NIT || 'N/A',
-    ciudad: cotizacion.clientes?.ciudad || 'N/A',
-    telefono: cotizacion.clientes?.TELEFONO || 'No registrado', // ✅ Fallback añadido
-    contacto: cotizacion.clientes?.NOMBRE_CONTACTO || 'N/A',
-    email: cotizacion.clientes?.CORREO || 'N/A',
-    total_cantidad_servicios: cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0),
-    total_servicio: cotizacion.cotizacion_detalles?.reduce(
-      (acc: number, item: any) => acc + Number(item.VALOR_TOTAL || 0),
-      0,
-    ) ?? 0,
-    descuento: cotizacion.descuento || 0, // ✅ Falta mapear la llave del JSON
-   viaticos: Number(cotizacion.viaticos || 0), // ✅ Falta mapear la llave del JSON
-    monto_total: Number(cotizacion.MONTO_TOTAL || 0),
-  };
-
-  // 1. Mapeo de Escalares
-  for (const scalar of mappingConfig.mappings.scalars) {
-    if (scalarMap[scalar.key] !== undefined) {
-      scalarsResult.push({
-        key: scalar.key,
-        cell: scalar.cell,
-        value: scalarMap[scalar.key],
-        sheet: scalar.sheet, // ✅ Propiedad agregada
-      });
-    }
-  }
-
-  // 2. Mapeo de Tablas con metadatos de bloque
-  for (const tableConfig of mappingConfig.mappings.tables) {
-    if (tableConfig.key === 'tabla_cotizacion_items') {
-      const sheetName = tableConfig.sheet || 'Sheet1';
-      const startRow = tableConfig.startRow;
-      const header_row = tableConfig.star_header; // Basado en tu interfaz (cuidado con el typo en la BD)
-      let currentRow = startRow;
-      
-      const rowCells: Array<{ key: string; column: string; row: number; cell: string; value: any }> = [];
-
-      const detalles = cotizacion.cotizacion_detalles || [];
-      
-      for (const item of detalles) {
-        for (const col of tableConfig.columns) {
-          if (!col.column) continue;
-
-          let rawValue: any = undefined;
-          switch (col.key) {
-            case 'equipo_puntos': rawValue = item.EQUIPO_DESCRIPCION; break;
-            case 'tipo_servicio': rawValue = item.TIPO_SERVICIO; break;
-            case 'magnitud': rawValue = item.MAGNITUD; break;
-            case 'norma_guia_tecnica': rawValue = item.NORMA_TECNICA; break;
-            case 'cantidad': rawValue = item.CANTIDAD; break;
-            case 'valor_unitario': rawValue = item.VALOR_UNITARIO; break;
-            case 'valor_total': rawValue = item.VALOR_TOTAL; break;
-          }
-
-          rowCells.push({
-            key: col.key,
-            column: col.column,
-            row: currentRow,
-            cell: `${col.column}${currentRow}`,
-            value: rawValue,
-          });
-        }
-        currentRow++;
-      }
-
-      // Calculamos dinámicamente dónde terminó de escribir la tabla
-      const endRow = currentRow > startRow ? currentRow - 1 : startRow;
-
-      tablesResult.push({
-        key: tableConfig.key,
-        sheetName,
-        startRow,
-        endRow, // ✅ Límite inferior dinámico calculado
-        header_row,
-        rowCells, // ✅ Arreglo plano de celdas listas para iterar
-      });
-    }
-  }
-
-  return { scalars: scalarsResult, tables: tablesResult };
-}
-////parse   Ordenenes de trabajo 
-
-export function resolverDatosOrdenTrabajoConCeldas(ordenTrabajo: any, mappingConfig: MappingConfig) {
-  const scalarsResult: Array<{ key: string; cell: string; value: any; sheet?: string }> = [];
-  
-  const tablesResult: Array<{
-    key: string;
-    sheetName: string;
-    startRow: number;
-    endRow: number;
-    header_row?: number;
-    rowCells: Array<{ key: string; column: string; row: number; cell: string; value: any }>;
-  }> = [];
-
-  // 1. Diccionario de mapeo de Escalares basado en tu modelo ordenes_trabajo
-const scalarMap: Record<string, any> = {
-    cert_razon_social: ordenTrabajo.Razon_social,
-    cert_nit: ordenTrabajo.NIT,
-    cert_email_certificados: ordenTrabajo.CORREO_CERTIFICADO,
-    cert_fecha_limite_facturacion: ordenTrabajo.FECHA_LIMITE_FACTURACION,
-    cert_direccion: ordenTrabajo.dirrecion,
-    cert_ciudad: ordenTrabajo.ciudad,
-    cert_email_factura: ordenTrabajo.CORREO_FACTURA,
-    calib_interno_usc: ordenTrabajo.ES_INTERNO_USC ? 'X' : '', 
-    calib_en_sitio: ordenTrabajo.ES_EN_SITIO ? 'X' : '',
-    calib_persona_contacto: ordenTrabajo.PERSONA_CONTACTO,
-    calib_telefono: ordenTrabajo.TELEFONO_CONTACTO,
-    calib_fecha: ordenTrabajo.FECHA_CALIBRACION,
-    calib_laboratorio_permanente: ordenTrabajo.ES_LAB_PERMANENTE ? 'X' : '',
-    
-    // ✅ CORRECCIÓN 1: Usar la hora real del evento de calibración
-    calib_hora: ordenTrabajo.HORA_CALIBRACION, 
-    
-    // ✅ CORRECCIÓN 2: Usar el campo exclusivo del solicitante
-    solicitante_razon_social: ordenTrabajo.razon_social_solicitante, 
-    
-    solicitante_nit: ordenTrabajo.NIT_solicitante,
-    
-    // Nota técnica: Priorizamos CODIGO_OT que es el Unique ID formal de tu Prisma
-    no_orden_trabajo: ordenTrabajo.CODIGO_OT || ordenTrabajo.no_orden_trabajo, 
-    
-    no_cotizacion: ordenTrabajo.no_cotizacion  ,
-    solicitante_direccion: ordenTrabajo.dirrecion_solcitante,
-    solicitante_ciudad: ordenTrabajo.ciudad_solcitante,
-    responsable: ordenTrabajo.RESPONSABLE,
-    fecha_diligenciamiento: ordenTrabajo.FECHA_CALIBRACION_DILIGENCIAMENTO,
-    solicitante_contacto: ordenTrabajo.PERSONA_CONTACT_SOLCITANTE,
-    solicitante_telefono: ordenTrabajo.TELEFONO_CONTACTO_SOLICITANTE,
-    
-    // Opcional: Si el Excel espera un check ('X') en vez de 'SÍ'/'NO', cámbialo a:
-    // requiere_anexo_instrumentos: ordenTrabajo.REQUIERE_ANEXO ? 'X' : ''
-    requiere_anexo_instrumentos: ordenTrabajo.REQUIERE_ANEXO ? 'SÍ' : 'NO',
-    
-    observaciones: ordenTrabajo.OBSERVACIONES,
-  };
-
-  // Procesar Escalares
-  for (const scalar of mappingConfig.mappings.scalars) {
-    if (scalarMap[scalar.key] !== undefined) {
-      scalarsResult.push({
-        key: scalar.key,
-        cell: scalar.cell,
-        value: scalarMap[scalar.key],
-        sheet: scalar.sheet,
-      });
-    }
-  }
-
-  // Extraemos los detalles (instrumentos)
-  const detalles = ordenTrabajo.orden_trabajo_detalles || [];
-
-  // Procesar Tablas
-  for (const tableConfig of mappingConfig.mappings.tables) {
-    // Lógica para asignar qué porción del arreglo va a cada tabla
-    let datosTabla: any[] = [];
-    if (tableConfig.key === 'tabla_instrumentos_principal') {
-      datosTabla = detalles.slice(0, 10); // Ítems 1 al 10
-    } else if (tableConfig.key === 'tabla_instrumentos_anexo') {
-      // Si la bandera es false en BD, no llenamos el anexo
-      if (!ordenTrabajo.REQUIERE_ANEXO) continue; 
-      datosTabla = detalles.slice(10); // Ítems 11 en adelante
-    }
-
-    if (datosTabla.length === 0) continue; // No mapear si no hay datos para esta tabla
-
-    const sheetName = tableConfig.sheet || 'Sheet1';
-    const startRow = tableConfig.startRow;
-    const header_row = tableConfig.star_header;
-    let currentRow = startRow;
-    
-    const rowCells: Array<{ key: string; column: string; row: number; cell: string; value: any }> = [];
-
-    for (const item of datosTabla) {
-      for (const col of tableConfig.columns) {
-
-if (Array.isArray(col.columnsList) && col.columnsList.length > 0) {
-  console.log("ENTRO  ")
-          const puntos = Array.isArray(item.PUNTOS_CALIBRAR) ? item.PUNTOS_CALIBRAR : [];
-          
-          // Iteramos sobre las letras de columnas asignadas en el mapeo (ej: ['H', 'I', 'J', 'K'])
-          col.columnsList.forEach((colLetter, index) => {
-            console.log("ENTRO",colLetter)
-            rowCells.push({
-              key: `${col.key}_${index + 1}`,
-              column: colLetter,
-              row: currentRow,
-              cell: `${colLetter}${currentRow}`,
-              value: puntos[index] !== undefined ? puntos[index] : null, // Si no hay punto, enviamos null para limpiar
-            });
-          });
-          
-          continue; // Pasamos a la siguiente columna configurada
-        }
-        if (!col.column) continue;
-
-        let rawValue: any = undefined;
-        // Mapeo directo contra el modelo orden_trabajo_detalles[cite: 1]
-        switch (col.key) {
-          case 'item': rawValue = item.ITEM; break;
-          case 'tipo_servicio': rawValue = mapearTipoServicio(item.TIPO_SERVICIO); break;
-          case 'instrumento': rawValue = item.INSTRUMENTO; break;
-          case 'sitio_calibracion': rawValue = mapearSitioCalibracion(item.sitio_calibracion); break;
-          case 'fabricante': 
-          case 'marca': rawValue = item.FABRICANTE; break; 
-          case 'modelo': rawValue = item.MODELO; break;
-          case 'serie': rawValue = item.SERIE; break;
-          case 'codigo_interno': rawValue = item.CODIGO_INVENTARIO; break;
-          case 'ubicacion': rawValue = item.UBICACION; break;
-          case 'puntos_calibracion': 
-            // Como es un array (String[]), lo unimos con comas[cite: 1]
-            rawValue = Array.isArray(item.PUNTOS_CALIBRAR) ? item.PUNTOS_CALIBRAR.join(', ') : item.PUNTOS_CALIBRAR; 
-            break;
-          case 'unidad': rawValue = item.UNIDAD; break;
-          case 'intervalo_medicion': rawValue = item.INTERVALO_RANGO; break;
-          case 'resolucion_division': rawValue = item.RESOLUCION; break;
-          case 'declaracion_conformidad': rawValue = item.DECLARACION_CONFORMIDAD ? 'SÍ' : 'NO'; break;
-          case 'emp_ajuste_control':
-          case 'emp_limite_control': rawValue = item.LIMITE_CONTROL_EMC; break;
-          case 'documento_especificacion': rawValue = item.DOC_ESPECIFICACION; break;
-          case 'regla_decision': rawValue = item.REGLA_DECISION; break;
-        }
-
-        rowCells.push({
-          key: col.key,
-          column: col.column,
-          row: currentRow,
-          cell: `${col.column}${currentRow}`,
-          value: rawValue,
-        });
-      }
-      currentRow++;
-    }
-
-    const endRow = currentRow > startRow ? currentRow - 1 : startRow;
-
-    tablesResult.push({
-      key: tableConfig.key,
-      sheetName,
-      startRow,
-      endRow, 
-      header_row,
-      rowCells,
-    });
-  }
-
-  return { scalars: scalarsResult, tables: tablesResult };
-}
-
-
-
-
-//parse recepcionde  equipos 
-
-
-export function resolverDatosRecepcionConCeldas(recepcion: any, mappingConfig: MappingConfig) {
-  const scalarsResult: Array<{ key: string; cell: string; value: any; sheet?: string }> = [];
-  const tablesResult: Array<{
-    key: string; sheetName: string; startRow: number; endRow: number; header_row?: number;
-    rowCells: Array<{ key: string; column: string; row: number; cell: string; value: any }>;
-  }> = [];
-
-  const estadoPruebas = typeof recepcion.PRUEBAS_COMPLETAS === 'boolean' 
-    ? recepcion.PRUEBAS_COMPLETAS 
-    : (recepcion.PRUEBAS_COMPLETAS === 'true' || recepcion.PRUEBAS_COMPLETAS === true);
-
-  const nombresTecnicos = [...new Set(
-    (recepcion.ordenes_trabajo?.orden_trabajo_detalles ?? [])
-      .map((detalle: any) => detalle.usuarios?.NOMBRE_COMPLETO?.trim())
-      .filter((nombre: string | undefined): nombre is string => Boolean(nombre)),
-  )].join(', ');
-
-  const scalarMap: Record<string, any> = {
-    solicitante: recepcion.SOLICITANTE,
-    nombre_quien_entrega: recepcion.NOMBRE_ENTREGA,
-    no_cotizacion: recepcion.cotizaciones?.CODIGO_COTIZACION || '', 
-    sitio_laboratorio_permanente: recepcion.SITIO_CALIBRACION === 'LABORATORIO' ? 'X' : '',
-    sitio_instalaciones_cliente: recepcion.SITIO_CALIBRACION === 'CLIENTE' ? 'X' : '',
-    fecha_recepcion: recepcion.FECHA_RECEPCION,
-    nombre_quien_recibe: recepcion.NOMBRE_RECIBE,
-    fecha_salida: recepcion.FECHA_SALIDA,
-    nombre_quien_empaca: recepcion.NOMBRE_EMPACA,
-    accesorios: recepcion.ACCESORIOS,
-    estado_bueno: recepcion.ESTADO === 'BUENO' || recepcion.ESTADO === 'RECIBIDO' ? 'X' : '', 
-    estado_malo: recepcion.ESTADO === 'MALO' ? 'X' : '', 
-    pruebas_pesaje_si: estadoPruebas ? 'X' : '',
-    pruebas_pesaje_no: !estadoPruebas ? 'X' : '',
-    pruebas_pesaje_justificacion_no: !estadoPruebas ? recepcion.OBSERVACIONES_PRUEBAS : '',
-    nombre_quien_calibra: nombresTecnicos,
-    nombre_quien_recibe_servicio: recepcion.NOMBRE_RECIBE_SERVICIO,
-  };
-
-  for (const scalar of mappingConfig.mappings.scalars) {
-    if (scalarMap[scalar.key] !== undefined) {
-      scalarsResult.push({
-        key: scalar.key, cell: scalar.cell, value: scalarMap[scalar.key], sheet: scalar.sheet,
-      });
-    }
-  }
-
-  const detalles = recepcion.recepcion_equipo_detalles || [];
-
-  const marcaIbc = (valor: unknown): string => {
-    if (valor === true || valor === 'true' || valor === 'TRUE' || valor === 'SI' || valor === 'Sí') return '✓';
-    if (valor === false || valor === 'false' || valor === 'FALSE' || valor === 'NO') return '✗';
-    return '';
-  };
-
-  for (const tableConfig of mappingConfig.mappings.tables) {
-    if (tableConfig.key !== 'tabla_recepcion_instrumentos') continue;
-
-    const sheetName = tableConfig.sheet || 'Hoja1';
-    const startRow = tableConfig.startRow;
-    const header_row = tableConfig.star_header;
-    let currentRow = startRow;
-    
-    const rowCells: Array<{ key: string; column: string; row: number; cell: string; value: any }> = [];
-
-    for (const item of detalles) {
-      let estadoIbc: any = { entrada: {}, salida: {} };
-      try {
-        const parsed = typeof item.ESTADO_IBC === 'string' ? JSON.parse(item.ESTADO_IBC) : (item.ESTADO_IBC || {});
-        // Fallback robusto por si aún hay registros viejos sin anidar
-        estadoIbc.entrada = parsed.entrada || parsed; 
-        estadoIbc.salida = parsed.salida || {};
-      } catch (e) {
-        console.warn(`Error parseando ESTADO_IBC para el instrumento ${item.ID_INSTRUMENTO}`, e);
-      }
-
-      for (const col of tableConfig.columns) {
-        if (!col.column) continue;
-
-        let rawValue: any = undefined;
-        let rawValueSalida: any = undefined; // Segunda variable para la fila de abajo
-
-        switch (col.key) {
-          case 'instrumento': rawValue = item.INSTRUMENTO; break;
-          case 'marca': rawValue = item.MARCA; break;
-          case 'modelo': rawValue = item.MODELO; break;
-          case 'serie': rawValue = item.SERIE; break;
-          case 'codigo_interno': rawValue = item.CODIGO_INVENTARIO; break;
-          case 'resolucion': rawValue = item.RESOLUCION; break;
-         case 'tipo_sensor_int': 
-                    rawValue = item.TIPO_SENSOR_TEMP_init ? 'X' : ''; 
-                    break;
-          case 'tipo_sensor_ext': 
-            rawValue = item.TIPO_SENSOR_TEMP_ext ? 'X' : ''; 
-            break;
-          case 'estampilla': rawValue = item.ESTAMPILLA; break;
-          case 'observaciones': rawValue = item.OBSERVACIONES; break;
-
-          // 🔴 EXCLUSIVO: Manejo de matriz doble para las columnas IBC
-          case 'estado_ibc_e': 
-            rawValue = marcaIbc(estadoIbc.entrada.E);
-            rawValueSalida = marcaIbc(estadoIbc.salida.E);
-            break; 
-          case 'estado_ibc_t': 
-            rawValue = marcaIbc(estadoIbc.entrada.T);
-            rawValueSalida = marcaIbc(estadoIbc.salida.T);
-            break;
-          case 'estado_ibc_d': 
-            rawValue = marcaIbc(estadoIbc.entrada.D);
-            rawValueSalida = marcaIbc(estadoIbc.salida.D);
-            break;
-          case 'estado_ibc_a': 
-            rawValue = marcaIbc(estadoIbc.entrada.A);
-            rawValueSalida = marcaIbc(estadoIbc.salida.A);
-            break;
-        }
-
-        // Inyección Fila 1 (Entrada y campos combinados)
-        rowCells.push({
-          key: col.key, column: col.column, row: currentRow,
-          cell: `${col.column}${currentRow}`, value: rawValue,
-        });
-
-        // Inyección Fila 2 (Solo si es campo IBC, inyectamos en currentRow + 1)
-        if (col.key.startsWith('estado_ibc_')) {
-          rowCells.push({
-            key: `${col.key}_salida`, column: col.column, row: currentRow + 1,
-            cell: `${col.column}${currentRow + 1}`, value: rawValueSalida,
-          });
-        }
-      }
-      
-      // 🔴 CLAVE: Cada ítem ocupa dos filas en el diseño de Excel, avanzamos de 2 en 2.
-      currentRow += 2;
-    }
-
-    const endRow = currentRow > startRow ? currentRow - 1 : startRow;
-
-    tablesResult.push({
-      key: tableConfig.key, sheetName, startRow, endRow, header_row, rowCells,
-    });
-  }
-
-  return { scalars: scalarsResult, tables: tablesResult };
-}
 async function streamToBuffer(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {
@@ -542,46 +54,64 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
   }
   return Buffer.concat(chunks);
 }
-export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
-  const { tipo, id_registro, codigo_actual, tipo_entry, id_job, action, force_regenerate } = job.data;
+export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
+  const { tipo, id_registro, tipo_entry, id_job, action, force_regenerate } = job.data;
+
+  if (tipo !== 1 && tipo !== 2 && tipo !== 3) throw new UnrecoverableError(`Tipo documental inválido: ${tipo}`);
+  if (!id_job || !id_registro) throw new UnrecoverableError('Falta id_job o id_registro para generar el documento.');
+  const anterior = await prisma.quote.findUnique({ where: { id: id_job }, select: { status: true } });
+  if (anterior?.status === 'COMPLETED') return { exito: false };
+  const prefix = prefijosDocumentoGenerado[tipo];
+  const fkDocumento = tipo === 1 ? { ID_COTIZACION_FK: id_registro }
+    : tipo === 2 ? { ID_ORDEN_TRABAJO_FK: id_registro }
+    : { ID_RECEPCION_FK: id_registro };
+  const buscarDocumentos = (tx: Prisma.TransactionClient) => tx.documentos.findMany({
+    where: { ...fkDocumento, ordenPagoId: null, certificados: { none: {} } },
+    include: {
+      version_documentos: { orderBy: [{ VERSION: 'desc' }, { ID_VERSION: 'desc' }] },
+    },
+    orderBy: { ID_DOCUMENTO: 'desc' },
+  });
 
   let mappingConfig = {} as MappingConfig;
   let s3TemplateKey = '';
+  let idVersionPlantilla: number;
   let cotizacion: any = null;
   let ordenTrabajo: any = null;
   let recepcion: any = null;
-  let docExistente: any = null;
+  let codigoDocumento = "";
+  let solicitudCreadaEn = new Date(0);
+  let ultimaVersion: Awaited<ReturnType<typeof buscarDocumentos>>[number]["version_documentos"][number] | undefined;
 
   // ====================================================================
   // 1. LECTURA DE BASE DE DATOS (Con consulta de documentos previos)
   // ====================================================================
   await prisma.$transaction(async (tx) => {
-    // `tipo` es el TIPO DE DOCUMENTO (1=Cotización, 2=OT, 3=Recepción).
-    // La versión de plantilla vigente se resuelve por el MÓDULO de la plantilla.
-    const MODULO_POR_TIPO: Record<number, string> = {
-      1: 'COTIZACIONES',
-      2: 'ORDEN_TRABAJO',
-      3: 'RECEPCION',
-    };
-    const modulo = MODULO_POR_TIPO[tipo];
+    const { rutaPlantilla, mapeoPlantilla, idVersionPlantilla: versionFijada } = job.data;
+    if (versionFijada && rutaPlantilla && mapeoPlantilla) {
+      idVersionPlantilla = versionFijada;
+      mappingConfig = mappingConfigSchema.parse(mapeoPlantilla);
+      s3TemplateKey = rutaPlantilla;
+    } else {
+      const version = await resolverPlantillaOperativa(tx, tipo, { versionId: versionFijada });
+      idVersionPlantilla = version.ID_VERSION_PLANTILLA;
+      mappingConfig = mappingConfigSchema.parse(version.MAPPING_CONFIG);
+      s3TemplateKey = version.documentos.RUTA_URL;
+    }
 
-    const version = await tx.version_plantillas.findFirst({
-      where: modulo ? { plantillas: { MODULO: modulo } } : { ID_VERSION_PLANTILLA: tipo },
-      include: { documentos: true },
-      orderBy: { VERSION: 'desc' }
-    });
+    const seguimiento = await tx.quote.updateMany({ data: { status: 'PROCESSING' }, where: { id: id_job } });
+    if (seguimiento.count === 0) {
+      throw new UnrecoverableError(`No existe el registro Quote ${id_job} para el tipo ${tipo}, registro ${id_registro}.`);
+    }
 
-    if (!version) throw new Error(`No existe una versión de plantilla para el tipo de documento ${tipo}.`);
-    mappingConfig = mappingConfigSchema.parse(version?.MAPPING_CONFIG);
-    s3TemplateKey = version?.documentos?.RUTA_URL || '';
-
-    await tx.quote.update({ data: { status: 'PROCESSING' }, where: { id: id_job } });
+    const solicitud = await tx.quote.findUniqueOrThrow({ where: { id: id_job }, select: { createdAt: true } });
+    solicitudCreadaEn = solicitud.createdAt;
 
     if (tipo === 1) {
       cotizacion = await tx.cotizaciones.findFirst({ where: { ID_COTIZACION: Number(id_registro) }, include: { cotizacion_detalles: { where: { activacion: true } }, clientes: true, ordenes_trabajo: true } });
     }
     if (tipo === 2) {
-      ordenTrabajo = await tx.ordenes_trabajo.findFirst({ where: { ID_ORDEN_TRABAJO: Number(id_registro) }, include: { orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } }, clientes: true } });
+      ordenTrabajo = await tx.ordenes_trabajo.findFirst({ where: { ID_ORDEN_TRABAJO: Number(id_registro) }, include: { cotizaciones: { select: { CODIGO_COTIZACION: true } }, orden_trabajo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } }, clientes: true } });
     }
     if (tipo === 3) {
       recepcion = await tx.recepciones_equipo.findFirst({
@@ -605,21 +135,26 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
       });
     }
 
-    // 🔥 BUSCAR SI YA EXISTE UN DOCUMENTO PREVIO Y SU ÚLTIMA VERSIÓN
-    const fkData = 
-      tipo === 1 ? { ID_COTIZACION_FK: Number(id_registro) } :
-      tipo === 2 ? { ID_ORDEN_TRABAJO_FK: Number(id_registro) } :
-                   { ID_RECEPCION_FK: Number(id_registro) };
+    codigoDocumento = cotizacion?.CODIGO_COTIZACION ?? ordenTrabajo?.CODIGO_OT ?? recepcion?.CODIGO_RECEPCION;
+    if (tipo_entry === 'prod' && job.data.codigo_actual && job.data.codigo_actual !== codigoDocumento) {
+      throw new UnrecoverableError(`La revisión solicitada ${job.data.codigo_actual} fue sustituida por ${codigoDocumento}.`);
+    }
+    if (tipo_entry === 'prod' && (ordenTrabajo?.VIGENTE === false || recepcion?.VIGENTE === false || recepcion?.activacion === false)) {
+      throw new UnrecoverableError('La revisión fue sustituida porque el grupo dejó de estar vigente.');
+    }
+    if (job.data.estadoCotizacion && cotizacion?.ESTADO !== job.data.estadoCotizacion) {
+      throw new UnrecoverableError('La revisión fue sustituida por un cambio de estado de la cotización.');
+    }
+    if (!codigoDocumento) throw new UnrecoverableError(`El registro ${id_registro} de tipo ${tipo} no tiene código.`);
 
-    docExistente = await tx.documentos.findFirst({
-      where: fkData,
-      include: {
-        version_documentos: {
-          orderBy: { VERSION: 'desc' },
-          take: 1
-        }
-      }
-    });
+    if (tipo_entry === 'prod') {
+      const documentos = await buscarDocumentos(tx);
+      ultimaVersion = documentos.flatMap((doc) => doc.version_documentos)
+        .filter((version) => esPdfGenerado(version.RUTA_URL, tipo, codigoDocumento) &&
+          nombreArchivoDocumento(version.RUTA_URL) === `${codigoDocumento}.pdf` &&
+          (version.content_json as { idVersionPlantilla?: number } | null)?.idVersionPlantilla === idVersionPlantilla)
+        .sort((a, b) => b.CREATED_AT.getTime() - a.CREATED_AT.getTime() || b.ID_VERSION - a.ID_VERSION)[0];
+    }
   }); 
 
   // ====================================================================
@@ -632,18 +167,18 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
     recordUpdatedAt = cotizacion.UPDATED_AT || cotizacion.CREATED_AT;
     const totalCalculado = Number(cotizacion.MONTO_TOTAL || 0);
     const fechaEmisionStr = cotizacion.CREATED_AT.toLocaleDateString('es-CO');
-    const fechaVencimientoObj = new Date(cotizacion.CREATED_AT);
-    fechaVencimientoObj.setDate(fechaVencimientoObj.getDate() + 30);
+    const fechaVencimientoObj = fechaVencimientoCotizacion(await inicioVigenciaCotizacion(prisma, cotizacion), await diasVigenciaCotizacion(prisma));
     const totalEquipos = cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0) || 0;
     const codigoOT = cotizacion.ordenes_trabajo && cotizacion.ordenes_trabajo.length > 0 ? cotizacion.ordenes_trabajo[0].CODIGO_OT : 'Pendiente de asignación';
-    const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
+    const segundosRestantes = Math.max(0, Math.ceil((fechaVencimientoObj.getTime() - Date.now()) / 1000));
+    const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION, segundosRestantes);
     const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
     datosPlantillaCorreo = {
       nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
       numeroCotizacion: cotizacion.CODIGO_COTIZACION,
       fechaEmision: fechaEmisionStr,
-      fechaVencimiento: fechaVencimientoObj.toLocaleDateString('es-CO'),
+      fechaVencimiento: fechaVencimientoObj.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' }),
       valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(totalCalculado),
       linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar?token=${tokenAprobacion}`,
       emailDestino: cotizacion.clientes?.CORREO,
@@ -658,7 +193,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
       emailDestino: ordenTrabajo.clientes?.CORREO, 
       nombreCliente: ordenTrabajo.clientes?.NOMBRE_CONTACTO || ordenTrabajo.clientes?.RAZON_SOCIAL,
       numeroOT: ordenTrabajo.CODIGO_OT,
-      numeroCotizacion: ordenTrabajo.no_cotizacion
+      numeroCotizacion: ordenTrabajo.cotizaciones?.CODIGO_COTIZACION ?? ordenTrabajo.no_cotizacion
     };
   }
 
@@ -669,12 +204,10 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
   // ====================================================================
   // 🔥 3. LÓGICA DE BYPASS (OMITIR GENERACIÓN SI ESTÁ AL DÍA)
   // ====================================================================
-  const ultimaVersion = docExistente?.version_documentos?.[0];
-
   if (ultimaVersion && recordUpdatedAt && !force_regenerate) {
     // Tomamos las fechas en milisegundos para comparar
     // Adaptado para createdAt o created_at según como lo llame Prisma
-    const fechaUltimoPdf = new Date(ultimaVersion.createdAt || (ultimaVersion as any).created_at || ultimaVersion.FECHA_CREACION).getTime();
+    const fechaUltimoPdf = ultimaVersion.CREATED_AT.getTime();
     const fechaUltimaEdicion = new Date(recordUpdatedAt).getTime();
 
     // Si el PDF se generó DESPUÉS o en el mismo instante de la última edición de los datos
@@ -684,10 +217,12 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
       const contentJson = typeof ultimaVersion.content_json === 'string' 
         ? JSON.parse(ultimaVersion.content_json) 
         : ultimaVersion.content_json;
+      const excel = (contentJson as { excel?: string } | null)?.excel ?? null;
+      const urls = { excel, url_pdf: ultimaVersion.RUTA_URL };
 
       await prisma.quote.update({
         where: { id: id_job },
-        data: { status: 'COMPLETED', data: contentJson }
+        data: { status: 'COMPLETED', data: urls }
       });
 
       // Retornamos instantáneamente, sin procesar nada más
@@ -696,8 +231,8 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
         tipo_documento: tipo,
         estado: cotizacion?.ESTADO || null,
         id_registro: id_registro,
-        url_pdf: contentJson?.pdf || ultimaVersion.RUTA_URL,
-        url_excel: contentJson?.excel || null,
+        url_pdf: urls.url_pdf,
+        url_excel: urls.excel,
         datos_correo: datosPlantillaCorreo,
         action: action
       };
@@ -718,194 +253,7 @@ export async function generarExcelPlantilla(job: Job<GenerarExcelBody>) {
   const workbook = new exceljs.Workbook();
   await workbook.xlsx.load(buffer as any);
 
-  // ... (Aquí va tu lógica intacta de inyección de celdas: if (tipo === 1) { resolverDatosCotizacion... } ) ...
-  
-  if (tipo === 1) {
-    const { scalars, tables } = resolverDatosCotizacionConCeldas(cotizacion, mappingConfig);
-         console.log("buscando fila para visualizar")
-     const key_filas=["descuento","viaticos","monto_total","total_cantidad_servicios","total_servicio"]
-    for (const scalar of scalars) {
-
-      const sheet = workbook.getWorksheet(scalar.sheet || 1) || workbook.worksheets[0];
-     
-      if (sheet){ 
-        
-        const cell = sheet.getCell(scalar.cell);
-          
-          // 🌟 VERIFICAR SI EL ESCALAR ESTÁ EN LA LISTA DE CLAVES IMPORTANTES
-          if (key_filas.includes(scalar.key)) {
-            // Forzamos la visibilidad de su fila y de su columna
-            sheet.getRow(Number(cell.row)).hidden = false;
-            sheet.getColumn(Number(cell.col)).hidden = false;
-            console.log("Forzando visibilidad para clave:", scalar.key, "Fila:", cell.row, "Columna:", cell.col);
-          }
-        
-        
-        inyectarValorSeguro(sheet.getCell(scalar.cell), scalar.value);}
-    }
-    
-    for (const tabla of tables) {
-      const sheet = workbook.getWorksheet(tabla.sheetName) || workbook.worksheets[0];
-      const filaModelo = sheet.getRow(tabla.startRow);
-      const alturaModelo = filaModelo.height;
-      if (!sheet) continue;
-      const columnasTabla = [...new Set(tabla.rowCells.map(c => c.column))];
-      const FILA_LIMITE = 50; 
-      
-      for (let r = tabla.startRow; r <= FILA_LIMITE; r++) {
-        const row = sheet.getRow(r);
-        row.hidden = r > tabla.endRow; 
-        if (r > tabla.startRow && r <= tabla.endRow && alturaModelo) {
-          row.height = alturaModelo;
-        }
-        for (const col of columnasTabla) {
-           sheet.getCell(`${col}${r}`).value = null; 
-           const cell = sheet.getCell(`${col}${r}`);
-           cell.value = null;
-           if (r > tabla.startRow && r <= tabla.endRow) {
-             const cellModelo = sheet.getCell(`${col}${tabla.startRow}`);
-             
-    
-             cell.border = cellModelo.border ? JSON.parse(JSON.stringify(cellModelo.border)) : undefined;
-             cell.fill = cellModelo.fill ? JSON.parse(JSON.stringify(cellModelo.fill)) : undefined;
-             cell.numFmt = cellModelo.numFmt;
-           }
-        }
-      }
-      
-      const filasAgrupadas = tabla.rowCells.reduce((acc, cellData) => {
-        if (!acc[cellData.row]) acc[cellData.row] = [];
-        acc[cellData.row].push(cellData);
-        return acc;
-      }, {} as Record<number, typeof tabla.rowCells>);
-
- 
-     
-    
-      for (const filaNumStr of Object.keys(filasAgrupadas)) {
-        const filaNum = Number(filaNumStr);
-        for (const celdaData of filasAgrupadas[filaNum]) {
-          const cell = sheet.getCell(celdaData.cell);
-          inyectarValorSeguro(cell, celdaData.value);
-        }
-      }
-    }
-
-    
-
-
-    const totalCalculado = Number(cotizacion.MONTO_TOTAL || 0);
-    
-    // Formatear fechas a formato local
-    const fechaEmisionStr = cotizacion.CREATED_AT.toLocaleDateString('es-CO');
-    
-    // Asumiendo 30 días de validez para la cotización
-    const fechaVencimientoObj = new Date(cotizacion.CREATED_AT);
-    fechaVencimientoObj.setDate(fechaVencimientoObj.getDate() + 30);
-    const fechaVencimientoStr = fechaVencimientoObj.toLocaleDateString('es-CO');
-    const totalEquipos = cotizacion.cotizacion_detalles?.reduce((acc: number, item: any) => acc + (item.CANTIDAD || 0), 0) || 0;
-    
-    // 🔥 NUEVO: Extracción del código OT (Requiere que incluyas { ordenes_trabajo: true } en el findFirst de Prisma al inicio)
-    const codigoOT = cotizacion.ordenes_trabajo && cotizacion.ordenes_trabajo.length > 0 
-                     ? cotizacion.ordenes_trabajo[0].CODIGO_OT 
-                     : 'Pendiente de asignación';
-    const tokenAprobacion = firmarTokenAprobacion(cotizacion.ID_COTIZACION);
-    const basePublica = (process.env.FRONTEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000/').replace(/\/$/, '');
-    // Mapeo exacto a las variables de tu HTML {{...}}
-datosPlantillaCorreo = {
-      nombreCliente: cotizacion.clientes?.NOMBRE_CONTACTO || cotizacion.clientes?.RAZON_SOCIAL || 'Cliente',
-      numeroCotizacion: cotizacion.CODIGO_COTIZACION,
-      fechaEmision: fechaEmisionStr,
-      fechaVencimiento: fechaVencimientoStr,
-      valorTotal: new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(totalCalculado),
-      linkAprobacion: `${basePublica}/api/v1/cotizaciones/aprobar?token=${tokenAprobacion}`,
-      emailDestino: cotizacion.clientes?.CORREO,
-      
-      // ✅ VARIABLES FALTANTES PARA EL SEGUNDO HTML
-      cantidadEquipos: totalEquipos,
-      numeroOT: codigoOT
-    };
-  }
-
-  if (tipo === 2) {
-    const { scalars, tables } = resolverDatosOrdenTrabajoConCeldas(ordenTrabajo, mappingConfig);
-    
-    for (const scalar of scalars) {
-      const sheet = workbook.getWorksheet(scalar.sheet || 1) || workbook.worksheets[0];
-      if (sheet) inyectarValorSeguro(sheet.getCell(scalar.cell), scalar.value);
-    }
-    
-    for (const tabla of tables) {
-      const sheet = workbook.getWorksheet(tabla.sheetName) || workbook.worksheets[0];
-      if (!sheet) continue;
-      const columnasTabla = [...new Set(tabla.rowCells.map(c => c.column))];
-      
-      for (let r = tabla.startRow; r <= tabla.endRow; r++) {
-        for (const col of columnasTabla) {
-           sheet.getCell(`${col}${r}`).value = null; 
-        }
-      }
-
-      const filasAgrupadas = tabla.rowCells.reduce((acc, cellData) => {
-        if (!acc[cellData.row]) acc[cellData.row] = [];
-        acc[cellData.row].push(cellData);
-        return acc;
-      }, {} as Record<number, typeof tabla.rowCells>);
-
-      for (const filaNumStr of Object.keys(filasAgrupadas)) {
-        const filaNum = Number(filaNumStr);
-        for (const celdaData of filasAgrupadas[filaNum]) {
-          const cell = sheet.getCell(celdaData.cell);
-          inyectarValorSeguro(cell, celdaData.value);
-        }
-      }
-    }
-     aplicarListasDesplegablesOT(workbook, mappingConfig);
-     datosPlantillaCorreo = {
-  // Dato interno para el worker de correos (A quién se lo enviamos)
-  emailDestino:ordenTrabajo.clientes.CORREO, 
-  
-  // Variables exactas que lee la plantilla HTML (Handlebars)
-  nombreCliente: ordenTrabajo.clientes.NOMBRE_CONTACTO || ordenTrabajo.clientes.RAZON_SOCIAL, // Mapea a {{nombreCliente}}
-  numeroOT: ordenTrabajo.CODIGO_OT,                                         // Mapea a {{numeroOT}}
-  numeroCotizacion: ordenTrabajo.no_cotizacion                  // Mapea a {{numeroCotizacion}}
-};
-  }
-   
-  if (tipo === 3) {
-    const { scalars, tables } = resolverDatosRecepcionConCeldas(recepcion, mappingConfig);
-
-    for (const scalar of scalars) {
-      const sheet = workbook.getWorksheet(scalar.sheet || 1) || workbook.worksheets[0];
-      if (sheet) inyectarValorSeguro(sheet.getCell(scalar.cell), scalar.value);
-    }
-    
-    for (const tabla of tables) {
-      const sheet = workbook.getWorksheet(tabla.sheetName) || workbook.worksheets[0];
-      if (!sheet) continue;
-      const columnasTabla = [...new Set(tabla.rowCells.map(c => c.column))];
-      
-      for (let r = tabla.startRow; r <= tabla.endRow; r++) {
-        for (const col of columnasTabla) {
-           sheet.getCell(`${col}${r}`).value = null; 
-        }
-      }
-
-      const filasAgrupadas = tabla.rowCells.reduce((acc, cellData) => {
-        if (!acc[cellData.row]) acc[cellData.row] = [];
-        acc[cellData.row].push(cellData);
-        return acc;
-      }, {} as Record<number, typeof tabla.rowCells>);
-
-      for (const filaNumStr of Object.keys(filasAgrupadas)) {
-        const filaNum = Number(filaNumStr);
-        for (const celdaData of filasAgrupadas[filaNum]) {
-          const cell = sheet.getCell(celdaData.cell);
-          inyectarValorSeguro(cell, celdaData.value);
-        }
-      }
-    }
-  }
+  hidratarFormatoOperativo(workbook, tipo, cotizacion ?? ordenTrabajo ?? recepcion, mappingConfig);
 
   workbook.eachSheet((sheet) => {
     sheet.pageSetup = {
@@ -918,14 +266,10 @@ datosPlantillaCorreo = {
   const convertAsync = promisify(convert);
   const updatedBuffer = await workbook.xlsx.writeBuffer();
   
-  const prefix = tipo === 2 ? 'ordenes_trabajo_generadas' : 
-                 tipo === 3 ? 'recepciones_generadas' : 'cotizaciones_generadas';
-  
-  const codigoSeguro = codigo_actual ? codigo_actual.replace(/\s+/g, '_') : `registro_${id_registro}`;
-  const nombreBase = tipo_entry === 'prod' ? codigoSeguro : `test_${id_job}`;
-  
-  const s3Key = `${prefix}/${nombreBase}.xlsx`; 
-  const s3Key_pdf = `${prefix}/${nombreBase}.pdf`; 
+  const nombreBase = tipo_entry === 'prod' ? codigoDocumento : `test_${id_job}`;
+  const carpeta = tipo_entry === 'prod' ? `${prefix}/${id_job}` : prefix;
+  const s3Key = `${carpeta}/${nombreBase}.xlsx`;
+  const s3Key_pdf = `${carpeta}/${nombreBase}.pdf`;
 
   const pdfBuffer = await convertAsync(Buffer.from(updatedBuffer), '.pdf', undefined);
 
@@ -934,53 +278,77 @@ datosPlantillaCorreo = {
     ? await limitarPdfAPaginas(Buffer.from(pdfBuffer), 2)
     : Buffer.from(pdfBuffer);
   
-  await Promise.all([
-    s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key, Body: Buffer.from(updatedBuffer), ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })),
-    s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key_pdf, Body: pdfBufferFinal, ContentType: 'application/pdf' }))
-  ]);
+  try {
+    const subidas = await Promise.allSettled([
+      s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key, Body: Buffer.from(updatedBuffer), ContentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })),
+      s3Client.send(new PutObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key_pdf, Body: pdfBufferFinal, ContentType: 'application/pdf' }))
+    ]);
 
-  const parse: url = { excel: s3Key, url_pdf: s3Key_pdf };
+    const falloSubida = subidas.find((subida) => subida.status === 'rejected');
+    if (falloSubida) throw falloSubida.reason;
+    const parse: url = { excel: s3Key, url_pdf: s3Key_pdf };
 
-  await prisma.quote.update({
-    where: { id: id_job },
-    data: { status: 'COMPLETED', fileUrl: null, data: parse }
-  });
+    await prisma.$transaction(async (tx) => {
+      if (tipo_entry === 'prod') {
+        // Serializa la publicación con otras generaciones y con las ediciones del consecutivo.
+        const [actual] = tipo === 1
+          ? await tx.$queryRaw<{ codigo: string; estado: string }[]>`SELECT "CODIGO_COTIZACION" AS codigo, "ESTADO"::text AS estado FROM cotizaciones WHERE "ID_COTIZACION" = ${id_registro} FOR UPDATE`
+          : tipo === 2
+          ? await tx.$queryRaw<{ codigo: string }[]>`SELECT "CODIGO_OT" AS codigo FROM ordenes_trabajo WHERE "ID_ORDEN_TRABAJO" = ${id_registro} AND "VIGENTE" FOR UPDATE`
+          : await tx.$queryRaw<{ codigo: string }[]>`SELECT "CODIGO_RECEPCION" AS codigo FROM recepciones_equipo WHERE "ID_RECEPCION" = ${id_registro} AND "VIGENTE" AND activacion FOR UPDATE`;
+        const codigo = actual?.codigo;
+        if (job.data.estadoCotizacion && (!actual || !('estado' in actual) || actual.estado !== job.data.estadoCotizacion)) {
+          throw new UnrecoverableError('La revisión fue sustituida por un cambio de estado antes de publicar.');
+        }
+        if (codigo !== codigoDocumento) {
+          throw new UnrecoverableError(`El consecutivo ${codigoDocumento} cambió antes de publicar a ${codigo ?? 'registro eliminado'}.`);
+        }
 
-  const usuarioId = job.data.id_usuario || 1; 
-
-  const fkDataGuardar = 
-    tipo === 1 ? { ID_COTIZACION_FK: Number(id_registro) } :
-    tipo === 2 ? { ID_ORDEN_TRABAJO_FK: Number(id_registro) } :
-                 { ID_RECEPCION_FK: Number(id_registro) };
-
-  let documentoId;
-  let nuevaVersionNum = 1;
-
-  if (docExistente) {
-    documentoId = docExistente.ID_DOCUMENTO;
-    const ultimaVersion = await prisma.version_documentos.findFirst({ where: { ID_DOCUMENTO_FK: documentoId }, orderBy: { VERSION: 'desc' } });
-    nuevaVersionNum = ultimaVersion ? ultimaVersion.VERSION + 1 : 1;
-    await prisma.documentos.update({ where: { ID_DOCUMENTO: documentoId }, data: { RUTA_URL: s3Key_pdf } });
-  } else {
-    try {
-      const nuevoDoc = await prisma.documentos.create({
-        data: { NOMBRE: nombreBase, RUTA_URL: s3Key_pdf, PROVEEDOR: 'AWS_S3', MIME_TYPE: 'application/pdf', ...fkDataGuardar }
+        const existentes = await buscarDocumentos(tx);
+        const anterior = existentes.find((doc) => esPdfGenerado(doc.RUTA_URL, tipo, codigoDocumento) ||
+          doc.version_documentos.some((version) => esPdfGenerado(version.RUTA_URL, tipo, codigoDocumento)));
+        const ultimaPublicada = anterior?.version_documentos[0]?.content_json as { solicitudCreadaEn?: string } | null | undefined;
+        if (ultimaPublicada?.solicitudCreadaEn && new Date(ultimaPublicada.solicitudCreadaEn) > solicitudCreadaEn) {
+          throw new UnrecoverableError('La última publicación corresponde a un trabajo más reciente.');
+        }
+        if (!anterior?.version_documentos.some((version) => version.RUTA_URL === s3Key_pdf)) {
+          const datos = { NOMBRE: `${nombreBase}.pdf`, RUTA_URL: s3Key_pdf, MIME_TYPE: 'application/pdf' };
+          const documento = anterior
+            ? await tx.documentos.update({ where: { ID_DOCUMENTO: anterior.ID_DOCUMENTO }, data: datos })
+            : await tx.documentos.create({ data: { ...datos, ...fkDocumento, PROVEEDOR: 'AWS_S3' } });
+          await tx.version_documentos.create({
+            data: {
+              ID_DOCUMENTO_FK: documento.ID_DOCUMENTO,
+              VERSION: (anterior?.version_documentos[0]?.VERSION ?? 0) + 1,
+              RUTA_URL: s3Key_pdf,
+              usuario_fk: job.data.id_usuario || 1,
+              content_json: { codigo: codigoDocumento, idVersionPlantilla: idVersionPlantilla!, solicitudCreadaEn: solicitudCreadaEn.toISOString(), excel: s3Key, pdf: s3Key_pdf },
+            },
+          });
+        }
+      }
+      await tx.quote.update({
+        where: { id: id_job },
+        data: { status: 'COMPLETED', fileUrl: null, data: parse },
       });
-      documentoId = nuevoDoc.ID_DOCUMENTO;
-    } catch (error: any) {
-      if (error.code === 'P2002') {
-        const docRecuperado = await prisma.documentos.findFirst({ where: { ...fkDataGuardar } });
-        if (!docRecuperado) throw new Error("Fallo crítico recuperando documento concurrente.");
-        documentoId = docRecuperado.ID_DOCUMENTO;
-        const ultimaVersion = await prisma.version_documentos.findFirst({ where: { ID_DOCUMENTO_FK: documentoId }, orderBy: { VERSION: 'desc' } });
-        nuevaVersionNum = ultimaVersion ? ultimaVersion.VERSION + 1 : 1;
-      } else { throw error; }
-    }
-  }
+    });
 
-  await prisma.version_documentos.create({
-    data: { ID_DOCUMENTO_FK: documentoId, VERSION: nuevaVersionNum, RUTA_URL: s3Key_pdf, usuario_fk: usuarioId, content_json: { excel: s3Key, pdf: s3Key_pdf } }
-  });
+  } catch (error) {
+    // Si el resultado del commit es incierto, conservar los objetos hasta comprobar la referencia.
+    try {
+      const publicado = await prisma.quote.findUnique({ where: { id: id_job }, select: { status: true } });
+      if (publicado?.status !== 'COMPLETED') {
+        const limpieza = await Promise.allSettled([s3Key, s3Key_pdf].map((Key) =>
+          s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key }))));
+        for (const resultado of limpieza) {
+          if (resultado.status === 'rejected') console.warn('[generacion-documental] Falló la limpieza de un archivo parcial', resultado.reason);
+        }
+      }
+    } catch (verificacion) {
+      console.warn('[generacion-documental] No se pudo verificar el guardado; se conservaron los archivos', verificacion);
+    }
+    throw error;
+  }
 
   return {
     exito: true,

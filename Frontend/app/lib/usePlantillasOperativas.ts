@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRevisionTablas } from '@/app/componets/tables_recharge';
 import {
   obtenerEstadoPlantillas,
   type EstadoPlantillasOperativas,
@@ -13,6 +14,8 @@ import {
 export function usePlantillasOperativas() {
   const [estado, setEstado] = useState<EstadoPlantillasOperativas | null>(null);
   const [cargando, setCargando] = useState(true);
+
+  const revision = useRevisionTablas("plantillas", "version_plantillas");
 
   useEffect(() => {
     let activo = true;
@@ -27,7 +30,7 @@ export function usePlantillasOperativas() {
     return () => {
       activo = false;
     };
-  }, []);
+  }, [revision]);
 
   return {
     estado,

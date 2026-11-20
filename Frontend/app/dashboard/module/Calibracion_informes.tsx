@@ -7,7 +7,7 @@ import { getMisInstrumentos, subirCertificadoCalibracion } from "@/app/action_mo
 import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { useSellosOperativos } from "@/app/lib/useSellosOperativos";
-import { useDbTable } from "@/app/componets/tables_recharge";
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import type {
   InstrumentoAsignado,
   EstadoInstrumento,
@@ -391,12 +391,10 @@ export const CalibracionInformes: React.FC = () => {
   const [instrumentos, setInstrumentos] = useState<InstrumentoAsignado[]>([]);
   const [cargando, setCargando] = useState(true);
   const { estado: estadoSellos, todasCompletas: sellosCompletas } = useSellosOperativos();
-  const ordenesRealtime = useDbTable("ordenes_trabajo");
-  const detallesOTRealtime = useDbTable("orden_trabajo_detalles");
-  const recepcionesRealtime = useDbTable("recepciones_equipo");
-  const detallesRecepcionRealtime = useDbTable("recepcion_equipo_detalles");
-  const calibracionesRealtime = useDbTable("calibraciones");
-  const certificadosRealtime = useDbTable("certificados");
+  const revision = useRevisionTablas(
+    "ordenes_trabajo", "orden_trabajo_detalles", "recepciones_equipo",
+    "recepcion_equipo_detalles", "calibraciones", "certificados",
+  );
 
   useEffect(() => {
     let activo = true;
@@ -412,7 +410,7 @@ export const CalibracionInformes: React.FC = () => {
     return () => {
       activo = false;
     };
-  }, [ordenesRealtime, detallesOTRealtime, recepcionesRealtime, detallesRecepcionRealtime, calibracionesRealtime, certificadosRealtime]);
+  }, [revision]);
 
   const [selectedInstrumento, setSelectedInstrumento] = useState<InstrumentoAsignado | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);

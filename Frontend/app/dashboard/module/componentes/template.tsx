@@ -1,5 +1,6 @@
 'use client';
 
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
@@ -236,6 +237,7 @@ export default function TemplatesMappingPage() {
     [templates, busqueda]
   );
 
+  const revision = useRevisionTablas("plantillas", "version_plantillas");
   const reload = useCallback(async () => {
     try {
       const load = await getTodasLasPlantillasCompletas();
@@ -267,7 +269,7 @@ export default function TemplatesMappingPage() {
             idPlantilla: p.idPlantilla,
             activa: p.activa,
             modulo: p.modulo,
-            nombre: p.modulo,
+            nombre: p.nombre,
             versionActual: ultimaVersion
               ? {
                   idVersionPlantilla: ultimaVersion.idVersionPlantilla,
@@ -308,7 +310,7 @@ export default function TemplatesMappingPage() {
   useEffect(() => {
     const id = setTimeout(() => reload(), 0);
     return () => clearTimeout(id);
-  }, [reload]);
+  }, [reload, revision]);
 const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
   return (
     <div className="w-full px-2 md:px-0 py-4">

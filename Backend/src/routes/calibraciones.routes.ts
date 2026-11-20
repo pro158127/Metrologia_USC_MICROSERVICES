@@ -3,7 +3,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
 import { assertPermission } from '../lib/permissions.js';
-import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
+import { cabeceraRecepcionLista, evaluarTransicionesOT, instrumentoListoParaAsignar, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { uploadBuffer } from '../lib/minioClient.js';
 
@@ -42,13 +42,15 @@ async function cargarDetalleAsignado(
   if (!detalle) throw new AppError(404, 'Instrumento no encontrado en recepción');
 
   const ot = detalle.recepciones_equipo?.ordenes_trabajo ?? null;
-  const otDet =
-    ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle.ITEM) ??
-    ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle.INSTRUMENTO) ??
-    null;
-
-  if (!otDet || otDet.asignado !== idUsuario) {
-    throw new AppError(403, 'El instrumento no está asignado a este técnico.');
+  const activos = ot?.orden_trabajo_detalles.filter((unidad) => unidad.activacion !== false) ?? [];
+  const otDet = vincularUnidadRecepcion(detalle, activos);
+  if (!otDet || otDet.asignado !== idUsuario || detalle.activacion === false ||
+      !detalle.recepciones_equipo?.VIGENTE || detalle.recepciones_equipo.activacion === false ||
+      ot?.VIGENTE === false) {
+    throw new AppError(403, 'El instrumento no está asignado a este técnico en una recepción vigente.');
+  }
+  if (!cabeceraRecepcionLista(detalle.recepciones_equipo) || !instrumentoListoParaAsignar(detalle)) {
+    throw new AppError(409, 'Completa la estampilla y el IBC de entrada antes de adjuntar la calibración.');
   }
 
   return { detalle, ot };
@@ -74,29 +76,34 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
       const detallesOT = await fastify.prisma.orden_trabajo_detalles.findMany({
         where: {
           asignado: tecnicoId,
+          ordenes_trabajo: { VIGENTE: true },
           OR: [{ activacion: true }, { activacion: null }],
         },
         include: {
           ordenes_trabajo: {
             include: {
               clientes: true,
-              recepciones_equipo: { include: { recepcion_equipo_detalles: true } },
+              recepciones_equipo: {
+                where: { VIGENTE: true, activacion: true },
+                orderBy: [{ VERSION: 'desc' }, { ID_RECEPCION: 'desc' }],
+                take: 1,
+                include: {
+                  recepcion_equipo_detalles: { where: { OR: [{ activacion: true }, { activacion: null }] } },
+                },
+              },
             },
           },
         },
       });
 
       // Correlacionar con los detalles de recepción
-      const filas = detallesOT.map((detOT) => {
+      const filas = detallesOT.flatMap((detOT) => {
         const ot = detOT.ordenes_trabajo;
-        const recepcion = ot?.recepciones_equipo?.[0] ?? null;
-        const recDet =
-          recepcion?.recepcion_equipo_detalles.find((r) => r.ITEM === detOT.ITEM) ??
-          recepcion?.recepcion_equipo_detalles.find(
-            (r) => r.INSTRUMENTO === detOT.INSTRUMENTO
-          ) ??
-          null;
-        return { detOT, ot, recDet };
+        const recepcion = ot.recepciones_equipo[0];
+        if (!cabeceraRecepcionLista(recepcion)) return [];
+        const recibidos = recepcion?.recepcion_equipo_detalles ?? [];
+        const recDet = vincularUnidadRecepcion(detOT, recibidos);
+        return recDet && instrumentoListoParaAsignar(recDet) ? [{ detOT, ot, recDet }] : [];
       });
 
       const instrumentoIds = filas

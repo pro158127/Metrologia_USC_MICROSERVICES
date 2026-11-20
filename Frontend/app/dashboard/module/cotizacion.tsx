@@ -7,7 +7,6 @@ import { AiAgentWidget } from "./componentes/AI_MODULE/AiAgentWidget";
 import { ItemsTable, VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
 import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import {
-  obtenerTodasLasCotizaciones,
   crearCotizacion,
   actualizarCotizacion,
   cambiarEstadoCotizacion,
@@ -18,7 +17,7 @@ import {
 } from "@/app/action_module/cotizacion";
 
 import { Estados } from "@/tipos/enums";
-import type { ClienteModel, CotizacionModel, HistorialEstadoCotizacionModel } from "@/tipos/entidades";
+import type { ClienteModel, HistorialEstadoCotizacionModel } from "@/tipos/entidades";
 import type {
   QuoteItem,
   TarifaOption,
@@ -298,7 +297,12 @@ const QuotationListTable = ({
                     </span>
                   )}
                 </td>
-                <td className="py-3 px-4 text-slate-500">{new Date(c.createdAt).toLocaleDateString("es-CO")}</td>
+                <td className="py-3 px-4 text-slate-500">
+                  {new Date(c.createdAt).toLocaleDateString("es-CO")}
+                  {c.fechaVencimiento && c.estado === Estados.ENVIADA && (
+                    <div className="text-xs">Vence el {new Date(c.fechaVencimiento).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })}</div>
+                  )}
+                </td>
                 <td className="py-3 px-4">
                   <button
                     onClick={() => setSelectedQuotation(c)}
@@ -735,11 +739,24 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
 import { HistorialCambioItem } from "@/tipos/cotizacion";
 export default function Cotizaciones() {
 
-  const cotizacionesStore = useDbTable("cotizaciones") as unknown as CotizacionVista[];
+  const cotizaciones = useDbTable("cotizaciones");
+  const cotizacionesStore = useMemo<CotizacionVista[]>(() => cotizaciones.map((cotizacion) => ({
+    ...cotizacion,
+    montoTotal: Number(cotizacion.montoTotal ?? 0),
+    descuento: Number(cotizacion.descuento ?? 0),
+    viaticos: Number(cotizacion.viaticos ?? 0),
+    detalles: (cotizacion.detalles ?? []).map((detalle) => ({
+      ...detalle,
+      valorUnitario: Number(detalle.valorUnitario ?? 0),
+      valorTotal: Number(detalle.valorTotal ?? 0),
+    })),
+    historialEstados: cotizacion.historialEstados ?? [],
+    historial_cambio: cotizacion.Historiacambios ?? [],
+  })), [cotizaciones]);
   const usuarios = useDbTable("usuarios");
   const tarifasStore = useDbTable("tarifas");
   const loadingCotizaciones = useDbLoading("cotizaciones");
-  const { loadTable, mergeTable, setTableLoading } = useDbActions();
+  const { loadTable } = useDbActions();
 
   const [view, setView] = useState<ViewCotizacion>("list");
   const [search, setSearch] = useState("");
@@ -751,7 +768,12 @@ export default function Cotizaciones() {
   const [items, setItems] = useState<QuoteItem[]>([]);
   const [descuento, setDescuento] = useState<number>(0);
   const [viaticos, setViaticos] = useState<number>(0);
-  const [selectedQuotation, setSelectedQuotation] = useState<CotizacionVista | null>(null);
+  const [idCotizacionAbierta, setIdCotizacionAbierta] = useState<number | null>(null);
+  const selectedQuotation = cotizacionesStore.find((cotizacion) => cotizacion.idCotizacion === idCotizacionAbierta) ?? null;
+  const setSelectedQuotation = useCallback((cotizacion: CotizacionVista | null) => {
+    setIdCotizacionAbierta(cotizacion?.idCotizacion ?? null);
+  }, []);
+  const [codigoBorrador, setCodigoBorrador] = useState<string | null>(null);
   const [enviosCorreo, setEnviosCorreo] = useState<EnvioCorreoCotizacion[]>([]);
   const [cargandoEnviosCorreo, setCargandoEnviosCorreo] = useState(false);
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
@@ -772,50 +794,7 @@ export default function Cotizaciones() {
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
-  const cargarCotizaciones = useCallback(async () => {
-    setTableLoading("cotizaciones", true);
-    try {
-      const response = await obtenerTodasLasCotizaciones();
-      if (response.ok && Array.isArray(response.data)) {
-        const parse_data: CotizacionVista[] = response.data.map((c) => ({
-          idCotizacion: c.idCotizacion,
-          codigo: c.codigo,
-          idCliente: c.idCliente,
-          montoTotal: Number(c.montoTotal ?? 0),
-          estado: c.estado,
-          createdAt: c.createdAt,
-          updatedAt: c.updatedAt,
-          viaticos: Number(c.viaticos ?? 0),
-          descuento: Number(c.descuento ?? 0),
-          motivoRechazo: c.motivoRechazo ?? null,
-          detalles: (c.detalles ?? []).map((d) => ({
-            idDetalle: d.idDetalle,
-            idCotizacion: d.idCotizacion,
-            equipoDescripcion: d.equipoDescripcion,
-            tipoServicio: d.tipoServicio,
-            magnitud: d.magnitud,
-            normaTecnica: d.normaTecnica,
-            cantidad: d.cantidad,
-            valorUnitario: Number(d.valorUnitario),
-            valorTotal: Number(d.valorTotal),
-            sitio: d.sitio ?? null,
-          })),
-          cliente: {
-            idCliente: c.idCliente,
-            razonSocial: c.cliente?.razonSocial ?? null,
-            correo: c.cliente?.correo ?? null,
-          },
-          historialEstados: c.historialEstados,
-          historial_cambio:c.Historiacambios,
-          
-        }));
-
-        mergeTable("cotizaciones", parse_data as unknown as CotizacionModel[]);
-      }
-    } finally {
-      setTableLoading("cotizaciones", false);
-    }
-  }, [mergeTable, setTableLoading]);
+  const cargarCotizaciones = useCallback(() => loadTable("cotizaciones", true), [loadTable]);
 
   // Tarifas derivadas del store (sin estado local ni fallback mock)
   const tarifasOptions: TarifaOption[] = useMemo(() => {
@@ -919,6 +898,7 @@ export default function Cotizaciones() {
       valorUnitario: Number(d.valorUnitario),
       lugarCalibracion: (d.sitio === "CLIENTE" ? "Sitio" : d.sitio === "INTERNO_USC" ? "Interno USC" : "Laboratorio") as QuoteItem["lugarCalibracion"],
     }));
+    setCodigoBorrador(selectedQuotation.codigo);
     setModalItems(mapeados);
     setModalDescuento(selectedQuotation.descuento || 0);
     setModalViaticos(selectedQuotation.viaticos || 0);
@@ -1052,6 +1032,7 @@ export default function Cotizaciones() {
     try {
       const res = await actualizarCotizacion({
         idCotizacion: selectedQuotation.idCotizacion,
+        codigo: codigoBorrador ?? undefined,
         viaticos: modalViaticos,
         descuento: modalDescuento,
         detalles: modalItems.map((i) => ({
@@ -1078,7 +1059,7 @@ export default function Cotizaciones() {
     } finally {
       setIsSaving(false);
     }
-  }, [selectedQuotation, modalViaticos, modalDescuento, modalItems, showToast, cargarCotizaciones]);
+  }, [selectedQuotation, codigoBorrador, modalViaticos, modalDescuento, modalItems, showToast, cargarCotizaciones, setSelectedQuotation]);
 
   const agregarFila = useCallback((target: "create" | "modal") => {
     const nuevaFila: QuoteItem = {
@@ -1232,7 +1213,7 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
 
   // 2. flatMap aplanarás los arrays de historial_cambio de todas las cotizaciones
   return cotizacionesStore.flatMap((cotizacion) => {
-    return (cotizacion.historial_cambio || []).map((item): HistorialCambioItem => ({
+    return (cotizacion.historial_cambio ?? []).map((item): HistorialCambioItem => ({
       id: item.id,
       numeroVersion: item.numeroVersion,
       fechaCambio: item.fechaCambio,

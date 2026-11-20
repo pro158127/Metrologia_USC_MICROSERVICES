@@ -42,10 +42,7 @@ import type {
   InspeccionYFirmasSectionProps,
   FormFooterActionsProps,
   RecepcionEquipoModel,
-  ClienteModel,
-  CotizacionModel,
   OrdenTrabajoModel,
-  TarifaModel,
 } from "@/tipos/recepciones";
 
 // ============================================================
@@ -292,7 +289,7 @@ const DatosGeneralesSection = ({
   nombreRecibeBloqueado?: boolean;
 }) => {
   // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
-  const camposRaizBloqueados = isNew || bloqueado;
+  const camposRaizBloqueados = !isNew;
   // Listas para datalist
   const clientesList = useMemo(
     () => clientes.map((c) => c.razonSocial).filter(Boolean),
@@ -386,6 +383,7 @@ const DatosGeneralesSection = ({
               <input
                 type="radio"
                 name="sitioGlobal"
+                disabled={bloqueado}
                 value="Laboratorio permanente"
                 checked={sitioCalibracion === "Laboratorio permanente"}
                 onChange={(e) => onUpdateGeneral("sitioCalibracion", e.target.value)}
@@ -397,12 +395,25 @@ const DatosGeneralesSection = ({
               <input
                 type="radio"
                 name="sitioGlobal"
+                disabled={bloqueado}
                 value="Instalaciones del cliente"
                 checked={sitioCalibracion === "Instalaciones del cliente"}
                 onChange={(e) => onUpdateGeneral("sitioCalibracion", e.target.value)}
                 className="mr-1.5"
               />{" "}
               Instalaciones del cliente
+            </label>
+            <label className="inline-flex items-center text-xs font-medium text-slate-700">
+              <input
+                type="radio"
+                name="sitioGlobal"
+                value="Interno USC"
+                checked={sitioCalibracion === "Interno USC"}
+                disabled={bloqueado}
+                onChange={(e) => onUpdateGeneral("sitioCalibracion", e.target.value)}
+                className="mr-1.5"
+              />
+              Interno USC
             </label>
           </div>
         </div>
@@ -901,7 +912,6 @@ const FormFooterActions = ({
 import {
   getRecepcionesEnriquecidas,
   getRecepcionPorId,
-  getInitialData,
   crearRecepcion,
   actualizarRecepcion,
   eliminarInstrumentoRecepcionConMotivo,
@@ -916,7 +926,7 @@ export function MainRenderers() {
   const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
   const clientesStore = useDbTable("clientes");
   const tarifasStore = useDbTable("tarifas");
-  const { mergeTable, setTableLoading } = useDbActions();
+  const { loadTable } = useDbActions();
   const loadingRecepciones = useDbLoading("recepciones_equipo");
   const { data: session } = useSession();
   const nombreUsuarioSesion = session?.user?.name ?? "";
@@ -1040,28 +1050,18 @@ export function MainRenderers() {
     setTimeout(() => setToast(""), 3000);
   }, []);
 
-useEffect(() => {
-  const fetchInitialData = async () => {
-    // Si ya hay datos, evitamos recargar
-    if (recepcionesEquipo.length > 0) return;
-    setTableLoading("recepciones_equipo", true);
-    try {
-      const data = await getInitialData();
-      // Actualizamos el contexto global (fusionando con el estado actual para no
-      // pisar actualizaciones en tiempo real que hayan llegado durante el fetch)
-      mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-      mergeTable("clientes", data.clientes as ClienteModel[]);
-      mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-      mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-      mergeTable("tarifas", data.tarifas as TarifaModel[]);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setTableLoading("recepciones_equipo", false);
+  useEffect(() => {
+    for (const tabla of ["recepciones_equipo", "clientes", "cotizaciones", "ordenes_trabajo", "tarifas"] as const) {
+      void loadTable(tabla);
     }
-  };
-  fetchInitialData();
-}, []);
+  }, [loadTable]);
+
+  const recargarVinculados = useCallback(() => Promise.all([
+    loadTable("recepciones_equipo", true),
+    loadTable("cotizaciones", true),
+    loadTable("ordenes_trabajo", true),
+  ]), [loadTable]);
+
   // --- Derivaciones desde dbState ---
   // Lista de recepciones enriquecidas (server action)
   const [recepcionesEnriquecidas, setRecepcionesEnriquecidas] = useState<RecepcionConInfo[]>([]);
@@ -1197,15 +1197,33 @@ useEffect(() => {
     [formulario.instrumentos, recepcionActual, showToast]
   );
 
+  const volverALista = useCallback(() => {
+    setSelectedRecepcionId(null);
+    setFormulario({
+      solicitante: "",
+      nombreQuienEntrega: "",
+      cotizacionCodigo: "",
+      ordenTrabajoCodigo: "",
+      sitioCalibracion: "",
+      fechaRecepcion: new Date().toISOString().split("T")[0],
+      fechaSalida: "",
+      nombreQuienRecibe: "",
+      nombreQuienEmpaca: "",
+      accesorios: "",
+      pruebasCompletas: true,
+      observacionesPruebas: "",
+      nombreQuienCalibra: "",
+      nombreQuienRecibeServicio: "",
+      instrumentos: [crearFilaInstrumentoVacia()],
+    });
+    setRecepcionActual(null);
+    setActaGuardada(false);
+  }, []);
+
   // --- Confirmación del soft delete (motivo capturado en el VersionModal) ---
   const confirmarEliminarInstrumento = useCallback(
     async (auditForm: cambiospayload) => {
       if (!deleteInstrumento || !recepcionActual?.idRecepcion) return;
-      if (formulario.instrumentos.length <= 1) {
-        showToast("⚠️ No se puede eliminar el último instrumento activo de una recepción.");
-        return;
-      }
-
       setIsDeleting(true);
       try {
         const res = await eliminarInstrumentoRecepcionConMotivo(
@@ -1221,7 +1239,12 @@ useEffect(() => {
           showToast(res.error || "No se pudo desactivar el instrumento.");
           return;
         }
-        showToast("🗑️ Instrumento desactivado (soft delete) y cotización versionada.");
+        showToast(res.message || "Instrumento desactivado.");
+        if (res.grupoDesactivado) {
+          volverALista();
+          await recargarVinculados();
+          return;
+        }
 
         setFormulario((prev) => {
           if (prev.instrumentos.length <= 1) {
@@ -1234,15 +1257,18 @@ useEffect(() => {
         });
 
         // Refrescar datos de trazabilidad
-        setTableLoading("recepciones_equipo", true);
         try {
-          const data = await getInitialData();
-          mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-          mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-          mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-        } finally {
-          setTableLoading("recepciones_equipo", false);
+          const actualizada = await getRecepcionPorId(recepcionActual.idRecepcion);
+          setRecepcionActual(actualizada);
+          setFormulario((anterior) => ({
+            ...anterior,
+            cotizacionCodigo: actualizada.cotizacion?.codigo ?? anterior.cotizacionCodigo,
+            ordenTrabajoCodigo: actualizada.ordenTrabajo?.codigo ?? anterior.ordenTrabajoCodigo,
+          }));
+        } catch (error) {
+          console.error("No se pudo actualizar el código de recepción después del retiro:", error);
         }
+        await recargarVinculados();
       } finally {
         setIsDeleting(false);
         setDeleteVersionOpen(false);
@@ -1250,7 +1276,7 @@ useEffect(() => {
         setDeleteModalItems([]);
       }
     },
-    [deleteInstrumento, recepcionActual, formulario.instrumentos.length, showToast, mergeTable, setTableLoading]
+    [deleteInstrumento, recepcionActual, showToast, recargarVinculados, volverALista]
   );
 
   // --- Operaciones de ítems dentro del VersionModal (solo contexto) ---
@@ -1319,12 +1345,18 @@ useEffect(() => {
         const estadoIBC = det.estadoIBC as {
           entrada?: Record<string, boolean | null>;
           salida?: Record<string, boolean | null>;
+          E?: boolean | null; T?: boolean | null; D?: boolean | null; A?: boolean | null;
         } | null;
-        const detallesCotizacion = cotizaciones.find((cotizacion) => cotizacion.idCotizacion === recepcion.idCotizacion)?.detalles ?? recepcion.cotizacion?.detalles ?? [];
-        const detalleCotizacion = (det.idUnidad
-          ? detallesCotizacion.find((detalle) => Array.isArray(detalle.idUnidades) && detalle.idUnidades.includes(det.idUnidad!))
-          : undefined) ?? detallesCotizacion.find((detalle) => detalle.equipoDescripcion.trim().toLowerCase() === det.instrumento.trim().toLowerCase());
-        
+        const sitio = recepcion.sitioCalibracion ?? "LABORATORIO";
+        const detallesCotizacion = (recepcion.cotizacion?.detalles ??
+          cotizaciones.find((cotizacion) => cotizacion.idCotizacion === recepcion.idCotizacion)?.detalles ?? [])
+          .filter((detalle) => (detalle.sitio ?? "LABORATORIO") === sitio);
+        const porNombre = detallesCotizacion.filter((detalle) =>
+          detalle.equipoDescripcion.trim().toLowerCase() === det.instrumento.trim().toLowerCase());
+        const detalleCotizacion = det.idUnidad
+          ? detallesCotizacion.find((detalle) => detalle.idUnidades?.includes(det.idUnidad!))
+          : porNombre.length === 1 ? porNombre[0] : undefined;
+
         return {
           id: generarIdUnico(),
           idInstrumento: det.idInstrumento,
@@ -1340,10 +1372,10 @@ useEffect(() => {
           resolucion: det.resolucion || "",
           
           // 🟢 ASIGNACIÓN CORREGIDA: Mapeamos hacia _in y _out
-          ibcE_in: estadoIBC?.entrada?.E ?? null,
-          ibcT_in: estadoIBC?.entrada?.T ?? null,
-          ibcD_in: estadoIBC?.entrada?.D ?? null,
-          ibcA_in: estadoIBC?.entrada?.A ?? null,
+          ibcE_in: estadoIBC?.entrada?.E ?? estadoIBC?.E ?? null,
+          ibcT_in: estadoIBC?.entrada?.T ?? estadoIBC?.T ?? null,
+          ibcD_in: estadoIBC?.entrada?.D ?? estadoIBC?.D ?? null,
+          ibcA_in: estadoIBC?.entrada?.A ?? estadoIBC?.A ?? null,
           
           ibcE_out: estadoIBC?.salida?.E ?? null,
           ibcT_out: estadoIBC?.salida?.T ?? null,
@@ -1370,7 +1402,7 @@ useEffect(() => {
             ? "Instalaciones del cliente"
             : recepcion.sitioCalibracion === "LABORATORIO"
             ? "Laboratorio permanente"
-            : "",
+            : recepcion.sitioCalibracion === "INTERNO_USC" ? "Interno USC" : "",
         fechaRecepcion: recepcion.fechaRecepcion
           ? new Date(recepcion.fechaRecepcion).toISOString().split("T")[0]
           : "",
@@ -1425,29 +1457,6 @@ useEffect(() => {
   }, [showToast, plantillasCompletas]);
 
   // --- Volver a la lista ---
-  const volverALista = useCallback(() => {
-    setSelectedRecepcionId(null);
-    setFormulario({
-      solicitante: "",
-      nombreQuienEntrega: "",
-      cotizacionCodigo: "",
-      ordenTrabajoCodigo: "",
-      sitioCalibracion: "",
-      fechaRecepcion: new Date().toISOString().split("T")[0],
-      fechaSalida: "",
-      nombreQuienRecibe: "",
-      nombreQuienEmpaca: "",
-      accesorios: "",
-      pruebasCompletas: true,
-      observacionesPruebas: "",
-      nombreQuienCalibra: "",
-      nombreQuienRecibeServicio: "",
-      instrumentos: [crearFilaInstrumentoVacia()],
-    });
-    setRecepcionActual(null);
-    setActaGuardada(false);
-  }, []);
-
   // --- Mutación: Guardar recepción ---
 const handleGenerarActa = useCallback(async () => {
     if (!plantillasCompletas) {
@@ -1485,6 +1494,11 @@ const handleGenerarActa = useCallback(async () => {
       ? "ENTREGADO"
       : "RECIBIDO";
 
+    const habilitaAsignacion = cabeceraLista && formulario.instrumentos.some((inst) =>
+      Boolean(inst.estampilla?.trim() && !/^TEMP-/i.test(inst.estampilla.trim())) &&
+      [inst.ibcE_in, inst.ibcT_in, inst.ibcD_in, inst.ibcA_in].every((valor) => typeof valor === "boolean")
+    );
+
     // Feedback visual para el usuario
     if (estadoCalculado === "ENTREGADO") {
       showToast("✅ Salida completa. La recepción quedará cerrada como ENTREGADO.");
@@ -1500,6 +1514,7 @@ const handleGenerarActa = useCallback(async () => {
         // Indicador dinámico para tu Backend
         estado: estadoCalculado, 
         isNueva: selectedRecepcionId === "NUEVA",
+        codigoRecepcionActual: recepcionActual?.codigo,
         // Cabecera
         solicitante: formulario.solicitante,
         nombreEntrega: formulario.nombreQuienEntrega || undefined,
@@ -1520,6 +1535,7 @@ const handleGenerarActa = useCallback(async () => {
         instrumentos: formulario.instrumentos.map((inst) => ({
           idLocal: inst.id,
           idInstrumento: inst.idInstrumento,
+          idUnidad: inst.idUnidad,
           instrumento: inst.instrumento,
           tipoServicio: inst.tipoServicio || undefined,
           marca: inst.marca || undefined,
@@ -1550,7 +1566,6 @@ const handleGenerarActa = useCallback(async () => {
         })),
       };
 
-      console.log("📤 Payload a enviar al backend:", payload);
 
       // 🟢 3. LLAMADA AL SERVER ACTION (crear o actualizar según el modo)
       setGuardando(true);
@@ -1563,21 +1578,28 @@ const handleGenerarActa = useCallback(async () => {
         throw new Error(response.error || "Fallo al persistir en el servidor");
       }
 
-      setActaGuardada(true);
-      showToast(response.message || "✅ Recepción guardada correctamente.");
-
-      // Refrescar la tabla global de recepciones (fusionando, sin pisar tiempo real)
-      setTableLoading("recepciones_equipo", true);
-      try {
-        const data = await getInitialData();
-        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-        mergeTable("clientes", data.clientes as ClienteModel[]);
-        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-        mergeTable("tarifas", data.tarifas as TarifaModel[]);
-      } finally {
-        setTableLoading("recepciones_equipo", false);
+      if (response.data) {
+        const guardada = response.data;
+        setRecepcionActual(guardada);
+        setFormulario((anterior) => ({
+          ...anterior,
+          nombreQuienRecibe: guardada.nombreRecibe ?? anterior.nombreQuienRecibe,
+          cotizacionCodigo: guardada.cotizacion?.codigo ?? anterior.cotizacionCodigo,
+          ordenTrabajoCodigo: guardada.ordenTrabajo?.codigo ?? anterior.ordenTrabajoCodigo,
+          instrumentos: anterior.instrumentos.map((fila, indice) => {
+            const persistido = guardada.instrumentos?.[indice];
+            return persistido ? { ...fila, idInstrumento: persistido.idInstrumento, idUnidad: persistido.idUnidad, item: persistido.item } : fila;
+          }),
+        }));
+        if (esNueva) setSelectedRecepcionId(String(guardada.idRecepcion));
       }
+      setActaGuardada(true);
+      showToast(habilitaAsignacion && !cumpleRequisitosCompletos
+        ? "Recepción guardada. Puedes asignar los instrumentos con estampilla e IBC de entrada completos."
+        : response.message || "✅ Recepción guardada correctamente.");
+
+      // Actualizar los datos vigentes después de guardar.
+      await recargarVinculados();
 
       // Si era nueva, lo sacamos a la lista después de guardar
       if (esNueva) {
@@ -1592,7 +1614,7 @@ const handleGenerarActa = useCallback(async () => {
     } finally {
       setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, recepcionActual, nombresTecnicosAsignados, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion, plantillasCompletas]);
+  }, [formulario, selectedRecepcionId, recepcionActual, nombresTecnicosAsignados, showToast, volverALista, recargarVinculados, nombreUsuarioSesion, plantillasCompletas]);
 
   // --- Trazabilidad: cargar historial de cambios de la cotización ---
   const abrirHistorial = useCallback(async () => {
@@ -1627,20 +1649,12 @@ const handleGenerarActa = useCallback(async () => {
       setDeleteRecepcionOpen(false);
       setDeleteRecepcionMotivo("");
 
-      setTableLoading("recepciones_equipo", true);
-      try {
-        const data = await getInitialData();
-        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-      } finally {
-        setTableLoading("recepciones_equipo", false);
-      }
+      await recargarVinculados();
       volverALista();
     } finally {
       setIsDeleting(false);
     }
-  }, [recepcionActual, deleteRecepcionMotivo, nombreUsuarioSesion, showToast, mergeTable, setTableLoading, volverALista]);
+  }, [recepcionActual, deleteRecepcionMotivo, nombreUsuarioSesion, showToast, recargarVinculados, volverALista]);
 
   // ============================================================
   // RENDER
