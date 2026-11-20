@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Plus, Search, Eye } from "lucide-react";
 import CatalogTableView from "./componentes/compoenete_cotizacion/tartifas";
 import { AiAgentWidget } from "./componentes/AI_MODULE/AiAgentWidget";
@@ -340,10 +340,6 @@ const QuotationDetailView = ({
   const puedeReintentarCorreo = can("cotizaciones", "crear_editar");
   const [correos, setCorreos] = useState<Record<number, string>>({});
 
-  useEffect(() => {
-    setCorreos(Object.fromEntries(enviosCorreo.map((envio) => [envio.id, envio.destinatario])));
-  }, [enviosCorreo]);
-
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] p-6 mt-6 animate-in slide-in-from-bottom-2 duration-200">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -482,7 +478,6 @@ const CreateQuotationWizard = ({
   setViaticos,
   calculateTotal,
   formatCurrency,
-  showToast,
   setView,
   guardarCotizacion,
   isSaving,
@@ -743,7 +738,6 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
 // COMPONENTE PRINCIPAL
 // ==========================================
 
-import { HistorialCambioItem } from "@/tipos/cotizacion";
 export default function Cotizaciones() {
 
   const cotizaciones = useDbTable("cotizaciones");
@@ -776,10 +770,10 @@ export default function Cotizaciones() {
   const [descuento, setDescuento] = useState<number>(0);
   const [viaticos, setViaticos] = useState<number>(0);
   const [idCotizacionAbierta, setIdCotizacionAbierta] = useState<number | null>(null);
+  const [historialAbierto, setHistorialAbierto] = useState(false);
   const selectedQuotation = cotizacionesStore.find((cotizacion) => cotizacion.idCotizacion === idCotizacionAbierta) ?? null;
-  const setSelectedQuotation = useCallback((cotizacion: CotizacionVista | null) => {
-    setIdCotizacionAbierta(cotizacion?.idCotizacion ?? null);
-  }, []);
+  const idCotizacionCorreo = useRef<number | null>(null);
+  const solicitudCorreo = useRef(0);
   const [codigoBorrador, setCodigoBorrador] = useState<string | null>(null);
   const [enviosCorreo, setEnviosCorreo] = useState<EnvioCorreoCotizacion[]>([]);
   const [cargandoEnviosCorreo, setCargandoEnviosCorreo] = useState(false);
@@ -788,7 +782,6 @@ export default function Cotizaciones() {
   const [modalDescuento, setModalDescuento] = useState<number>(0);
   const [modalViaticos, setModalViaticos] = useState<number>(0);
   const [toast, setToast] = useState("");
-  const [isOpenTable,setOpenTable]=useState(false)
   const [rejectTargetId, setRejectTargetId] = useState<number | null>(null);
   const [rejectMotivo, setRejectMotivo] = useState("");
   const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
@@ -856,34 +849,45 @@ export default function Cotizaciones() {
   }, []);
 
   const cargarEnviosCorreo = useCallback(async (idCotizacion: number) => {
+    const solicitud = ++solicitudCorreo.current;
     setCargandoEnviosCorreo(true);
     try {
       const response = await obtenerEnviosCorreoCotizacion(idCotizacion);
-      if (response.ok && Array.isArray(response.data)) setEnviosCorreo(response.data);
-      else setEnviosCorreo([]);
+      if (solicitud === solicitudCorreo.current) {
+        setEnviosCorreo(response.ok && Array.isArray(response.data) ? response.data : []);
+      }
+    } catch {
+      if (solicitud === solicitudCorreo.current) {
+        showToast("No se pudo consultar el historial de correos.");
+      }
     } finally {
-      setCargandoEnviosCorreo(false);
+      if (solicitud === solicitudCorreo.current) setCargandoEnviosCorreo(false);
     }
-  }, []);
+  }, [showToast]);
 
-  useEffect(() => {
-    const id = selectedQuotation?.idCotizacion;
-    if (!id) {
-      setEnviosCorreo([]);
-      return;
-    }
-    void cargarEnviosCorreo(id);
-  }, [selectedQuotation?.idCotizacion, cargarEnviosCorreo]);
+  const setSelectedQuotation = useCallback((cotizacion: CotizacionVista | null) => {
+    const id = cotizacion?.idCotizacion ?? null;
+    setHistorialAbierto(false);
+    setIdCotizacionAbierta(id);
+    if (id === idCotizacionCorreo.current) return;
+
+    idCotizacionCorreo.current = id;
+    solicitudCorreo.current += 1;
+    setEnviosCorreo([]);
+    if (id === null) setCargandoEnviosCorreo(false);
+    else void cargarEnviosCorreo(id);
+  }, [cargarEnviosCorreo]);
 
   const handleReintentarCorreo = useCallback(async (idEnvio: number, correo: string) => {
     if (!selectedQuotation) return;
-    const response = await reintentarEnvioCorreoCotizacion(selectedQuotation.idCotizacion, idEnvio, correo);
+    const idCotizacion = selectedQuotation.idCotizacion;
+    const response = await reintentarEnvioCorreoCotizacion(idCotizacion, idEnvio, correo);
     if (!response.ok) {
       showToast(`❌ ${response.error ?? 'No se pudo reintentar el correo.'}`);
       return;
     }
     showToast(`📨 Reenvío programado a ${response.data?.destinatario}. La aprobación y los documentos se conservan.`);
-    await cargarEnviosCorreo(selectedQuotation.idCotizacion);
+    if (idCotizacionCorreo.current === idCotizacion) await cargarEnviosCorreo(idCotizacion);
   }, [selectedQuotation, showToast, cargarEnviosCorreo]);
 
   const handleNuevaCotizacion = useCallback(() => {
@@ -1218,30 +1222,6 @@ const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
   // ==========================================
 
 
-const historial_talble: HistorialCambioItem[] = useMemo(() => {
-  // 1. Retornamos un arreglo vacío en lugar de 'null' para cumplir con el tipo HistorialCambioItem[]
-  if (!isOpenTable) return [];
-
-  // 2. flatMap aplanarás los arrays de historial_cambio de todas las cotizaciones
-  return cotizacionesStore.flatMap((cotizacion) => {
-    return (cotizacion.historial_cambio ?? []).map((item): HistorialCambioItem => ({
-      id: item.id,
-      numeroVersion: item.numeroVersion,
-      fechaCambio: item.fechaCambio,
-      descripcion: item.descripcion,
-      observaciones: item.observaciones ?? null,
-      aprobo: item.aprobo,
-      idCotizacion: cotizacion.idCotizacion, // O item.idCotizacion si ya viene dentro del item
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-    }));
-  });
-}, [isOpenTable, cotizacionesStore]);
-
-
-
-
-
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification toast={toast} />
@@ -1316,7 +1296,8 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
 
           {selectedQuotation && (
             <QuotationDetailView
-            onopentable={()=>setOpenTable(true)}
+              key={selectedQuotation.idCotizacion}
+              onopentable={() => setHistorialAbierto(true)}
               selectedQuotation={selectedQuotation}
               openVersionModal={openVersionModal}
               setSelectedQuotation={setSelectedQuotation}
@@ -1346,7 +1327,6 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
           setViaticos={setViaticos}
           calculateTotal={calculateTotal}
           formatCurrency={formatCurrency}
-          showToast={showToast}
           setView={setView}
           guardarCotizacion={guardarCotizacion}
           isSaving={isSaving}
@@ -1359,7 +1339,16 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
       )}
 
       {view === "catalog" && <CatalogTableView />}
-      <ModalHistorialCambios codigo_cotizacion={selectedQuotation?.codigo??""}historial={historial_talble} isOpen={isOpenTable}onClose={()=>setOpenTable(false)} />
+      {view === "list" && historialAbierto && selectedQuotation && (
+        <ModalHistorialCambios
+          codigo_cotizacion={selectedQuotation.codigo}
+          historial={selectedQuotation.historial_cambio.filter(
+            (cambio) => cambio.idCotizacion === selectedQuotation.idCotizacion,
+          )}
+          isOpen={historialAbierto}
+          onClose={() => setHistorialAbierto(false)}
+        />
+      )}
 
       {rejectTargetId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">

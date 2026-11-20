@@ -238,7 +238,6 @@ export interface CreateQuotationWizardProps {
   setViaticos: (v: number) => void;
   calculateTotal: (items: QuoteItem[], desc: number, viat: number) => number;
   formatCurrency: (val: number) => string;
-  showToast: (msg: string) => void;
   setView: (v: ViewCotizacion) => void;
   guardarCotizacion: (estado: Estados) => Promise<void>;
   isSaving: boolean;
