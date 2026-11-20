@@ -183,6 +183,15 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
           return;
         }
 
+        // Las OT incluyen campos derivados (tieneHijas y alertas de certificados)
+        // y relaciones anidadas. Un evento de fila no contiene esos datos; si se
+        // normaliza como una OT completa, la maestra puede aparecer brevemente
+        // como una OT operativa hasta la siguiente recarga.
+        if (tabla === "ordenes_trabajo") {
+          void loadTable("ordenes_trabajo", true);
+          return;
+        }
+
         // Caso especial plantillas
         if (TABLAS_PLANTILLAS.includes(tabla)) {
           setDbState((prev) => ({
