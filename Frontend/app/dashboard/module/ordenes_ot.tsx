@@ -11,8 +11,6 @@ import {
   Wrench,
   User,
   Calendar,
-  Minus,
-  Plus,
 } from "lucide-react";
 import {
   ViewMode,
@@ -36,7 +34,6 @@ import {
   ListViewTableProps,
   defaultInstrumentos,
   kanbanColumns,
-  OTasiignemet,
   Tecnico,
 } from "@/tipos/tipo_ordenes_de_trabajo";
 import { consolidarOrdenTrabajoAction } from "@/app/action_module/ordenes";
@@ -96,6 +93,22 @@ const horaISOParaInput = (valor?: string | Date | null): string => {
   return Number.isNaN(fecha.getTime()) ? "" : fecha.toISOString().slice(11, 16);
 };
 
+const formatearFechaCalendario = (valor?: string | Date | null): string => {
+  const fechaISO = fechaISOParaInput(valor);
+  if (!fechaISO) return "";
+  const [anio, mes, dia] = fechaISO.split("-");
+  return `${dia}/${mes}/${anio}`;
+};
+
+const normalizarLugarCalibracion = (
+  ot: OrdenTrabajoModel,
+): "Interno USC" | "En sitio" | "Laboratorio permanente" => {
+  const sitio = (ot.sitioCalibracion ?? "").trim().toUpperCase();
+  if (ot.esInternoUSC || sitio.includes("INTERNO_USC") || sitio === "INTERNO USC") return "Interno USC";
+  if (ot.esEnSitio || sitio === "CLIENTE" || sitio === "EN SITIO") return "En sitio";
+  return "Laboratorio permanente";
+};
+
 const buildOrderDraft = (ot: OTType): EditableOrderFields => ({
   razonSocialCert: ot.razonSocialCert ?? ot.cliente ?? "",
   nitCert: ot.nitCert ?? "",
@@ -149,7 +162,6 @@ const HeaderSection = ({
   setViewMode,
   onBack,
   totalOTs,
-  warnings,
 }: HeaderSectionProps) => {
   return (
     <div className="flex items-center justify-between mb-6 border-b border-slate-200 pb-4">
@@ -437,8 +449,6 @@ const ComboboxInstrumento: React.FC<ComboboxInstrumentoProps> = ({
 export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
   instrumentDrafts,
   updateInstrumentDraft,
-  onAddInstrument,
-  onRemoveInstrument,
   excedioLimite,
   tarifas,
   readOnly = false,
@@ -693,8 +703,6 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   updateInstrumentDraft,
   technicians,
   saveOrderEdits,
-  onAddInstrument,
-  onRemoveInstrument,
   tarifas,
 }) => {
   const { can } = usePermissions();
@@ -724,7 +732,6 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   }, [tarifas, instrumentDrafts]);
 
   // ===== REGLA DE ANEXO: si hay más de 10 instrumentos, forzar "Si" y mostrar aviso =====
-  const requiereAnexo = orderDraft?.requiereAnexo || 'No';
   const excedioLimite = instrumentDrafts.length > 10;
 
   useEffect(() => {
@@ -821,8 +828,6 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
        <InstrumentosTable
   instrumentDrafts={instrumentDrafts}
   updateInstrumentDraft={updateInstrumentDraft}
-  onAddInstrument={onAddInstrument}
-  onRemoveInstrument={onRemoveInstrument} // implementar similar
   excedioLimite={instrumentDrafts.length > 10}
   tarifas={tarifas}
   readOnly
@@ -1121,8 +1126,6 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
   collapsedColumns,
   toggleColumnCollapse,
   onOpenOT,
-  warnigs,
-
 }) => {
   return (
     <div className="flex gap-4 overflow-x-auto pb-4 items-start select-none scrollbar-none snap-x snap-mandatory">
@@ -1217,9 +1220,7 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono mt-0.5">
                       <Calendar size={12} />
                       <span>
-                        {ot.fecha
-                          ? new Date(ot.fecha).toLocaleDateString()
-                          : "Sin fecha"}
+                        {formatearFechaCalendario(ot.fecha) || "Sin fecha"}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
@@ -1326,9 +1327,7 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
                     </span>
                   </td>
                   <td className="px-4 py-3.5 text-slate-500 font-mono hidden lg:table-cell">
-                    {ot.fecha
-                      ? new Date(ot.fecha).toLocaleDateString()
-                      : "—"}
+                    {formatearFechaCalendario(ot.fecha) || "—"}
                   </td>
                   <td className="px-4 py-3.5">
                     <button
@@ -1355,8 +1354,22 @@ export const ListViewTable: React.FC<ListViewTableProps> = ({
 export const TreeView: React.FC<{
   treeNodes: { node: Partial<OTBase>; children: Partial<OTBase>[] }[];
   onOpenOT: (ot: Partial<OTBase>) => void;
-}> = ({ treeNodes, onOpenOT }) => {
+  search: string;
+}> = ({ treeNodes, onOpenOT, search }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const filteredNodes = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase();
+    if (!term) return treeNodes;
+    const matches = (ot: Partial<OTBase>) =>
+      [ot.codigo, ot.cliente, ot.cotizacionCodigo]
+        .some((value) => value?.toLocaleLowerCase().includes(term));
+    return treeNodes.flatMap(({ node, children }) => {
+      if (matches(node)) return [{ node, children }];
+      const hijosCoincidentes = children.filter(matches);
+      return hijosCoincidentes.length > 0 ? [{ node, children: hijosCoincidentes }] : [];
+    });
+  }, [treeNodes, search]);
 
   const renderNode = (ot: Partial<OTBase>, depth: number) => (
     <div
@@ -1376,10 +1389,10 @@ export const TreeView: React.FC<{
     </div>
   );
 
-  if (treeNodes.length === 0) {
+  if (filteredNodes.length === 0) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-xs text-slate-400">
-        No hay órdenes de trabajo.
+        {search.trim() ? "No se encontraron órdenes con el criterio de búsqueda." : "No hay órdenes de trabajo."}
       </div>
     );
   }
@@ -1392,7 +1405,7 @@ export const TreeView: React.FC<{
         </span>
       </div>
       <div className="p-2 divide-y divide-slate-50">
-        {treeNodes.map(({ node, children }) => {
+        {filteredNodes.map(({ node, children }) => {
           const hasChildren = children.length > 0;
           const isOpen = expanded[node.id!] ?? false;
           return (
@@ -1433,7 +1446,6 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   const roles = useDbTable("roles");
   const ordenesTrabajo = useDbTable("ordenes_trabajo");
   const clientes = useDbTable("clientes");
-  const documentos = useDbTable("documentos");
   const tarifas = useDbTable("tarifas");
   const { mergeTable, setTableLoading, loadTable } = useDbActions();
   const loadingOrdenes = useDbLoading("ordenes_trabajo");
@@ -1467,7 +1479,6 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
     Certificado_enviado: false,
   });
   // Máquina activa en el panel de asignación
-  const [activeMachine, setActiveMachine] = useState<string | null>(null);
 
   /**
    * Alterna la visibilidad de una columna del Kanban (colapsada/expandida).
@@ -1565,25 +1576,13 @@ const instrumentos_cot = useMemo(() => {
       })
     );
 
-    // Obtener la última versión de los documentos asociados a la cotización
-    const version = (() => {
-      if (otCompleta.idCotizacion == null) return 0;
-      const docs = documentos.filter(
-        (d) => d.idCotizacion === otCompleta.idCotizacion
-      );
-      const ultima = docs
-        .flatMap((d) => d.versiones)
-        .sort((a, b) => b.version - a.version)[0];
-      return ultima?.version ?? 0;
-    })();
-
     const otCompleto: OTType = {
       id: otPreview.id || otCompleta.idOrdenTrabajo.toString(),
       cliente: clienteData?.razonSocial || "Sin cliente",
       tecnico: otCompleta.responsable || "Sin asignar",
       fecha: fechaISOParaInput(otCompleta.fechaCalibracion),
       estado: (otCompleta.estado ?? "Creada") as EstadoOrden,
-      retraso: otPreview.retraso || false,
+      retraso: estaVencidaLaFechaLimite(otCompleta.fechaLimiteFacturacion),
       certificadosPendientesRevision: otCompleta.certificadosPendientesRevision ?? false,
       equipos: instrumentosMapeados.length,
       tipo: "Acreditado",
@@ -1594,11 +1593,7 @@ const instrumentos_cot = useMemo(() => {
       direccionCert: limpiarPlaceholder(otCompleta.dirrecion) || clienteData?.dirrecion || "",
       ciudadCert: limpiarPlaceholder(otCompleta.ciudad) || clienteData?.ciudad || "",
       correoFactura: otCompleta.correoFactura || clienteData?.correo || "",
-      lugarCalibracion: otCompleta.esInternoUSC
-        ? "Interno USC"
-        : otCompleta.esEnSitio
-        ? "En sitio"
-        : "Laboratorio permanente",
+      lugarCalibracion: normalizarLugarCalibracion(otCompleta),
       personaContactar: otCompleta.personaContacto || clienteData?.nombreContacto || "",
       telefonoCalibracion: otCompleta.telefonoContacto || clienteData?.telefono || "",
       fechaCalibracion: fechaISOParaInput(otCompleta.fechaCalibracion),
@@ -1612,12 +1607,12 @@ const instrumentos_cot = useMemo(() => {
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
       responsableUsc: otCompleta.responsable || "",
-      fechaDiligenciamiento: otCompleta.createdAt ? new Date(otCompleta.createdAt).toISOString().split('T')[0] : "",
+      fechaDiligenciamiento: fechaISOParaInput(otCompleta.fecha_dilgenciamento),
       requiereAnexo: otCompleta.requireAnexo ? "Si" : "No",
       estadoOrden: otCompleta.estado ?? "",
       observacionesGenerales: otCompleta.observaciones || "",
       estado_revision: otCompleta.estadoRevision ?? undefined,
-      ultima_version: version.toString(),
+      ultima_version: String(otCompleta.version ?? 1),
       maquinas: [],
       tecnicos: otCompleta.responsable ? [otCompleta.responsable] : [],
       asignaciones: {},
@@ -1628,8 +1623,18 @@ const instrumentos_cot = useMemo(() => {
     setEditingTechnician(false);
     setOrderDraft(buildOrderDraft(otCompleto));
     setInstrumentDrafts(instrumentosMapeados);
-    setActiveMachine(null);
-  }, [ordenesTrabajo, clientes, documentos, showToast]);
+  }, [ordenesTrabajo, clientes, showToast]);
+
+  // Mantiene el detalle abierto sincronizado con el snapshot autoritativo que
+  // llega por HTTP/realtime, sin reemplazar borradores mientras se editan.
+  const selectedOTId = selectedOT?.id;
+  useEffect(() => {
+    if (!selectedOTId || editingOrder || editingTechnician) return;
+    const otActual = ordenesTrabajo.find((ot) => String(ot.idOrdenTrabajo) === selectedOTId);
+    if (!otActual) return;
+    const timer = window.setTimeout(() => openOT({ id: selectedOTId }), 0);
+    return () => window.clearTimeout(timer);
+  }, [ordenesTrabajo, selectedOTId, editingOrder, editingTechnician, openOT]);
 
   /**
    * Cierra la vista de detalle de la OT y resetea los estados relacionados.
@@ -1640,7 +1645,6 @@ const instrumentos_cot = useMemo(() => {
     setEditingTechnician(false);
     setOrderDraft(null);
     setInstrumentDrafts(defaultInstrumentos);
-    setActiveMachine(null);
   };
 
   // Preselección de OT proveniente del módulo de importación ("Ver").
@@ -1824,7 +1828,6 @@ const saveOrderEdits = async () => {
               break;
           }
         }
-        console.log(...usuarios,"aqui estaaa")
       } catch (error) {
         console.error("Error al obtener datos iniciales:", error);
         setErrorCargaOrdenes(true);
@@ -1834,7 +1837,7 @@ const saveOrderEdits = async () => {
       }
     }
     initdata();
-  }, []);
+  }, [mergeTable, setTableLoading]);
 
   /**
    * Calcula las advertencias (warnings) para la OT seleccionada.
@@ -2010,37 +2013,6 @@ const saveOrderEdits = async () => {
     );
   }, [search, otss]);
 // Agregar instrumento (campos del schema OrdenTrabajoDetalle)
-const handleAddInstrument = () => {
-  setInstrumentDrafts((prev) => [
-    ...prev,
-    {
-      id: crypto.randomUUID(),
-      item: prev.length + 1,
-      tipoServicio: "",
-      instrumento: "",
-      fabricante: null,
-      modelo: null,
-      serie: null,
-      codigoInventario: null,
-      ubicacion: null,
-      puntosCalibrar: [],
-      unidad: null,
-      intervaloRango: null,
-      resolucion: null,
-      asignado: 0,
-      declaracionConformidad: false,
-      limiteControlEMC: null,
-      docEspecificacion: null,
-      reglaDecision: null,
-    },
-  ]);
-};
-
-// Eliminar instrumento
-const handleRemoveInstrument = (id: string) => {
-  setInstrumentDrafts((prev) => prev.filter((inst) => inst.id !== id));
-};
-
   // Opciones de tarifa para combos (DTO mínimo del catálogo)
   const tarifaOptions: TarifaOptionBase[] = useMemo(() => {
     return (tarifas || []).map((t) => ({
@@ -2061,7 +2033,6 @@ const handleRemoveInstrument = (id: string) => {
         setViewMode={setViewMode}
         onBack={closeOT}
         totalOTs={otss.length}
-        warnings={warnings}
       />
 
       {!selectedOT && errorCargaOrdenes && (
@@ -2096,8 +2067,6 @@ const handleRemoveInstrument = (id: string) => {
             updateInstrumentDraft={updateInstrumentDraft}
             technicians={technicians}
             saveOrderEdits={saveOrderEdits}
-            onAddInstrument={handleAddInstrument}
-            onRemoveInstrument={handleRemoveInstrument}
             tarifas={tarifaOptions}
           />
         </div>
@@ -2119,7 +2088,6 @@ const handleRemoveInstrument = (id: string) => {
             collapsedColumns={collapsedColumns}
             toggleColumnCollapse={toggleColumnCollapse}
             onOpenOT={openOT}
-            warnigs={warnings} 
           />
         )
       )}
@@ -2132,7 +2100,7 @@ const handleRemoveInstrument = (id: string) => {
             ))}
           </div>
         ) : (
-          <TreeView treeNodes={treeNodes} onOpenOT={openOT} />
+          <TreeView treeNodes={treeNodes} onOpenOT={openOT} search={search} />
         )
       )}
 

@@ -32,15 +32,7 @@ export async function obtenerDatosIniciales(): Promise<DatosInicialesOrdenes> {
     );
   } catch (error) {
     console.error('Error cargando datos iniciales:', error);
-    // Devuelve arreglos vacíos explícitos en lugar de undefined o lanzar throw
-    return {
-      ordenes: [],
-      clientes: [],
-      usuarios: [],
-      roles: [],
-      tarifas: [],
-      version: [],
-    };
+    throw error;
   }
 }
 
@@ -69,9 +61,9 @@ export async function procesarImportacionOTAction(payload: ImportarOTPayload): P
         body: payload,
       }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error enviando OT al worker:', error);
-    return { ok: false, error: error.message };
+    return { ok: false, error: error instanceof Error ? error.message : 'Error de conexión con el servidor' };
   }
 }
 
@@ -80,7 +72,7 @@ export async function consultarEstadoJobAction(idJob: string): Promise<PollingJo
   try {
     const session = await auth();
     return await fastifyRequest<PollingJobStatus>(session, `/api/v1/jobs/${idJob}`);
-  } catch (error) {
+  } catch {
     return { status: 'FAILED', data: { error: 'Error de red consultando el Job' } };
   }
 }
@@ -132,8 +124,11 @@ export async function consolidarOrdenTrabajoAction(
         body: payload,
       }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error consolidando OT:', error);
-    return { ok: false, error: error.message || 'Error de conexión con el servidor' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Error de conexión con el servidor',
+    };
   }
 }

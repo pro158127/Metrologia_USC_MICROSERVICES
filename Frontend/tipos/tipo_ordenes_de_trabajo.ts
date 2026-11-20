@@ -247,7 +247,6 @@ export interface HeaderSectionProps {
   setViewMode: (mode: ViewMode) => void;
   onBack: () => void;
   totalOTs: number;
-  warnings?: Warning[];
 }
 
 export interface OrderAlertsBannerProps {
@@ -279,8 +278,6 @@ export interface InstrumentosTableProps {
     field: K,
     value: Instrument[K]
   ) => void;
-  onAddInstrument: () => void;
-  onRemoveInstrument: (id: string) => void;
   excedioLimite: boolean;
   tarifas: TarifaOptionBase[];
   readOnly?: boolean;
@@ -302,8 +299,6 @@ export interface OrderFormRCM05Props {
   ) => void;
   technicians: Tecnico[];
   saveOrderEdits: () => void;
-  onAddInstrument: () => void;
-  onRemoveInstrument: (id: string) => void;
   tarifas: TarifaOptionBase[];
 }
 
@@ -331,7 +326,6 @@ export interface KanbanBoardViewProps {
   collapsedColumns: Partial<Record<EstadoOrden, boolean>>;
   toggleColumnCollapse: (key: EstadoOrden) => void;
   onOpenOT: (ot: Partial<OTBase>) => void;
-  warnigs?: Warning[];
 }
 
 export interface ListViewTableProps {
