@@ -174,9 +174,14 @@ const handleOpenOt = useCallback((id: number) => {
   setActiveModule("ordenes");
 }, []);
 
-  const handleLogout = () => {
-    console.log("Cerrando sesión...");
-    signOut();
+  const handleLogout = async () => {
+    try {
+      // Espera a que NextAuth elimine la cookie antes de cambiar de pantalla.
+      await signOut({ redirect: false });
+    } catch (error) {
+      console.error("No se pudo completar la solicitud de cierre de sesión:", error);
+    }
+    window.location.replace("/Login");
   };
 
   return (

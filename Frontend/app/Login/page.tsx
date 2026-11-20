@@ -60,7 +60,10 @@ function LoginContent({ onLogin }: LoginProps) {
       if (result?.ok) {
         router.replace("/dashboard");
         router.refresh();
+        return;
       }
+      setError("No se pudo iniciar sesión. Verifica tus credenciales e inténtalo de nuevo.");
+      setIsLoading(false);
     } catch (err) {
       console.error("Error crítico de red o servidor:", err);
       setError("Ocurrió un error inesperado. Por favor, inténtalo de nuevo.");
@@ -110,6 +113,8 @@ function LoginContent({ onLogin }: LoginProps) {
                 <Mail size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="email"
+                  name="login-email"
+                  autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="nombre@usc.edu.co"
@@ -124,6 +129,8 @@ function LoginContent({ onLogin }: LoginProps) {
                 <Lock size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type={showPassword ? "text" : "password"}
+                  name="login-password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Ingresa tu contraseña"
