@@ -393,9 +393,16 @@ const QuotationDetailView = ({
           <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Detalle de Ítems</div>
           <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
             {selectedQuotation.detalles?.map((det) => (
-              <div key={det.idDetalle} className="p-2 bg-white rounded-lg border border-slate-200 text-xs flex justify-between">
-                <span>{det.equipoDescripcion} ({det.magnitud})</span>
-                <span className="font-mono font-bold">{formatCurrency(Number(det.valorTotal))}</span>
+              <div key={det.idDetalle} className="p-2 bg-white rounded-lg border border-slate-200 text-xs flex justify-between gap-3">
+                <div className="min-w-0">
+                  <div>{det.equipoDescripcion} ({det.magnitud})</div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    {det.sitio === "CLIENTE" ? "Instalaciones del cliente" : det.sitio === "INTERNO_USC" ? "Interno USC" : "Laboratorio permanente"}
+                    {" · "}{det.tipoServicio}
+                  </div>
+                  <div className="text-[11px] text-slate-500">{det.cantidad} × {formatCurrency(det.valorUnitario)}</div>
+                </div>
+                <span className="shrink-0 font-mono font-bold">{formatCurrency(det.valorTotal)}</span>
               </div>
             ))}
           </div>

@@ -214,3 +214,52 @@ test('un alta sin servicio explícito devuelve el servicio de la tarifa resuelta
   assert.equal(mock.details[0].TIPO_SERVICIO, 'No acreditado');
   assert.deepEqual(mock.details[0].ID_UNIDADES, ['nueva']);
 });
+
+test('retirar una unidad no reconstruye los equipos con discrepancias de sitio ni los vuelve a cobrar', async () => {
+  const tensiometro = detalle({ ID_DETALLE: 1, EQUIPO_DESCRIPCION: 'Tensiómetro Automático',
+    sitio: 'CLIENTE', ID_UNIDADES: ['tensiometro'], CANTIDAD: 1, VALOR_UNITARIO: new Prisma.Decimal(89_250),
+    VALOR_TOTAL: new Prisma.Decimal(89_250) });
+  const surgica = detalle({ ID_DETALLE: 2, EQUIPO_DESCRIPCION: 'Surgybone',
+    ID_UNIDADES: ['surgybone'], CANTIDAD: 1, VALOR_UNITARIO: new Prisma.Decimal(126_000), VALOR_TOTAL: new Prisma.Decimal(126_000) });
+  const criostato = detalle({ ID_DETALLE: 3, EQUIPO_DESCRIPCION: 'Criostato',
+    ID_UNIDADES: ['criostato'], CANTIDAD: 1, VALOR_UNITARIO: new Prisma.Decimal(236_250), VALOR_TOTAL: new Prisma.Decimal(236_250) });
+  const mock = fakeTx({ details: [tensiometro, surgica, criostato], tarifas: [], viaticos: 0, descuento: 0 });
+
+  assert.equal(await retirarUnidadesDeCotizacion(mock.tx, 4, ['criostato']), true);
+  assert.deepEqual(mock.details.filter((linea) => linea.activacion).map((linea) => ({
+    unidades: linea.ID_UNIDADES, sitio: linea.sitio, total: linea.VALOR_TOTAL.toFixed(2),
+  })), [
+    { unidades: ['tensiometro'], sitio: 'CLIENTE', total: '89250.00' },
+    { unidades: ['surgybone'], sitio: 'LABORATORIO', total: '126000.00' },
+  ]);
+  assert.equal((mock.getQuoteUpdate()?.MONTO_TOTAL as Prisma.Decimal).toFixed(2), '215250.00');
+});
+
+test('agregar solo el equipo nuevo conserva las líneas anteriores aunque pertenezcan a otro sitio', async () => {
+  const anterior = detalle({ ID_DETALLE: 1, EQUIPO_DESCRIPCION: 'Tensiómetro',
+    sitio: 'CLIENTE', ID_UNIDADES: ['tensiometro'], CANTIDAD: 1, VALOR_TOTAL: new Prisma.Decimal(500) });
+  const mock = fakeTx({ details: [anterior], viaticos: 0, descuento: 0 });
+  const resultado = await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'nuevo' },
+  ], 'LABORATORIO', 'agregar');
+
+  assert.equal(resultado.cambio, true);
+  assert.deepEqual(mock.details.map((linea) => [linea.sitio, linea.ID_UNIDADES, linea.CANTIDAD]), [
+    ['CLIENTE', ['tensiometro'], 1], ['LABORATORIO', ['nuevo'], 1],
+  ]);
+  assert.equal((mock.getQuoteUpdate()?.MONTO_TOTAL as Prisma.Decimal).toFixed(2), '1734.56');
+});
+
+test('agregar una unidad equivalente mantiene la cantidad y el precio previamente pactados', async () => {
+  const mock = fakeTx({ details: [detalle({ ID_UNIDADES: ['original', 'segunda', 'tercera'] })] });
+  await sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'nueva' },
+  ], 'LABORATORIO', 'agregar');
+  assert.equal(mock.details.length, 1);
+  assert.equal(mock.details[0].CANTIDAD, 4);
+  assert.equal(mock.details[0].VALOR_TOTAL.toFixed(2), '2000.00');
+  await assert.rejects(sincronizarCotizacionDesdeRecepcion(mock.tx, 4, [
+    { instrumento: 'Manómetro', idUnidad: 'nueva' },
+  ], 'LABORATORIO', 'agregar'), /ya está cotizada/);
+  assert.equal(mock.details[0].CANTIDAD, 4);
+});

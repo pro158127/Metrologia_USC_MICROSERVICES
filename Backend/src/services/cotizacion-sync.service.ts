@@ -48,6 +48,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
   idCotizacion: number,
   instrumentos: UnidadRecibida[],
   sitio: Sitio,
+  modo: 'reconciliar' | 'agregar' = 'reconciliar',
 ): Promise<{ cambio: boolean; serviciosPorUnidad: ReadonlyMap<string, string> }> {
   // 1. Detalles activos existentes de la cotización.
   const detalles = await tx.cotizacion_detalles.findMany({
@@ -121,6 +122,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
   const lineas = [...existentesPorInstrumento.values()].flat();
   const unidadesOtrosSitios = new Set(lineas.filter((linea) => linea.sitio !== sitio)
     .flatMap((linea) => linea.idsUnidades));
+  const unidadesVigentes = new Set(lineas.flatMap((linea) => linea.idsUnidades));
   // Resolver primero el servicio y el precio de cada unidad. Una fila sin tipo
   // explícito y otra con el tipo canónico pueden pertenecer a la misma línea.
   const grupos = new Map<string, {
@@ -132,6 +134,9 @@ export async function sincronizarCotizacionDesdeRecepcion(
   for (const inst of instrumentos) {
     const nombre = inst.instrumento.trim();
     if (!nombre) continue;
+    if (modo === 'agregar' && (!inst.idUnidad || unidadesVigentes.has(inst.idUnidad))) {
+      throw new AppError(409, `La unidad de «${nombre}» ya está cotizada o no tiene un identificador válido.`);
+    }
     if (inst.idUnidad && unidadesOtrosSitios.has(inst.idUnidad)) {
       throw new AppError(409, `La unidad de "${nombre}" ya pertenece a otro sitio de la cotización.`);
     }
@@ -179,7 +184,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
 
   const lineasDelSitio = lineas.filter((fila) => fila.sitio === sitio);
   const unidadesAnteriores = [...new Set(lineasDelSitio.flatMap((fila) => fila.idsUnidades))];
-  const certificados = unidadesAnteriores.length ? await tx.certificados.findMany({
+  const certificados = modo === 'reconciliar' && unidadesAnteriores.length ? await tx.certificados.findMany({
     where: { calibraciones: { recepcion_equipo_detalles: { ID_UNIDAD_FK: { in: unidadesAnteriores } } } },
     select: { calibraciones: { select: { recepcion_equipo_detalles: { select: { ID_UNIDAD_FK: true } } } } },
   }) : [];
@@ -195,18 +200,22 @@ export async function sincronizarCotizacionDesdeRecepcion(
   const detallesPorId = new Map(detalles.map((detalle) => [detalle.ID_DETALLE, detalle]));
   for (const [clave, fila] of grupos) {
     const existente = lineasDelSitio.find((linea) => claveComercial(linea) === clave) ??
-      lineasDelSitio.find((linea) =>
+      (modo === 'reconciliar' ? lineasDelSitio.find((linea) =>
         !idsVigentes.has(linea.idDetalle) && new Prisma.Decimal(linea.valorUnitario).lte(0) &&
-        claveComercial({ ...linea, valorUnitario: fila.valorUnitario }) === clave);
+        claveComercial({ ...linea, valorUnitario: fila.valorUnitario }) === clave) : undefined);
+    const cantidad = fila.cantidad + (modo === 'agregar' && existente ? detallesPorId.get(existente.idDetalle)!.CANTIDAD : 0);
+    const idsUnidades = modo === 'agregar' && existente
+      ? [...existente.idsUnidades, ...fila.idsUnidades]
+      : fila.idsUnidades;
     const datos = {
       EQUIPO_DESCRIPCION: fila.nombre,
       TIPO_SERVICIO: fila.tipoServicio,
       MAGNITUD: fila.magnitud,
       NORMA_TECNICA: fila.norma,
-      CANTIDAD: fila.cantidad,
-      ID_UNIDADES: fila.idsUnidades.sort(),
+      CANTIDAD: cantidad,
+      ID_UNIDADES: idsUnidades.sort(),
       VALOR_UNITARIO: fila.valorUnitario,
-      VALOR_TOTAL: calcularValorDetalle(fila.cantidad, fila.valorUnitario),
+      VALOR_TOTAL: calcularValorDetalle(cantidad, fila.valorUnitario),
       activacion: true,
     };
     if (existente) {
@@ -223,7 +232,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
     }
   }
   for (const linea of lineasDelSitio) {
-    if (!idsVigentes.has(linea.idDetalle)) {
+    if (modo === 'reconciliar' && !idsVigentes.has(linea.idDetalle)) {
       await tx.cotizacion_detalles.update({ where: { ID_DETALLE: linea.idDetalle }, data: { activacion: false } });
     }
   }
@@ -251,7 +260,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
   return { cambio: changed, serviciosPorUnidad };
 }
 
-/** Retira únicamente las unidades que pertenecían a la recepción desactivada. */
+/** Retira las unidades indicadas y conserva las demás líneas y sus precios. */
 export async function retirarUnidadesDeCotizacion(
   tx: Tx,
   idCotizacion: number,

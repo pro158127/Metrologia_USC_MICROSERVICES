@@ -960,9 +960,27 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           for (const inst of instrumentosActualizados) {
             if (!inst.tipoServicio && inst.idUnidad) inst.tipoServicio = servicioPorUnidad.get(inst.idUnidad);
           }
-          const unidades = await reunirUnidadesDelSitio(tx, idCotizacion, id, sitio, instrumentosActualizados);
-          if (await cotizacionDesalineadaConRecepcion(tx, idCotizacion, sitio, unidades)) {
-            const comercial = await sincronizarCotizacionDesdeRecepcion(tx, idCotizacion, unidades, sitio);
+          const nuevos = instrumentosActualizados.filter((inst) => inst.idInstrumento == null);
+          const cambioComercialExistente = sobrantes.length > 0 || instrumentosActualizados.some((inst) => {
+            if (inst.idInstrumento == null) return false;
+            const anterior = porId.get(inst.idInstrumento);
+            if (!anterior || anterior.INSTRUMENTO.trim() !== inst.instrumento.trim()) return true;
+            if (!inst.tipoServicio) return false;
+            const servicioAnterior = servicioPorUnidad.get(inst.idUnidad ?? '') ??
+              vincularUnidadRecepcion(anterior, otDetalles.filter((detalle) => detalle.activacion !== false))?.TIPO_SERVICIO;
+            return Boolean(servicioAnterior &&
+              normalizarServicioCotizado(servicioAnterior) !== normalizarServicioCotizado(inst.tipoServicio));
+          });
+          // Un alta no debe reconstruir ni volver a cobrar equipos ya cotizados.
+          const soloAltas = nuevos.length > 0 && !cambioComercialExistente;
+          const unidades = soloAltas ? nuevos : cambioComercialExistente || repararIdentidades
+            ? await reunirUnidadesDelSitio(tx, idCotizacion, id, sitio, instrumentosActualizados)
+            : [];
+          if (soloAltas || ((cambioComercialExistente || repararIdentidades) &&
+              await cotizacionDesalineadaConRecepcion(tx, idCotizacion, sitio, unidades))) {
+            const comercial = await sincronizarCotizacionDesdeRecepcion(
+              tx, idCotizacion, unidades, sitio, soloAltas ? 'agregar' : 'reconciliar',
+            );
             for (const inst of instrumentosActualizados) {
               if (inst.idUnidad) inst.tipoServicio = comercial.serviciosPorUnidad.get(inst.idUnidad) ?? inst.tipoServicio;
             }
@@ -1295,19 +1313,9 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         }
 
         const cotizacionId = rec.ID_COTIZACION_FK;
-        const sitio = normalizarSitio(rec.SITIO_CALIBRACION);
         const restantes = instrumentosActivos.filter((equipo) => equipo.ID_INSTRUMENTO !== idInstrumento);
-        if (cotizacionId && restantes.some((equipo) => !equipo.ID_UNIDAD_FK)) {
-          throw new AppError(409, 'Guarda primero la recepción para sincronizar los identificadores de los equipos restantes.');
-        }
-        const cambioCotizacion = cotizacionId
-          ? await sincronizarCotizacionDesdeRecepcion(tx, cotizacionId,
-              await reunirUnidadesDelSitio(tx, cotizacionId, id, sitio, restantes.map((equipo) => ({
-                instrumento: equipo.INSTRUMENTO, idUnidad: equipo.ID_UNIDAD_FK,
-              }))),
-              sitio,
-            )
-          : null;
+        const cambioCotizacion = cotizacionId != null && detalle.ID_UNIDAD_FK != null &&
+          await retirarUnidadesDeCotizacion(tx, cotizacionId, [detalle.ID_UNIDAD_FK]);
 
         // 4. Versionar OT y recepción para reflejar el cambio en sus consecutivos.
         let cambioCodigoOT: string | null = null;
@@ -1374,7 +1382,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             where: { ID_COTIZACION: cotizacionId }, select: { CODIGO_COTIZACION: true },
           });
           let codigoCotizacion = cotActual.CODIGO_COTIZACION;
-          if (cambioCotizacion?.cambio) {
+          if (cambioCotizacion) {
             codigoCotizacion = await generarConsecutivo(tx, 'COT', codigoCotizacion);
             await tx.cotizaciones.update({
               where: { ID_COTIZACION: cotizacionId }, data: { CODIGO_COTIZACION: codigoCotizacion },
@@ -1396,7 +1404,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           await evaluarTransicionesOT(tx, rec.ID_ORDEN_TRABAJO_FK);
         }
 
-        idCotizacionFinal = cambioCotizacion?.cambio ? cotizacionId : null;
+        idCotizacionFinal = cambioCotizacion ? cotizacionId : null;
         idOrdenTrabajoFinal = rec.ID_ORDEN_TRABAJO_FK ?? null;
         if (idCotizacionFinal) {
           await registrarGeneracionPendiente(tx, 'actualizacion_cotizacion', {
