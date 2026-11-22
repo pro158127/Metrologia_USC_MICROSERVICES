@@ -104,6 +104,7 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
       const pendientes = new Set<keyof RealtimeTablesState>();
       let recarga: ReturnType<typeof setTimeout> | undefined;
+      let conexionInicialCompletada = false;
       const invalidar = (tablas: string[]) => {
         marcarCambiosRealtime(tablas);
         for (const tabla of TABLAS_CON_SNAPSHOT) {
@@ -124,7 +125,11 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
       nuevoSocket.on("connect", () => {
         setSocket(nuevoSocket);
-        sincronizarRealtime();
+        // La carga inicial de cada pantalla ya obtiene su snapshot. Evitamos
+        // duplicar todas esas consultas en la primera conexión del socket;
+        // tras una reconexión sí resincronizamos lo que pudo perderse.
+        if (conexionInicialCompletada) sincronizarRealtime();
+        conexionInicialCompletada = true;
       });
 
       nuevoSocket.on("job_plantilla_terminado", (payload) => {
@@ -168,8 +173,6 @@ export const DbProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         if (document.visibilityState !== "visible") return;
         if (!nuevoSocket.connected) {
           nuevoSocket.connect();
-        } else {
-          sincronizarRealtime();
         }
       };
       const manejarOnline = () => {

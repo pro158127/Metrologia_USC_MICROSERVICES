@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 
 // Importar el contexto y los tipos
-import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables_recharge";
+import { useDbTable, useDbActions } from "./../../componets/tables_recharge";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
@@ -959,7 +959,6 @@ export function MainRenderers() {
   const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
   const tarifasStore = useDbTable("tarifas");
   const { loadTable } = useDbActions();
-  const loadingRecepciones = useDbLoading("recepciones_equipo");
   const { data: session } = useSession();
   const nombreUsuarioSesion = session?.user?.name ?? "";
   const { can } = usePermissions();
@@ -1031,7 +1030,7 @@ export function MainRenderers() {
   }, []);
 
   useEffect(() => {
-    for (const tabla of ["recepciones_equipo", "cotizaciones", "ordenes_trabajo", "tarifas"] as const) {
+    for (const tabla of ["cotizaciones", "ordenes_trabajo", "tarifas"] as const) {
       void loadTable(tabla);
     }
   }, [loadTable]);
@@ -1045,6 +1044,7 @@ export function MainRenderers() {
   // --- Derivaciones desde dbState ---
   // Lista de recepciones enriquecidas (server action)
   const [recepcionesEnriquecidas, setRecepcionesEnriquecidas] = useState<RecepcionConInfo[]>([]);
+  const [cargandoListadoRecepciones, setCargandoListadoRecepciones] = useState(true);
 
   useEffect(() => {
     let activo = true;
@@ -1053,7 +1053,10 @@ export function MainRenderers() {
         .then((data) => {
           if (activo) setRecepcionesEnriquecidas(data);
         })
-        .catch((error) => console.error("Error actualizando recepciones:", error));
+        .catch((error) => console.error("Error actualizando recepciones:", error))
+        .finally(() => {
+          if (activo) setCargandoListadoRecepciones(false);
+        });
     }, 120);
     return () => {
       activo = false;
@@ -1061,16 +1064,15 @@ export function MainRenderers() {
     };
   }, [recepcionesEquipo, ordenesTrabajoStore]);
 
-  // Años disponibles para el filtro (derivados de recepcionesEquipo)
+  // El endpoint enriquecido ya contiene la fecha usada por la lista.
   const aniosDisponibles = useMemo(() => {
     const set = new Set<string>();
-    recepcionesEquipo.forEach((rec) => {
-      if (rec.fechaRecepcion) {
-        set.add(new Date(rec.fechaRecepcion).getFullYear().toString());
-      }
+    recepcionesEnriquecidas.forEach((recepcion) => {
+      const anio = recepcion.fecha?.slice(0, 4);
+      if (anio) set.add(anio);
     });
     return Array.from(set).sort((a, b) => Number(b) - Number(a));
-  }, [recepcionesEquipo]);
+  }, [recepcionesEnriquecidas]);
 
   // Solicitantes persistidos para filtro y búsqueda.
   const solicitantesUnicos = useMemo(() => {
@@ -1640,7 +1642,7 @@ const handleGenerarActa = useCallback(async () => {
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {loadingRecepciones ? (
+            {cargandoListadoRecepciones ? (
               [1, 2, 3].map((n) => (
                 <div key={n} className="h-40 rounded-2xl bg-slate-200 animate-pulse" />
               ))
