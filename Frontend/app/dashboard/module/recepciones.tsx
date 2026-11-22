@@ -500,10 +500,17 @@ const etiquetaServicioRecepcion = (servicio: string) => {
   return servicio.trim();
 };
 
-const opcionTarifaRecepcion = (tarifa: { Instrumento: string; tipoServicio: string; magnitud: string; Norma: string }) =>
-  `${tarifa.Instrumento} — ${etiquetaServicioRecepcion(tarifa.tipoServicio)} · ${tarifa.magnitud} · ${tarifa.Norma}`;
+const tiposServicioRecepcion = (servicios: string[]) =>
+  [...new Map(servicios.filter((servicio) => servicio.trim()).map((servicio) =>
+    [claveServicioRecepcion(servicio), etiquetaServicioRecepcion(servicio)] as const))];
 
-const claveInstrumentoRecepcion = (nombre: string) => nombre.trim().toLocaleLowerCase('es-CO').replace(/\s+/g, " ");
+// Los campos de texto con datalist eliminan saltos de línea de las opciones.
+const textoUnaLineaRecepcion = (texto: string) => texto.trim().replace(/\s+/g, " ");
+
+const opcionTarifaRecepcion = (tarifa: { Instrumento: string; tipoServicio: string; magnitud: string; Norma: string }) =>
+  textoUnaLineaRecepcion(`${tarifa.Instrumento} — ${etiquetaServicioRecepcion(tarifa.tipoServicio)} · ${tarifa.magnitud} · ${tarifa.Norma}`);
+
+const claveInstrumentoRecepcion = (nombre: string) => textoUnaLineaRecepcion(nombre).toLocaleLowerCase("es-CO");
 
 const TablaInstrumentos = ({
   instrumentos,
@@ -577,7 +584,7 @@ const TablaInstrumentos = ({
                   <div className="relative">
                     <input
                       list={`instrumentos-${i}`}
-                      value={inst.instrumento}
+                      value={inst.instrumento.replace(/[\r\n]+/g, " ")}
                       disabled={inst.calibracionIniciada}
                       onChange={(e) => onFilaChange(i, "instrumento", e.target.value)}
                       placeholder="Escriba o seleccione"
@@ -606,18 +613,18 @@ const TablaInstrumentos = ({
 
                 <td className="p-3">
                   <select
-                    value={inst.tipoServicio}
+                    value={claveServicioRecepcion(inst.tipoServicio)}
                     disabled={inst.calibracionIniciada}
                     onChange={(e) => onFilaChange(i, "tipoServicio", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded"
                   >
                     <option value="">Seleccione servicio</option>
-                    {[...new Set([
+                    {tiposServicioRecepcion([
                       ...tarifasActivas.filter((t) => claveInstrumentoRecepcion(t.Instrumento) === claveInstrumentoRecepcion(inst.instrumento))
                         .map((t) => t.tipoServicio),
                       inst.tipoServicio,
-                    ].filter(Boolean))].map((tipo) => (
-                      <option key={tipo} value={tipo}>{etiquetaServicioRecepcion(tipo)}</option>
+                    ]).map(([tipo, etiqueta]) => (
+                      <option key={tipo} value={tipo}>{etiqueta}</option>
                     ))}
                   </select>
                 </td>
@@ -1128,12 +1135,12 @@ export function MainRenderers() {
         const cambios: Partial<FilaInstrumento> = { [propiedad]: valor };
         if (propiedad === "instrumento") {
           const activas = (tarifasStore ?? []).filter((tarifa) => tarifa.estado === "ACTIVO");
-          const elegida = activas.find((tarifa) => opcionTarifaRecepcion(tarifa) === valor);
+          const elegida = activas.find((tarifa) => opcionTarifaRecepcion(tarifa) === textoUnaLineaRecepcion(String(valor)));
           const coincidencias = elegida ? [elegida] : activas.filter((tarifa) =>
             claveInstrumentoRecepcion(tarifa.Instrumento) === claveInstrumentoRecepcion(String(valor)));
-          const tipos = [...new Set(coincidencias.map((tarifa) => tarifa.tipoServicio))];
+          const tipos = tiposServicioRecepcion(coincidencias.map((tarifa) => tarifa.tipoServicio));
           if (elegida) cambios.instrumento = elegida.Instrumento;
-          cambios.tipoServicio = tipos.length === 1 ? tipos[0] : "";
+          cambios.tipoServicio = tipos.length === 1 ? coincidencias[0].tipoServicio : "";
           cambios.idTarifaSeleccionada = coincidencias.length === 1 ? coincidencias[0].idTarifa : undefined;
         }
         if (propiedad === "tipoServicio") {
