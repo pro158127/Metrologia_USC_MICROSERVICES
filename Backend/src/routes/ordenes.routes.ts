@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { resolverPlantillaOperativa } from '../services/plantillas-readiness.service.js';
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -64,10 +65,17 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
 
       try {
         const plantilla = await resolverPlantillaOperativa(fastify.prisma, 2);
-        // 1. Registrar en la tabla de tracking (Polling)
-        const quoteJob = await fastify.prisma.quote.create({ 
-          data: { status: 'PENDING' } 
+        const huella = createHash('sha256').update(JSON.stringify([
+          s3KeyTemp, tipoFlujo, idCotizacion ?? null, idUsuario,
+        ])).digest('hex');
+        const idTrabajo = `import-ote-${huella}`;
+        // Una doble solicitud del mismo archivo temporal comparte seguimiento y trabajo.
+        const quoteJob = await fastify.prisma.quote.upsert({
+          where: { id: idTrabajo },
+          create: { id: idTrabajo, status: 'PENDING' },
+          update: { id: idTrabajo },
         });
+        if (quoteJob.status === 'COMPLETED') return { ok: true as const, id_job: idTrabajo };
 
         // 2. Despachar al Worker de Ingeniería Inversa
         const map = plantilla.MAPPING_CONFIG;
@@ -79,7 +87,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           id_cotizacion: idCotizacion, // Si es undefined, el Worker creará la cotización
           idUsuario,
           tipoFlujo
-        });
+        }, { jobId: idTrabajo });
 
         return reply.code(200).send({ 
           ok: true, 

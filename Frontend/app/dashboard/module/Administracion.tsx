@@ -558,15 +558,15 @@ console.log(userdelted,"esto es  ")
           u.idUsuario
         );
 
-        await restablecerContrasenaGenerico(
+        const resultado = await restablecerContrasenaGenerico(
           u.idUsuario
         );
 
         setLoadingResetId(null);
 
-        showToast(
-        "Contraseña temporal enviada"
-        );
+        showToast(resultado.success
+          ? resultado.warning ?? "Correo de restablecimiento programado"
+          : resultado.error ?? "No se pudo restablecer la contraseña");
 
         }}
         className="

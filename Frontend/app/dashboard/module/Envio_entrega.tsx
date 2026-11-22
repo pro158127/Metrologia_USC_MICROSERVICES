@@ -98,6 +98,8 @@ const GestionPanel: React.FC<{
   const [enviando, setEnviando] = useState(false);
   const [firmando, setFirmando] = useState(false);
   const [viewer, setViewer] = useState<{ url: string | null; titulo: string } | null>(null);
+  const [correoCorregido, setCorreoCorregido] = useState<string | null>(null);
+  const [confirmarNoRecibido, setConfirmarNoRecibido] = useState(false);
   const { can } = usePermissions();
   const puedeMarcarPagada = can("entrega_y_envio", "marcar_ot_pagada");
   const puedeEnviarCertificados = can("entrega_y_envio", "enviar_certificados_lotes");
@@ -177,22 +179,37 @@ const GestionPanel: React.FC<{
 
   const handleEnviar = useCallback(async () => {
     setEnviando(true);
-    const res = await enviarCertificadosCotizacion(idCotizacion);
+    const res = await enviarCertificadosCotizacion(idCotizacion, correoCorregido?.trim() || undefined, confirmarNoRecibido);
     setEnviando(false);
+    setConfirmarNoRecibido(false);
     if (!res.ok) {
       onToast(`❌ ${res.error ?? "No se pudo enviar."}`);
+      recargar();
       return;
     }
     onToast(`✅ ${res.message ?? "Certificados enviados."}`);
     recargar();
     onRefresh();
-  }, [idCotizacion, onToast, recargar, onRefresh]);
+  }, [idCotizacion, correoCorregido, confirmarNoRecibido, onToast, recargar, onRefresh]);
 
   const todosAprobados = docs?.todosAprobados ?? false;
   const entregaCompleta = docs?.entregaCompleta ?? false;
   const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
   const selladoPendiente = docs?.selladoPendiente ?? [];
-  const puedeEnviar = todosAprobados && selladoPendiente.length === 0 && tieneComprobante && !!docs?.correo;
+  const ultimoCorreo = docs?.ultimoCorreo;
+  const confirmacionPendiente = ultimoCorreo?.estado === "RESULTADO_INCIERTO";
+  const envioPendiente = ultimoCorreo?.estado === "PENDIENTE" || ultimoCorreo?.estado === "EN_PROCESO";
+  useEffect(() => {
+    if (!confirmacionPendiente && !envioPendiente) return;
+    const timer = window.setInterval(recargar, 5000);
+    return () => window.clearInterval(timer);
+  }, [confirmacionPendiente, envioPendiente, recargar]);
+  const correoDestino = correoCorregido ?? (
+    ultimoCorreo?.estado === "ENVIADO" ? ultimoCorreo.destinatario : docs?.correo
+  ) ?? "";
+  const puedeEnviar = todosAprobados && selladoPendiente.length === 0 && tieneComprobante &&
+    !envioPendiente && (!confirmacionPendiente || confirmarNoRecibido) &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoDestino.trim());
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
@@ -377,6 +394,31 @@ const GestionPanel: React.FC<{
 
               {/* Enviar */}
               {puedeEnviarCertificados && (
+                <div className="space-y-2">
+                  {ultimoCorreo?.error && (
+                    <p role="status" className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                      {ultimoCorreo.destinatario} · {ultimoCorreo.error}
+                    </p>
+                  )}
+                  {confirmacionPendiente && (
+                    <label className="flex items-center gap-2 text-xs text-slate-700">
+                      <input type="checkbox" checked={confirmarNoRecibido}
+                        onChange={(event) => setConfirmarNoRecibido(event.target.checked)} disabled={enviando} />
+                      Confirmé con el destinatario que no recibió el correo.
+                    </label>
+                  )}
+                  <label className="block text-xs font-semibold text-slate-600" htmlFor="correo-envio-certificados">
+                    Correo para certificados
+                  </label>
+                  <input
+                    id="correo-envio-certificados"
+                    type="email"
+                    value={correoDestino}
+                    onChange={(event) => setCorreoCorregido(event.target.value)}
+                    disabled={enviando}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    placeholder="correo@ejemplo.com"
+                  />
                 <button
                   onClick={handleEnviar}
                   disabled={!puedeEnviar || enviando}
@@ -387,8 +429,10 @@ const GestionPanel: React.FC<{
                   }`}
                 >
                   {enviando ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
-                  {enviando ? "Enviando..." : "Enviar certificados al cliente"}
+                  {enviando || envioPendiente ? "Enviando..." : ultimoCorreo?.estado === "FALLIDO"
+                    ? "Reintentar envío" : ultimoCorreo?.estado === "ENVIADO" ? "Confirmar despacho" : "Enviar certificados al cliente"}
                 </button>
+                </div>
               )}
             </>
           )}

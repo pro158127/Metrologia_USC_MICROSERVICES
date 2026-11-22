@@ -97,7 +97,7 @@ async function processStampJob(jobData: StampPdfJobData): Promise<{ outputKey: s
   return { outputKey, status: 'completed' };
 }
 
-const worker = new Worker<StampPdfJobData>(
+export const stampPdfWorker = new Worker<StampPdfJobData>(
   STAMP_PDF_QUEUE,
   async (job) => processStampJob(job.data),
   {
@@ -106,15 +106,15 @@ const worker = new Worker<StampPdfJobData>(
   }
 );
 
-worker.on('completed', (job) => {
+stampPdfWorker.on('completed', (job) => {
   console.log(`[stamp-worker] Job ${job.id} completado: ${(job.returnvalue as any)?.outputKey}`);
 });
 
-worker.on('failed', (job, err) => {
+stampPdfWorker.on('failed', (job, err) => {
   console.error(`[stamp-worker] Job ${job?.id} falló: ${err.message}`, err);
 });
 
-worker.on('error', (err) => {
+stampPdfWorker.on('error', (err) => {
   console.error('[stamp-worker] Error del worker:', err);
 });
 

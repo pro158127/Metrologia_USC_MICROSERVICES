@@ -1,25 +1,15 @@
 import 'dotenv/config';
+import { cerrarWorkersAlDetener } from '../lib/queue/worker-shutdown.js';
+import { iniciarSnapshotWorker } from './snapshot.worker.js';
+import { stampPdfWorker } from './pdfStampingWorker.js';
+import { certificatePdfWorker, detenerDespachoSellados } from './certificatePdf.worker.js';
+import { reportesWorker } from './reportes.worker.js';
 
 console.log('=======================================================');
 console.log('📄 [WORKER DOCUMENTOS] Iniciando gestor I/O ligero...');
 console.log('=======================================================');
 
-// 1. Despierta al encargado de los Snapshots (Excel -> Univer)
-import '../workers/snapshot.worker.js'
-
-// 2. Despierta al encargado de sellar PDFs
-import './pdfStampingWorker.js';
-
-// 3. Despierta al generador asíncrono de certificados PDF
-import './certificatePdf.worker.js';
-
-// 4. Despierta al generador de reportes (PDF / Excel)
-import './reportes.worker.js';
-
-import { iniciarSnapshotWorker } from '../workers/snapshot.worker.js';
-
-
-iniciarSnapshotWorker()
-console.log("iniciado worker  de snap ")
+const snapshotWorker = iniciarSnapshotWorker();
+cerrarWorkersAlDetener([snapshotWorker, stampPdfWorker, certificatePdfWorker, reportesWorker], detenerDespachoSellados);
 
 console.log('✅ [WORKER DOCUMENTOS] Todas las colas ligeras están escuchando...');

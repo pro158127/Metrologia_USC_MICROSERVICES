@@ -3,12 +3,14 @@ import 'dotenv/config';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { gzip } from 'node:zlib';
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, UnrecoverableError } from 'bullmq';
 import { PrismaClient, Estados } from '@prisma/client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getRedisConnection, getCronQueue, CronJobData, patronCronRespaldo } from '../lib/queue/queue.js';
-import { s3Client } from '../lib/s3Client.js';
+import { asegurarBucketExiste, s3Client } from '../lib/s3Client.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
+import { cerrarWorkersAlDetener } from '../lib/queue/worker-shutdown.js';
+import { ejecutarRespaldoProgramado } from '../services/respaldo-programado.service.js';
 import {
   resolverUsuarioCreadorCotizacion,
   notificarUsuario,
@@ -30,13 +32,9 @@ const AUTO_RECHAZO_MARCADOR = 'Vencimiento automático';
  * Lee un parámetro numérico desde parametros_sistema (CLAVE -> CODIGO_SCRIPT).
  */
 async function leerParametroNumero(clave: string, porDefecto: number): Promise<number> {
-  try {
-    const p = await prisma.parametros_sistema.findUnique({ where: { CLAVE: clave } });
-    const valor = Number(p?.CODIGO_SCRIPT);
-    return Number.isFinite(valor) && valor >= 0 ? valor : porDefecto;
-  } catch {
-    return porDefecto;
-  }
+  const p = await prisma.parametros_sistema.findUnique({ where: { CLAVE: clave } });
+  const valor = Number(p?.CODIGO_SCRIPT ?? porDefecto);
+  return Number.isFinite(valor) && valor >= 0 ? valor : porDefecto;
 }
 
 /**
@@ -53,6 +51,7 @@ async function procesarCotizacionesVencidas(): Promise<{ rechazadas: number; seg
 
   let rechazadas = 0;
   let seguimiento = 0;
+  let fallas = 0;
 
   // 1) ENVIADA -> RECHAZADA
   const enviadas = await prisma.cotizaciones.findMany({
@@ -65,7 +64,7 @@ async function procesarCotizacionesVencidas(): Promise<{ rechazadas: number; seg
     if (fechaVencimientoCotizacion(fechaEnvio, diasRechazo) > ahora) continue;
 
     try {
-      await prisma.$transaction(async (tx) => {
+      const cambio = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${cotizacion.ID_COTIZACION} FOR UPDATE`;
         const actual = await tx.cotizaciones.findUnique({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION } });
         if (!actual || actual.ESTADO !== Estados.ENVIADA) return;
@@ -105,9 +104,11 @@ async function procesarCotizacionesVencidas(): Promise<{ rechazadas: number; seg
           modulo: 'COTIZACIONES',
           nivelPrioridad: 'NORMAL',
         });
+        return true;
       });
-      rechazadas += 1;
+      if (cambio) rechazadas += 1;
     } catch (error) {
+      fallas += 1;
       console.error(`[cron] Error rechazando cotización ${cotizacion.CODIGO_COTIZACION}:`, error);
     }
   }
@@ -127,14 +128,19 @@ async function procesarCotizacionesVencidas(): Promise<{ rechazadas: number; seg
     if (!fechaRechazo || fechaRechazo.getTime() > limiteSeguimiento.getTime()) continue;
 
     try {
-      await prisma.$transaction(async (tx) => {
-        const actual = await tx.cotizaciones.findUnique({ where: { ID_COTIZACION: cotizacion.ID_COTIZACION } });
-        if (!actual || actual.ESTADO !== Estados.RECHAZADA) return;
-
-        await tx.cotizaciones.update({
-          where: { ID_COTIZACION: cotizacion.ID_COTIZACION },
+      const cambio = await prisma.$transaction(async (tx) => {
+        const actualizadas = await tx.cotizaciones.updateMany({
+          where: {
+            ID_COTIZACION: cotizacion.ID_COTIZACION,
+            ESTADO: Estados.RECHAZADA,
+            MOTIVO_RECHAZO: { startsWith: AUTO_RECHAZO_MARCADOR },
+            historial_estado_cotizacion: {
+              none: { ESTADO_NUEVO: Estados.RECHAZADA, CREATED_AT: { gt: limiteSeguimiento } },
+            },
+          },
           data: { ESTADO: Estados.EN_SEGUIMIENTO },
         });
+        if (!actualizadas.count) return false;
 
         await tx.historial_estado_cotizacion.create({
           data: {
@@ -154,13 +160,16 @@ async function procesarCotizacionesVencidas(): Promise<{ rechazadas: number; seg
           ip: '0.0.0.0',
           details: { codigo: cotizacion.CODIGO_COTIZACION, sistema: true, origen: 'cron_vencimiento_cotizacion' },
         });
+        return true;
       });
-      seguimiento += 1;
+      if (cambio) seguimiento += 1;
     } catch (error) {
+      fallas += 1;
       console.error(`[cron] Error moviendo a seguimiento ${cotizacion.CODIGO_COTIZACION}:`, error);
     }
   }
 
+  if (fallas) throw new Error(`El barrido de cotizaciones dejó ${fallas} operaciones con error.`);
   return { rechazadas, seguimiento };
 }
 
@@ -182,15 +191,21 @@ async function procesarPagosVencidos(): Promise<number> {
   });
 
   let actualizadas = 0;
+  let fallas = 0;
   for (const ot of ots) {
     if (ot.estado_pago === 'PAGADO' || ot.estado_pago === 'VENCIDA') continue;
 
     try {
-      await prisma.$transaction(async (tx) => {
-        await tx.ordenes_trabajo.update({
-          where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
+      const cambio = await prisma.$transaction(async (tx) => {
+        const resultado = await tx.ordenes_trabajo.updateMany({
+          where: {
+            ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO,
+            FECHA_LIMITE_FACTURACION: { lt: ahora },
+            OR: [{ estado_pago: null }, { estado_pago: { notIn: ['PAGADO', 'VENCIDA'] } }],
+          },
           data: { estado_pago: 'VENCIDA' },
         });
+        if (!resultado.count) return false;
         await registrarBitacora(tx, {
           action: 'MARCAR_PAGO_VENCIDO',
           tableName: 'ordenes_trabajo',
@@ -212,13 +227,18 @@ async function procesarPagosVencidos(): Promise<number> {
             },
           });
         }
+        return true;
       });
-      actualizadas += 1;
-      console.log(`[cron] Pago vencido: OT ${ot.CODIGO_OT}`);
+      if (cambio) {
+        actualizadas += 1;
+        console.log(`[cron] Pago vencido: OT ${ot.CODIGO_OT}`);
+      }
     } catch (error) {
+      fallas += 1;
       console.error(`[cron] Error marcando pago vencido OT ${ot.CODIGO_OT}:`, error);
     }
   }
+  if (fallas) throw new Error(`El barrido de pagos dejó ${fallas} operaciones con error.`);
   return actualizadas;
 }
 
@@ -226,14 +246,15 @@ async function procesarPagosVencidos(): Promise<number> {
  * Ejecuta un respaldo de la base de datos con pg_dump y lo sube a MinIO.
  * Requiere pg_dump instalado en el contenedor (postgresql-client).
  */
-async function ejecutarBackup(): Promise<{ key?: string; error?: string }> {
+async function ejecutarBackup(fechaTrabajo: number): Promise<{ key?: string; error?: string }> {
   const dbUrl = (process.env.DATABASE_URL_LOCAL || process.env.DATABASE_URL_AWS || '').split('?')[0];
   if (!dbUrl) return { error: 'Sin URL de base de datos configurada.' };
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const timestamp = new Date(fechaTrabajo).toISOString().replace(/[:.]/g, '-');
   const key = `backups/backup_${timestamp}.sql.gz`;
 
   try {
+    await asegurarBucketExiste(s3Client, BUCKET_BACKUP);
     const { stdout } = await execFileAsync(
       'pg_dump',
       ['--no-owner', '--no-privileges', '--dbname', dbUrl],
@@ -268,6 +289,7 @@ async function configurarMc(): Promise<void> {
  */
 async function ejecutarBackupMinio(): Promise<{ error?: string }> {
   try {
+    await asegurarBucketExiste(s3Client, BUCKET_MINIO_BACKUP);
     await configurarMc();
     await execFileAsync('mc', [
       'mirror',
@@ -281,16 +303,13 @@ async function ejecutarBackupMinio(): Promise<{ error?: string }> {
   }
 }
 
-/** Borra respaldos (DB y MinIO) más antiguos que N días. */
+/** Borra los respaldos históricos de PostgreSQL más antiguos que N días. */
 async function aplicarRetencion(dias: number): Promise<{ error?: string }> {
   if (!dias || dias <= 0) return {};
   try {
     await configurarMc();
     await execFileAsync('mc', [
-      'rm', '--recursive', '--force', '--older-than', `${dias}d`, `${MC_ALIAS}/${BUCKET_BACKUP}`,
-    ]);
-    await execFileAsync('mc', [
-      'rm', '--recursive', '--force', '--older-than', `${dias}d`, `${MC_ALIAS}/${BUCKET_MINIO_BACKUP}`,
+      'rm', '--recursive', '--force', '--older-than', `${dias}d`, `${MC_ALIAS}/${BUCKET_BACKUP}/backups/`,
     ]);
     return {};
   } catch (error) {
@@ -312,13 +331,18 @@ const worker = new Worker<CronJobData>(
         return { tarea: job.data.tarea, pagosVencidos: total };
       }
       case 'backup': {
-        const [db, minio] = await Promise.all([ejecutarBackup(), ejecutarBackupMinio()]);
-        const diasRetencion = await leerParametroNumero('RETENCION_BACKUPS', 30);
-        const retencion = await aplicarRetencion(diasRetencion);
-        return { tarea: job.data.tarea, db, minio, retencion };
+        if (new Set([BUCKET_BACKUP, BUCKET_MINIO, BUCKET_MINIO_BACKUP]).size !== 3) {
+          throw new UnrecoverableError('Use buckets distintos para documentos y para cada tipo de respaldo.');
+        }
+        const resultado = await ejecutarRespaldoProgramado(
+          () => ejecutarBackup(job.timestamp),
+          ejecutarBackupMinio,
+          async () => aplicarRetencion(await leerParametroNumero('RETENCION_BACKUPS', 30)),
+        );
+        return { tarea: job.data.tarea, ...resultado };
       }
       default:
-        return { tarea: job.data.tarea };
+        throw new UnrecoverableError('Tarea programada desconocida.');
     }
   },
   {
@@ -331,11 +355,15 @@ worker.on('completed', (job) => {
   console.log(`✅ [cron] Job ${job.id} completado:`, job.returnvalue);
 });
 worker.on('failed', (job, err) => {
-  console.error(`❌ [cron] Job ${job?.id} falló: ${err.message}`);
+  console.error('[cron] Falló un intento', {
+    id: job?.id, tarea: job?.data.tarea, intento: job?.attemptsMade,
+    maximo: job?.opts.attempts, error: err.message,
+  });
 });
 worker.on('error', (err) => {
   console.error('🚨 [cron] Error crítico en el Worker:', err);
 });
+cerrarWorkersAlDetener([worker]);
 
 // Schedulers repetibles (BullMQ). Los patrones de vencimiento son horarios; el
 // de respaldo se deriva de FRECUENCIA_RESPALDO.
@@ -366,6 +394,8 @@ if (patronRespaldo) {
     { pattern: patronRespaldo },
     { name: 'backup', data: { tarea: 'backup' } }
   );
+} else {
+  await getCronQueue().removeJobScheduler('backup');
 }
 
 console.log(`🚀 [cron] Worker de tareas programadas escuchando (vencimientos: ${HORA_PATTERN}, respaldo: ${patronRespaldo ?? 'desactivado'})...`);

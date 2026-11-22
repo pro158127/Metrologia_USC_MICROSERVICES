@@ -1496,25 +1496,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
     return await publicarImportacion(payload, {
       idOtFinal, codigoOTFinal, tablasImportadas: datosExtraidos.tablas.length, advertencias,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error importando OTE:', error);
 
     // NO se elimina el archivo temporal: se conserva para permitir reintentos
     // manuales/automáticos del mismo job sin re-subir el Excel.
     console.warn(`[import-worker] Archivo temporal conservado para reintento: ${s3KeyTemp}`);
-
-    await prisma.quote.update({
-      where: {
-        id: id_job,
-      },
-      data: {
-        status: 'FAILED',
-        data: {
-          ...(await prisma.quote.findUnique({ where: { id: id_job }, select: { data: true } }))?.data as object,
-          error: error?.message || String(error),
-        },
-      },
-    });
 
     throw error;
   } finally {
@@ -1541,10 +1528,23 @@ worker_import.on('completed', (job) => {
   console.log(`[import-worker] Job ${job.id} completado con éxito.`);
 });
 
-worker_import.on('failed', (job, err) => {
+worker_import.on('failed', async (job, err) => {
   console.error(
     `❌ [import-worker] Job ${job?.id} falló: ${err.message}`,
   );
+  if (!job) return;
+  try {
+    if (await job.getState() !== 'failed') return;
+    const id = job.data.id_job;
+    const seguimiento = await prisma.quote.findUnique({ where: { id }, select: { data: true } });
+    if (!seguimiento) return;
+    await prisma.quote.updateMany({
+      where: { id, status: { not: 'COMPLETED' } },
+      data: { status: 'FAILED', data: { ...(seguimiento.data as object), error: err.message } },
+    });
+  } catch (error) {
+    console.error('[import-worker] No se pudo registrar el fallo definitivo de la importación:', error);
+  }
 });
 
 worker_import.on('error', (err) => {

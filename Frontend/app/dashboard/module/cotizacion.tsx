@@ -850,22 +850,36 @@ export default function Cotizaciones() {
     setTimeout(() => setToast(""), 3000);
   }, []);
 
-  const cargarEnviosCorreo = useCallback(async (idCotizacion: number) => {
+  const cargarEnviosCorreo = useCallback(async (idCotizacion: number, silencioso = false) => {
     const solicitud = ++solicitudCorreo.current;
-    setCargandoEnviosCorreo(true);
+    if (!silencioso) setCargandoEnviosCorreo(true);
     try {
       const response = await obtenerEnviosCorreoCotizacion(idCotizacion);
       if (solicitud === solicitudCorreo.current) {
-        setEnviosCorreo(response.ok && Array.isArray(response.data) ? response.data : []);
+        if (response.ok && Array.isArray(response.data)) setEnviosCorreo(response.data);
+        else if (!silencioso) showToast(response.error ?? "No se pudo consultar el historial de correos.");
       }
     } catch {
-      if (solicitud === solicitudCorreo.current) {
+      if (solicitud === solicitudCorreo.current && !silencioso) {
         showToast("No se pudo consultar el historial de correos.");
       }
     } finally {
       if (solicitud === solicitudCorreo.current) setCargandoEnviosCorreo(false);
     }
   }, [showToast]);
+
+  const hayCorreosPendientes = enviosCorreo.some((envio) => ["PENDIENTE", "EN_PROCESO"].includes(envio.estado));
+  useEffect(() => {
+    if (idCotizacionAbierta === null || !hayCorreosPendientes) return;
+    let activo = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const consultar = async () => {
+      await cargarEnviosCorreo(idCotizacionAbierta, true);
+      if (activo) timer = setTimeout(consultar, 3000);
+    };
+    timer = setTimeout(consultar, 3000);
+    return () => { activo = false; clearTimeout(timer); };
+  }, [idCotizacionAbierta, hayCorreosPendientes, cargarEnviosCorreo]);
 
   const setSelectedQuotation = useCallback((cotizacion: CotizacionVista | null) => {
     const id = cotizacion?.idCotizacion ?? null;

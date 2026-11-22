@@ -144,20 +144,20 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       const idUsuario = Number(request.user?.sub ?? 0);
       const idSeguimiento = request.params.id;
 
-      const existente = await fastify.prisma.seguimientos_comerciales.findUnique({
-        where: { ID_SEGUIMIENTO: idSeguimiento },
-      });
-      if (!existente) throw new AppError(404, 'Seguimiento no encontrado');
-
-      const fechaGestionFinal = request.body.fechaGestion ?? existente.FECHA_GESTION;
-      const proximaGestionFinal = request.body.proximaGestion !== undefined
-        ? request.body.proximaGestion
-        : existente.PROXIMA_GESTION;
-      if (proximaGestionFinal && proximaGestionFinal < fechaGestionFinal) {
-        throw new AppError(400, 'La próxima gestión no puede ser anterior a la fecha de gestión.');
-      }
-
       const actualizado = await fastify.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "ID_SEGUIMIENTO" FROM seguimientos_comerciales WHERE "ID_SEGUIMIENTO" = ${idSeguimiento} FOR UPDATE`;
+        const existente = await tx.seguimientos_comerciales.findUnique({
+          where: { ID_SEGUIMIENTO: idSeguimiento },
+        });
+        if (!existente) throw new AppError(404, 'Seguimiento no encontrado');
+        const fechaGestionFinal = request.body.fechaGestion ?? existente.FECHA_GESTION;
+        const proximaGestionFinal = request.body.proximaGestion === undefined
+          ? existente.PROXIMA_GESTION
+          : request.body.proximaGestion;
+        if (proximaGestionFinal && proximaGestionFinal < fechaGestionFinal) {
+          throw new AppError(400, 'La próxima gestión no puede ser anterior a la fecha de gestión.');
+        }
+
         const seguimiento = await tx.seguimientos_comerciales.update({
           where: { ID_SEGUIMIENTO: idSeguimiento },
           data: {

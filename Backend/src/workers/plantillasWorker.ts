@@ -110,6 +110,7 @@ async function persistirTarifas(
       ${TIPO_SERVICIO}::text[],
       ARRAY_FILL('ACTIVO'::text, ARRAY[${items.length}]::int[])::text[]
     )
+    ORDER BY 1, 2, 3, 4
    ON CONFLICT ("MAGNITUD", "Instrumento", "Norma", "TIPO_SERVICIO")
    DO UPDATE SET "ESTADO" = 'ACTIVO'
     RETURNING "ID_TARIFA", "MAGNITUD", "Instrumento", "Norma", "TIPO_SERVICIO"

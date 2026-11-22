@@ -3,13 +3,16 @@ import test from 'node:test';
 import { EstadoOT, Prisma } from '@prisma/client';
 import { validarIdentidadInstrumentosRecepcion } from '../src/services/ot-edit-lock.service.js';
 
-function fakeTx(estado: EstadoOT, tieneCalibracion = false): Prisma.TransactionClient {
+function fakeTx(estado: EstadoOT, tieneCalibracion = false, certificadoAprobado = false): Prisma.TransactionClient {
   return {
     ordenes_trabajo: {
       findUnique: async () => ({ CODIGO_OT: 'OT-TEST', estado }),
     },
     calibraciones: {
-      findMany: async () => tieneCalibracion ? [{ ID_INSTRUMENTO_FK: 10 }] : [],
+      findMany: async () => tieneCalibracion ? [{
+        ID_INSTRUMENTO_FK: 10,
+        certificados: certificadoAprobado ? { ESTADO_REVISION: 'APROBADO' } : null,
+      }] : [],
     },
   } as unknown as Prisma.TransactionClient;
 }
@@ -50,7 +53,33 @@ test('permite editar instrumentos que aún no tienen una calibración iniciada',
   ));
 });
 
-test('bloquea identidad, estampilla e IBC de entrada al iniciar calibración, y deja editar los demás campos', async () => {
+test('bloquea los datos de un instrumento con certificado aprobado y permite completar su salida', async () => {
+  const tx = fakeTx(EstadoOT.Certificado_aprobado, true, true);
+  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(
+    tx, 1, [instrumentoBase], [{ ...inputBase, serie: 'S-EDITADA' }],
+  ), /certificado ya fue aprobado/);
+  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(
+    tx, 1, [instrumentoBase], [{ ...inputBase, sensorExt: true }],
+  ), /certificado ya fue aprobado/);
+  await assert.doesNotReject(() => validarIdentidadInstrumentosRecepcion(
+    tx, 1, [instrumentoBase], [{ ...inputBase, estadoIBC: { entrada: { limpio: true }, salida: { entregado: true } } }],
+  ));
+  await assert.doesNotReject(() => validarIdentidadInstrumentosRecepcion(
+    tx, 1, [instrumentoBase], [inputBase, { ...inputBase, idInstrumento: undefined, instrumento: 'Nuevo instrumento' }],
+  ));
+});
+
+test('un certificado aprobado también bloquea completar un tipo de servicio que estaba vacío', async () => {
+  const tx = fakeTx(EstadoOT.Certificado_aprobado, true, true);
+  await assert.rejects(() => validarIdentidadInstrumentosRecepcion(
+    tx,
+    1,
+    [{ ...instrumentoBase, TIPO_SERVICIO: null }],
+    [{ ...inputBase, tipoServicio: 'Acreditado' }],
+  ), /certificado ya fue aprobado/);
+});
+
+test('al iniciar calibración bloquea identidad, estampilla e IBC de entrada hasta aprobar el certificado', async () => {
   const tx = fakeTx(EstadoOT.Certificado_en_revisión, true);
   await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], []));
   await assert.rejects(() => validarIdentidadInstrumentosRecepcion(tx, 1, [instrumentoBase], [{ ...inputBase, instrumento: 'Unidad cambiada' }]));

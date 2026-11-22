@@ -13,12 +13,10 @@ import {
   FileText,
   CheckCircle,
   ArrowLeft,
-  Shield,
   Calendar,
   Filter,
   Plus,
   Trash2,
-  Search,
   History,
   X,
 } from "lucide-react";
@@ -41,7 +39,6 @@ import type {
   InspeccionYFirmasSectionProps,
   FormFooterActionsProps,
   RecepcionEquipoModel,
-  OrdenTrabajoModel,
 } from "@/tipos/recepciones";
 
 // ============================================================
@@ -262,7 +259,7 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
   );
 };
 
-// 3.5 DatosGeneralesSection (con búsqueda de cotización y OT)
+// 3.5 DatosGeneralesSection
 const DatosGeneralesSection = ({
   // Valores del formulario
   solicitante,
@@ -279,8 +276,6 @@ const DatosGeneralesSection = ({
   solicitantes,
   cargandoSolicitantes,
   onSeleccionarSolicitante,
-  cotizaciones,
-  ordenesTrabajo,
   // Función de actualización
   isNew, // 🟢 Nueva propiedad
   bloqueado = false,
@@ -290,17 +285,9 @@ const DatosGeneralesSection = ({
   isNew: boolean;
   nombreRecibeBloqueado?: boolean;
 }) => {
-  // Los campos raíz identifican el grupo aunque la OT esté pendiente.
-  const camposRaizBloqueados = !isNew;
+  // La cotización y la OT se vinculan desde su flujo propio, nunca manualmente aquí.
+  const camposRaizBloqueados = true;
   const altaIndependiente = isNew && !cotizacionCodigo.trim() && !ordenTrabajoCodigo.trim();
-  const cotizacionesList = useMemo(
-    () => cotizaciones.map((c) => c.codigo).filter(Boolean),
-    [cotizaciones]
-  );
-  const ordenesList = useMemo(
-    () => ordenesTrabajo.map((o) => o.codigo).filter(Boolean),
-    [ordenesTrabajo]
-  );
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-sm p-5">
@@ -359,40 +346,26 @@ const DatosGeneralesSection = ({
         </div>
         <div>
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
-            Cotización (código)
+            Cotización (asignación automática)
           </label>
           <input
-            list={!camposRaizBloqueados ? "cotizaciones-datalist" : undefined}
             value={cotizacionCodigo}
-            placeholder="Automático"
+            placeholder={isNew ? "Se asigna automáticamente al guardar" : "Sin cotización asociada"}
             disabled={camposRaizBloqueados}
-            onChange={(e) => onUpdateGeneral("cotizacionCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
-          <datalist id="cotizaciones-datalist">
-            {cotizacionesList.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
         </div>
 
        <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
-            Orden de Trabajo (código)
+            Orden de Trabajo (asignación automática)
           </label>
           <input
-            list={!camposRaizBloqueados ? "ordenes-datalist" : undefined}
             value={ordenTrabajoCodigo}
-            placeholder={camposRaizBloqueados ? "Pendiente de aprobación" : "Automático"}
+            placeholder={isNew ? "Pendiente de aprobación" : "Sin OT asociada"}
             disabled={camposRaizBloqueados}
-            onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
-          <datalist id="ordenes-datalist">
-            {ordenesList.map((o) => (
-              <option key={o} value={o} />
-            ))}
-          </datalist>
         </div>
         <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
@@ -585,7 +558,7 @@ const TablaInstrumentos = ({
                     <input
                       list={`instrumentos-${i}`}
                       value={inst.instrumento.replace(/[\r\n]+/g, " ")}
-                      disabled={inst.calibracionIniciada}
+                      disabled={inst.calibracionIniciada || inst.certificadoAprobado}
                       onChange={(e) => onFilaChange(i, "instrumento", e.target.value)}
                       placeholder="Escriba o seleccione"
                       className="w-full p-1 border border-slate-200 rounded font-medium"
@@ -614,7 +587,7 @@ const TablaInstrumentos = ({
                 <td className="p-3">
                   <select
                     value={claveServicioRecepcion(inst.tipoServicio)}
-                    disabled={inst.calibracionIniciada}
+                    disabled={inst.calibracionIniciada || inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "tipoServicio", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded"
                   >
@@ -641,6 +614,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.marca}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "marca", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded"
                   />
@@ -649,6 +623,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.modelo}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "modelo", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded"
                   />
@@ -657,6 +632,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.serie}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "serie", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded font-mono text-[11px]"
                   />
@@ -665,6 +641,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.codigoInterno}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "codigoInterno", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded font-mono text-[11px]"
                   />
@@ -673,6 +650,7 @@ const TablaInstrumentos = ({
                 <td className="p-2 bg-indigo-50/5">
                   <input
                     value={inst.resolucion}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "resolucion", e.target.value)}
                     placeholder="0.01"
                     className="w-full p-1.5 border border-slate-200 rounded text-center"
@@ -683,12 +661,14 @@ const TablaInstrumentos = ({
                   <input
                     type="checkbox"
                     checked={inst.sensorInt}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "sensorInt", e.target.checked)}
                     className="mr-2"
                   />
                   <input
                     type="checkbox"
                     checked={inst.sensorExt}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "sensorExt", e.target.checked)}
                   />
                 </td>
@@ -745,7 +725,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.estampilla}
-                    disabled={inst.calibracionIniciada}
+                    disabled={inst.calibracionIniciada || inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "estampilla", e.target.value)}
                     placeholder="USC-"
                     className="w-full p-1 border border-slate-200 rounded font-mono text-[11px]"
@@ -755,6 +735,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.observaciones}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "observaciones", e.target.value)}
                     placeholder="Notas técnicas..."
                     className="w-full p-1 border border-slate-200 rounded"
@@ -766,8 +747,8 @@ const TablaInstrumentos = ({
                   <button
                     type="button"
                     onClick={() => onEliminarFila(i)}
-                    disabled={inst.calibracionIniciada}
-                    title={inst.calibracionIniciada ? "No se puede eliminar: la calibración ya inició" : "Eliminar instrumento"}
+                    disabled={inst.calibracionIniciada || inst.certificadoAprobado}
+                    title={inst.certificadoAprobado ? "No se puede editar ni eliminar: el certificado ya fue aprobado" : inst.calibracionIniciada ? "No se puede eliminar: la calibración ya inició" : "Eliminar instrumento"}
                     className="p-1.5 rounded-lg border border-slate-200 bg-white text-red-500 hover:bg-red-50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Trash2 size={13} />
@@ -956,7 +937,6 @@ export function MainRenderers() {
   // --- Estado global por tabla (solo se re-renderiza si esa tabla cambia) ---
   const recepcionesEquipo = useDbTable("recepciones_equipo");
   const cotizacionesStore = useDbTable("cotizaciones");
-  const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
   const tarifasStore = useDbTable("tarifas");
   const { loadTable } = useDbActions();
   const { data: session } = useSession();
@@ -1062,7 +1042,7 @@ export function MainRenderers() {
       activo = false;
       window.clearTimeout(temporizador);
     };
-  }, [recepcionesEquipo, ordenesTrabajoStore]);
+  }, [recepcionesEquipo]);
 
   // El endpoint enriquecido ya contiene la fecha usada por la lista.
   const aniosDisponibles = useMemo(() => {
@@ -1086,9 +1066,8 @@ export function MainRenderers() {
   // Tarifas disponibles para autocomplete
   const tarifasDisponibles = tarifasStore || [];
 
-  // Cotizaciones y órdenes para datalist en el formulario
+  // Cotizaciones para sincronizar los detalles visibles por unidad.
   const cotizaciones = useMemo(() => cotizacionesStore ?? [], [cotizacionesStore]);
-  const ordenesTrabajo = ordenesTrabajoStore || [];
 
 
 
@@ -1110,22 +1089,12 @@ export function MainRenderers() {
 
   // --- Funciones del formulario ---
   const handleUpdateGeneral = useCallback((field: string, value: string | boolean) => {
-    const codigo = typeof value === "string" ? value.trim() : "";
-    const clienteVinculado = field === "cotizacionCodigo"
-      ? cotizacionesStore.find((cotizacion) => cotizacion.codigo === codigo)?.cliente
-      : field === "ordenTrabajoCodigo"
-        ? ordenesTrabajoStore.find((orden) => orden.codigo === codigo)?.cliente
-        : null;
     setFormulario((prev) => ({
       ...prev,
       ...(field === "solicitante" && { idCliente: undefined }),
-      ...(clienteVinculado && {
-        solicitante: clienteVinculado.razonSocial,
-        idCliente: undefined,
-      }),
       [field]: value,
     }));
-  }, [cotizacionesStore, ordenesTrabajoStore]);
+  }, []);
   const seleccionarSolicitante = useCallback((cliente?: SolicitanteRecepcion) => {
     setFormulario((prev) => ({ ...prev, idCliente: cliente?.idCliente, solicitante: cliente?.razonSocial ?? "" }));
   }, []);
@@ -1265,6 +1234,7 @@ export function MainRenderers() {
           idInstrumento: det.idInstrumento,
           idUnidad: det.idUnidad,
           calibracionIniciada: det.calibracionIniciada ?? false,
+          certificadoAprobado: det.certificadoAprobado ?? false,
           item: det.item ?? null,
           instrumento: det.instrumento || "",
           tipoServicio: detalleCotizacion?.tipoServicio || "",
@@ -1718,8 +1688,6 @@ const handleGenerarActa = useCallback(async () => {
             solicitantes={solicitantes}
             cargandoSolicitantes={cargandoSolicitantes}
             onSeleccionarSolicitante={seleccionarSolicitante}
-            cotizaciones={cotizaciones}
-            ordenesTrabajo={ordenesTrabajo}
             onUpdateGeneral={handleUpdateGeneral}
           />
 

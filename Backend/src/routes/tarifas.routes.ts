@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { assertPermission } from '../lib/permissions.js';
@@ -12,6 +13,34 @@ import {
   respuestaTarifaSchema,
   tarifaRawToDtoSchema,
 } from './tarifas.schemas.js';
+
+async function registrarPrecio(
+  tx: Prisma.TransactionClient,
+  idTarifa: number,
+  precio: number,
+  inicio?: Date | string | null,
+  fin?: Date | string | null,
+): Promise<void> {
+  const [tarifa] = await tx.$queryRaw<{ ID_TARIFA: number }[]>`SELECT "ID_TARIFA" FROM tarifas WHERE "ID_TARIFA" = ${idTarifa} FOR UPDATE`;
+  if (!tarifa) throw new AppError(404, 'Tarifa no encontrada.');
+
+  const vigente = await tx.historial_tarifas.findFirst({
+    where: { ID_TARIFA_FK: idTarifa, FECHA_FIN: null },
+    orderBy: { FECHA_INICIO: 'desc' },
+  });
+  const fechaInicio = inicio ? new Date(inicio) : new Date();
+  const fechaFin = fin ? new Date(fin) : null;
+  if ((vigente && fechaInicio <= vigente.FECHA_INICIO) || (fechaFin && fechaFin <= fechaInicio)) {
+    throw new AppError(409, 'La nueva vigencia debe empezar después de la vigente y terminar después de su inicio.');
+  }
+  await tx.historial_tarifas.updateMany({
+    where: { ID_TARIFA_FK: idTarifa, FECHA_FIN: null },
+    data: { FECHA_FIN: fechaInicio },
+  });
+  await tx.historial_tarifas.create({
+    data: { ID_TARIFA_FK: idTarifa, PRECIO_U: precio, FECHA_INICIO: fechaInicio, FECHA_FIN: fechaFin },
+  });
+}
 
 export default async function tarifasRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
@@ -65,44 +94,20 @@ export default async function tarifasRoutes(fastify: FastifyInstance) {
       if (camposTarifa.instrumento) updateData.Instrumento = camposTarifa.instrumento;
       if (camposTarifa.norma) updateData.Norma = camposTarifa.norma;
 
-      if (precioVigente !== undefined && precioVigente !== null) {
-        const ahora = new Date();
-        const nuevaFechaInicio = fechaInicio ? new Date(fechaInicio) : ahora;
-        const nuevaFechaFin = fechaFin ? new Date(fechaFin) : null;
-
-        await fastify.prisma.$transaction(async (tx) => {
-          await tx.historial_tarifas.updateMany({
-            where: {
-              ID_TARIFA_FK: idTarifa,
-              FECHA_FIN: null,
-            },
-            data: { FECHA_FIN: nuevaFechaInicio },
+      const tarifaActualizada = await fastify.prisma.$transaction(async (tx) => {
+        if (precioVigente != null) await registrarPrecio(tx, idTarifa, precioVigente, fechaInicio, fechaFin);
+        if (Object.keys(updateData).length > 0) {
+          return tx.tarifas.update({
+            where: { ID_TARIFA: idTarifa },
+            data: updateData,
+            include: { historial_tarifas: { orderBy: { FECHA_INICIO: 'desc' } } },
           });
-
-          await tx.historial_tarifas.create({
-            data: {
-              ID_TARIFA_FK: idTarifa,
-              PRECIO_U: precioVigente,
-              FECHA_INICIO: nuevaFechaInicio,
-              FECHA_FIN: nuevaFechaFin,
-            },
-          });
-        });
-      }
-
-      let tarifaActualizada;
-      if (Object.keys(updateData).length > 0) {
-        tarifaActualizada = await fastify.prisma.tarifas.update({
-          where: { ID_TARIFA: idTarifa },
-          data: updateData,
-          include: { historial_tarifas: { orderBy: { FECHA_INICIO: 'desc' } } },
-        });
-      } else {
-        tarifaActualizada = await fastify.prisma.tarifas.findUniqueOrThrow({
+        }
+        return tx.tarifas.findUniqueOrThrow({
           where: { ID_TARIFA: idTarifa },
           include: { historial_tarifas: { orderBy: { FECHA_INICIO: 'desc' } } },
         });
-      }
+      });
 
       return { ok: true as const, data: tarifaRawToDtoSchema.parse(tarifaActualizada) };
     }
@@ -164,32 +169,11 @@ export default async function tarifasRoutes(fastify: FastifyInstance) {
     },
     async (request) => {
       assertPermission(request, 'cotizaciones', 'gestionar_catalogo_tarifas');
-      const ahora = new Date();
-      const nuevaFechaInicio = request.body.fechaInicio
-        ? new Date(request.body.fechaInicio)
-        : ahora;
-      const nuevaFechaFin = request.body.fechaFin ? new Date(request.body.fechaFin) : null;
-
+      const { idTarifa, nuevoPrecio, fechaInicio, fechaFin } = request.body;
       const tarifaActualizada = await fastify.prisma.$transaction(async (tx) => {
-        await tx.historial_tarifas.updateMany({
-          where: {
-            ID_TARIFA_FK: request.body.idTarifa,
-            FECHA_FIN: null,
-          },
-          data: { FECHA_FIN: nuevaFechaInicio },
-        });
-
-        await tx.historial_tarifas.create({
-          data: {
-            ID_TARIFA_FK: request.body.idTarifa,
-            PRECIO_U: request.body.nuevoPrecio,
-            FECHA_INICIO: nuevaFechaInicio,
-            FECHA_FIN: nuevaFechaFin,
-          },
-        });
-
+        await registrarPrecio(tx, idTarifa, nuevoPrecio, fechaInicio, fechaFin);
         return await tx.tarifas.findUniqueOrThrow({
-          where: { ID_TARIFA: request.body.idTarifa },
+          where: { ID_TARIFA: idTarifa },
           include: {
             historial_tarifas: {
               orderBy: { FECHA_INICIO: 'desc' },

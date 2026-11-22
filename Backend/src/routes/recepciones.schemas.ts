@@ -81,6 +81,7 @@ export const recepcionDetalleDtoSchema = z.object({
   estampilla: z.string().nullable(),
   observaciones: z.string().nullable(),
   calibracionIniciada: z.boolean().default(false),
+  certificadoAprobado: z.boolean().default(false),
 });
 export type RecepcionDetalleDto = z.infer<typeof recepcionDetalleDtoSchema>;
 
@@ -416,6 +417,7 @@ export const recepcionDetalleRawToDtoSchema = z
     estampilla: raw.ESTAMPILLA ?? null,
     observaciones: raw.OBSERVACIONES ?? null,
     calibracionIniciada: raw.calibraciones != null,
+    certificadoAprobado: (raw.calibraciones as { certificados?: { ESTADO_REVISION?: string | null } | null } | null)?.certificados?.ESTADO_REVISION === 'APROBADO',
   }));
 export type RecepcionDetalleRaw = z.input<typeof recepcionDetalleRawToDtoSchema>;
 

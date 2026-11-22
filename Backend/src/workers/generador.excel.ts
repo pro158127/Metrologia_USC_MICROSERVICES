@@ -10,7 +10,6 @@ import { s3Client, BUCKET_NAME } from '../lib/s3Client.js';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { promisify } from 'util';
-import { urls_schema,url } from '../routes/schema-checkStatus.js'; 
 import { firmarTokenAprobacion } from '../lib/approval-token.js';
 import { PDFDocument } from 'pdf-lib';
 import { hidratarFormatoOperativo } from '../services/render-documento-operativo.service.js';
@@ -232,7 +231,7 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
             throw new UnrecoverableError('La cotización cambió antes de reutilizar el documento.');
           }
         }
-        await tx.quote.update({ where: { id: id_job }, data: { status: 'COMPLETED', data: urls } });
+        await completarGeneracionDocumental(tx, job.data, cotizacion?.ESTADO ?? null, datosPlantillaCorreo, urls);
       });
 
       // Retornamos instantáneamente, sin procesar nada más
@@ -296,7 +295,7 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
 
     const falloSubida = subidas.find((subida) => subida.status === 'rejected');
     if (falloSubida) throw falloSubida.reason;
-    const parse: url = { excel: s3Key, url_pdf: s3Key_pdf };
+    const parse = { excel: s3Key, url_pdf: s3Key_pdf };
 
     await prisma.$transaction(async (tx) => {
       if (tipo_entry === 'prod') {
@@ -337,10 +336,7 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
           });
         }
       }
-      await tx.quote.update({
-        where: { id: id_job },
-        data: { status: 'COMPLETED', fileUrl: null, data: parse },
-      });
+      await completarGeneracionDocumental(tx, job.data, cotizacion?.ESTADO ?? null, datosPlantillaCorreo, parse);
     });
 
   } catch (error) {
@@ -371,3 +367,4 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
     action: action
   };
 }
+import { completarGeneracionDocumental } from '../services/correo-documental.service.js';

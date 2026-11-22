@@ -66,6 +66,7 @@ test('documentos de envío distingue el cierre y rechaza el envío de un PDF sin
     recepciones_equipo: [recepcion],
   };
   const db = {
+    correo_envios: { findFirst: async () => null },
     $queryRaw: async () => [],
     ordenes_trabajo: { findUnique: async () => ot, findMany: async () => [ot] },
     documentos: { findMany: async () => [{ ID_DOCUMENTO: 8, NOMBRE: 'Pago.pdf', RUTA_URL: 'comprobantes/Pago.pdf' }] },

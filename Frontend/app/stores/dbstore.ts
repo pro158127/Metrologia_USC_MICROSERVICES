@@ -22,6 +22,8 @@ export const TABLAS_CON_SNAPSHOT = [
 ] as const satisfies readonly (keyof RealtimeTablesState)[];
 
 const cargasEnCurso = new Map<keyof RealtimeTablesState, Promise<boolean>>();
+const recargasSolicitadas = new Set<keyof RealtimeTablesState>();
+let generacionStore = 0;
 
 const initialState: RealtimeTablesState = {
   usuarios: [],
@@ -126,18 +128,27 @@ updateTable: (table, updater) =>
   setTableLoading: (table, value) =>
     set((s) => ({ loading: { ...s.loading, [table]: value } })),
   
-  reset: () => set(() => ({ ...initialState, loading: {}, initialized: false })),
+  reset: () => {
+    generacionStore += 1;
+    cargasEnCurso.clear();
+    recargasSolicitadas.clear();
+    set({ ...initialState, loading: {}, initialized: false });
+  },
 
   loadTable: (table, force = false) => {
     const enCurso = cargasEnCurso.get(table);
-    if (enCurso) return enCurso;
+    if (enCurso) {
+      if (force) recargasSolicitadas.add(table);
+      return enCurso;
+    }
     if (!force && get()[table].length > 0 && table !== 'usuarios') return Promise.resolve(true);
     if (!TABLAS_CON_SNAPSHOT.some((tabla) => tabla === table)) return Promise.resolve(false);
 
-    set((s) => ({ loading: { ...s.loading, [table]: true } }));
+    const generacion = generacionStore;
     const cargar = async (): Promise<boolean> => {
       let revisionAlIniciar: number;
-      do {
+      while (generacion === generacionStore) {
+        recargasSolicitadas.delete(table);
         revisionAlIniciar = obtenerRevisionRealtime(table);
         let data: any[] = [];
         let snapshotValido = false;
@@ -215,26 +226,33 @@ updateTable: (table, updater) =>
             console.warn(`⚠️ loadTable: Tabla "${table}" sin acción definida.`);
             data = [];
         }
-        if (!snapshotValido) return false;
-        if (revisionAlIniciar === obtenerRevisionRealtime(table)) {
-          set({ [table]: data });
-          return true;
-        }
-      } while (true);
+        if (generacion !== generacionStore) return false;
+        if (recargasSolicitadas.has(table) || revisionAlIniciar !== obtenerRevisionRealtime(table)) continue;
+        cargasEnCurso.delete(table);
+        set((state) => ({
+          ...(snapshotValido && { [table]: data }),
+          loading: { ...state.loading, [table]: false },
+        }));
+        return snapshotValido;
+      }
+      return false;
     };
 
-    const carga = cargar().catch((error: unknown) => {
+    const carga = Promise.resolve().then(cargar).catch((error: unknown) => {
       console.error(`Error al cargar tabla "${table}":`, error);
       return false;
     }).finally(() => {
+      if (cargasEnCurso.get(table) !== carga) return;
       cargasEnCurso.delete(table);
       get().setTableLoading(table, false);
     });
     cargasEnCurso.set(table, carga);
+    get().setTableLoading(table, true);
     return carga;
   },
 
   loadAllData: async () => {
+    const generacion = generacionStore;
     const state = get();
     if (state.initialized && state.clientes.length > 0) {
       console.log('⏳ Store ya inicializado, omitiendo recarga masiva.');
@@ -258,6 +276,7 @@ updateTable: (table, updater) =>
       tablesToLoad.map((table) => get().loadTable(table))
     );
 
+    if (generacion !== generacionStore) return;
     set({ initialized: true });
     console.log('✅ Carga masiva de datos finalizada.');
   },

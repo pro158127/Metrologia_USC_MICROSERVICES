@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { PDFDocument } from 'pdf-lib';
@@ -230,7 +231,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         
         // ✅ SANITIZACIÓN: Elimina espacios y caracteres especiales
         const originalName = (fileName || 'plantilla.pdf').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\.-]/g, '');
-        templatePdfKey = `${TEMPLATE_PREFIX}${Date.now()}_${originalName}`;
+        templatePdfKey = `${TEMPLATE_PREFIX}${randomUUID()}_${originalName}`;
         
         await uploadBuffer(templatePdfKey, fileBuffer, fileMime, { originalName });
       }
@@ -279,7 +280,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         
         // ✅ SANITIZACIÓN: Elimina espacios y caracteres especiales
         const originalName = (fileName || 'plantilla.pdf').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\.-]/g, '');
-        const newKey = `${TEMPLATE_PREFIX}${Date.now()}_${originalName}`;
+        const newKey = `${TEMPLATE_PREFIX}${randomUUID()}_${originalName}`;
         
         await uploadBuffer(newKey, fileBuffer, fileMime, { originalName });
         templatePdfKey = newKey;
@@ -291,6 +292,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         DESCRIPCION:
           fields.descripcion !== undefined ? fields.descripcion || null : existing.DESCRIPCION,
         TEMPLATE_PDF_KEY: templatePdfKey,
+        UPDATED_AT: new Date(Math.max(Date.now(), existing.UPDATED_AT.getTime() + 1)),
       };
       if (fields.documentArea !== undefined) {
         const parsed = parseJsonField<unknown>(fields.documentArea, null);
@@ -304,12 +306,16 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       let updated;
       try {
         updated = await fastify.prisma.plantillas_sellos.update({
-          where: { ID_PLANTILLA_SELLO: request.params.id },
+          where: { ID_PLANTILLA_SELLO: request.params.id, UPDATED_AT: existing.UPDATED_AT },
           data,
         });
       } catch (error) {
-        if (uploadedReplacementKey) {
-          try { await deleteObject(uploadedReplacementKey); } catch { /* limpieza best effort */ }
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          if (uploadedReplacementKey) {
+            await deleteObject(uploadedReplacementKey)
+              .catch((err) => request.log.warn({ err }, 'No se pudo retirar el sello descartado'));
+          }
+          throw new AppError(409, 'La plantilla de sello cambió durante la edición. Vuelva a abrirla.');
         }
         throw error;
       }
@@ -342,9 +348,10 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         where: { ID_PLANTILLA_SELLO: request.params.id },
       });
       if (!existing) throw new AppError(404, 'Plantilla de sello no encontrada');
-      await fastify.prisma.plantillas_sellos.delete({
-        where: { ID_PLANTILLA_SELLO: request.params.id },
+      const eliminada = await fastify.prisma.plantillas_sellos.deleteMany({
+        where: { ID_PLANTILLA_SELLO: request.params.id, UPDATED_AT: existing.UPDATED_AT },
       });
+      if (!eliminada.count) throw new AppError(409, 'La plantilla de sello cambió. Vuelva a consultarla antes de eliminarla.');
       if (existing.TEMPLATE_PDF_KEY) {
         try {
           await deleteObject(existing.TEMPLATE_PDF_KEY);

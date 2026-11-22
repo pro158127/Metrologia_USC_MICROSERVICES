@@ -23,6 +23,8 @@ function mapearErrorPrisma(error: Prisma.PrismaClientKnownRequestError): {
       return { status: 404, message: 'Recurso no encontrado' };
     case 'P2023':
       return { status: 400, message: 'Datos inconsistentes en la solicitud' };
+    case 'P2034':
+      return { status: 409, message: 'Otra operación modificó los mismos datos. Consulte el estado actual antes de reintentar.' };
     default:
       return { status: 500, message: 'Error interno de base de datos' };
   }

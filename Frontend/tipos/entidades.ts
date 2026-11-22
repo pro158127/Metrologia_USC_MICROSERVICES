@@ -290,6 +290,7 @@ export interface RecepcionEquipoDetalleModel {
   estampilla: string | null;
   observaciones: string | null;
   calibracionIniciada?: boolean;
+  certificadoAprobado?: boolean;
 }
 
 export interface RecepcionEquipoModel {

@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
@@ -100,6 +101,11 @@ export default async function facturasRoutes(fastify: FastifyInstance) {
         });
 
         return factura;
+      }).catch((error) => {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new AppError(409, 'Ya existe una factura con este número o documento.');
+        }
+        throw error;
       });
 
       return { ok: true as const, data: facturaRawToDtoSchema.parse(resultado) };

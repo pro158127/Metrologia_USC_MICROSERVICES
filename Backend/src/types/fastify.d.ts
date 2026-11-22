@@ -35,6 +35,7 @@ export interface NextAuthJWTPayload {
   iat?: number;
   exp?: number;
   jti?: string;
+  sessionVersion?: number;
 }
 
 declare module '@fastify/jwt' {

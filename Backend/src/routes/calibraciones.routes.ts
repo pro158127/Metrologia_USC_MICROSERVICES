@@ -1,11 +1,13 @@
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
 import { assertPermission } from '../lib/permissions.js';
-import { cabeceraRecepcionLista, evaluarTransicionesOT, instrumentoListoParaAsignar, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
+import { bloquearFlujoTecnicoOT, cabeceraRecepcionLista, evaluarTransicionesOT, instrumentoListoParaAsignar, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
-import { uploadBuffer } from '../lib/minioClient.js';
+import { deleteObject, uploadBuffer } from '../lib/minioClient.js';
 
 const idInstrumentoParamsSchema = z.object({ idInstrumento: z.coerce.number() });
 
@@ -27,13 +29,14 @@ function sanitizeFileName(fileName: string): string {
  * asignado al técnico autenticado. Lanza 403 si no lo está.
  */
 async function cargarDetalleAsignado(
-  fastify: FastifyInstance,
+  db: Pick<Prisma.TransactionClient, 'recepcion_equipo_detalles'>,
   idInstrumento: number,
   idUsuario: number
 ) {
-  const detalle = await fastify.prisma.recepcion_equipo_detalles.findUnique({
+  const detalle = await db.recepcion_equipo_detalles.findUnique({
     where: { ID_INSTRUMENTO: idInstrumento },
     include: {
+      calibraciones: { include: { certificados: { include: { documentos: { select: { RUTA_URL: true } } } } } },
       recepciones_equipo: {
         include: { ordenes_trabajo: { include: { orden_trabajo_detalles: true } } },
       },
@@ -191,33 +194,36 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
         throw new AppError(415, 'El certificado debe ser un archivo PDF');
       }
 
-      const { detalle: detalleRecepcion, ot } = await cargarDetalleAsignado(
-        fastify,
+      const inicial = await cargarDetalleAsignado(
+        fastify.prisma,
         idInstrumento,
         idUsuario
       );
-      const recepcion = detalleRecepcion.recepciones_equipo;
+      const certificadoInicial = inicial.detalle.calibraciones?.certificados;
+      if (certificadoInicial?.ESTADO_REVISION === 'APROBADO') {
+        throw new AppError(409, 'El certificado aprobado está bloqueado.');
+      }
 
-      // 1. Upsert calibración (solo el PDF; sin datos técnicos).
-      const calibracion = await fastify.prisma.calibraciones.upsert({
-        where: { ID_INSTRUMENTO_FK: idInstrumento },
-        update: { ID_TECNICO_FK: idUsuario },
-        create: {
-          ID_INSTRUMENTO_FK: idInstrumento,
-          ID_TECNICO_FK: idUsuario,
-          DATOS_TECNICOS_JSON: {},
-        },
-      });
-
-      // 2. Subir el PDF a MinIO
       const safeName = sanitizeFileName(data.filename || `certificado_${idInstrumento}.pdf`);
-      const key = `certificados/${Date.now()}_${safeName}`;
+      const key = `certificados/${randomUUID()}_${safeName}`;
       await uploadBuffer(key, buffer, 'application/pdf', { originalName: safeName });
 
-      // 3. Documento + versión + certificado
-      const certId = await fastify.prisma.$transaction(async (tx) => {
-        const certExistente = await tx.certificados.findUnique({
-          where: { ID_CALIBRACION_FK: calibracion.ID_CALIBRACION },
+      const resultado = await fastify.prisma.$transaction(async (tx) => {
+        await bloquearFlujoTecnicoOT(tx, inicial.ot);
+        const { detalle: detalleRecepcion, ot } = await cargarDetalleAsignado(tx, idInstrumento, idUsuario);
+        if (ot?.ID_ORDEN_TRABAJO !== inicial.ot?.ID_ORDEN_TRABAJO) {
+          throw new AppError(409, 'La orden del instrumento cambió durante la carga.');
+        }
+        const recepcion = detalleRecepcion.recepciones_equipo;
+        const certExistente = detalleRecepcion.calibraciones?.certificados;
+        if (certExistente?.ESTADO_REVISION !== certificadoInicial?.ESTADO_REVISION ||
+            certExistente?.documentos.RUTA_URL !== certificadoInicial?.documentos.RUTA_URL) {
+          throw new AppError(409, 'El certificado cambió durante la carga. Vuelva a abrir el instrumento.');
+        }
+        const calibracion = await tx.calibraciones.upsert({
+          where: { ID_INSTRUMENTO_FK: idInstrumento },
+          update: { ID_TECNICO_FK: idUsuario },
+          create: { ID_INSTRUMENTO_FK: idInstrumento, ID_TECNICO_FK: idUsuario, DATOS_TECNICOS_JSON: {} },
         });
 
         let idCertificado: number;
@@ -247,6 +253,7 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
               MOTIVO_RECHAZO: null,
               ID_REVISOR_FK: null,
               REVISADO_AT: null,
+              ID_PLANTILLA_SELLO_FK: null,
             },
           });
           idCertificado = certExistente.ID_CERTIFICADO;
@@ -286,29 +293,29 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
         // la calibración/certificado para evitar desincronizaciones.
         if (ot) await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
 
-        return idCertificado;
-      });
-
-      await registrarBitacora(fastify.prisma, {
-        action: 'UPLOAD_CERTIFICADO',
-        tableName: 'calibraciones',
-        recordId: calibracion.ID_CALIBRACION,
-        userId: idUsuario,
-        ip: request.ip,
-        details: {
-          idInstrumento,
-          idCertificado: certId,
-          codigoOT: ot?.CODIGO_OT ?? null,
-        },
+        await registrarBitacora(tx, {
+          action: 'UPLOAD_CERTIFICADO',
+          tableName: 'calibraciones',
+          recordId: calibracion.ID_CALIBRACION,
+          userId: idUsuario,
+          ip: request.ip,
+          details: {
+            idInstrumento,
+            idCertificado,
+            codigoOT: ot?.CODIGO_OT ?? null,
+          },
+        });
+        return { idCalibracion: calibracion.ID_CALIBRACION, idCertificado, rutaUrl: key };
+      }).catch(async (error) => {
+        if (error instanceof AppError) {
+          await deleteObject(key).catch((err) => request.log.warn({ err, key }, 'No se pudo limpiar el PDF descartado'));
+        }
+        throw error;
       });
 
       return {
         ok: true as const,
-        data: {
-          idCalibracion: calibracion.ID_CALIBRACION,
-          idCertificado: certId,
-          rutaUrl: key,
-        },
+        data: resultado,
       };
     }
   );

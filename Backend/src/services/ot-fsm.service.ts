@@ -314,3 +314,13 @@ export async function validarAsignacionPermitida(
     throw new AppError(409, 'Completa la estampilla y los cuatro campos del IBC de entrada de este instrumento antes de asignarlo.');
   }
 }
+export async function bloquearFlujoTecnicoOT(
+  tx: Prisma.TransactionClient,
+  orden: { ID_COTIZACION_FK: number | null; ID_ORDEN_TRABAJO: number } | null | undefined,
+): Promise<void> {
+  if (!orden) return;
+  if (orden.ID_COTIZACION_FK != null) {
+    await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${orden.ID_COTIZACION_FK} FOR UPDATE`;
+  }
+  await tx.$queryRaw`SELECT "ID_ORDEN_TRABAJO" FROM ordenes_trabajo WHERE "ID_ORDEN_TRABAJO" = ${orden.ID_ORDEN_TRABAJO} FOR UPDATE`;
+}

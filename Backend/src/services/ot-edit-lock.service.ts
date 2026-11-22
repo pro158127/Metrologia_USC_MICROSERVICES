@@ -3,13 +3,14 @@ import { AppError } from '../lib/errors.js';
 
 type Tx = Prisma.TransactionClient;
 
-/** After calibration starts, protect only the instrument identity, stamp and IBC entry. */
+/** Calibration protects identity/stamp/entry IBC; an approved certificate freezes all instrument metadata. */
 export async function validarIdentidadInstrumentosRecepcion(
   tx: Tx,
   idOT: number,
   existentes: Array<{
     ID_INSTRUMENTO: number;
     INSTRUMENTO: string;
+    TIPO_SERVICIO?: string | null;
     MARCA: string | null;
     MODELO: string | null;
     SERIE: string | null;
@@ -24,6 +25,7 @@ export async function validarIdentidadInstrumentosRecepcion(
   recibidos: Array<{
     idInstrumento?: number;
     instrumento: string;
+    tipoServicio?: string | null;
     marca?: string | null;
     modelo?: string | null;
     serie?: string | null;
@@ -45,9 +47,12 @@ export async function validarIdentidadInstrumentosRecepcion(
   const ids = existentes.map((item) => item.ID_INSTRUMENTO);
   const calibraciones = ids.length ? await tx.calibraciones.findMany({
     where: { ID_INSTRUMENTO_FK: { in: ids } },
-    select: { ID_INSTRUMENTO_FK: true },
+    select: { ID_INSTRUMENTO_FK: true, certificados: { select: { ESTADO_REVISION: true } } },
   }) : [];
   const idsProtegidos = new Set(calibraciones.map((calibracion) => calibracion.ID_INSTRUMENTO_FK));
+  const idsCertificadosAprobados = new Set(calibraciones
+    .filter((calibracion) => calibracion.certificados?.ESTADO_REVISION === 'APROBADO')
+    .map((calibracion) => calibracion.ID_INSTRUMENTO_FK));
   const recibidosConId = recibidos.filter((item) => item.idInstrumento != null);
   const normalizar = (valor: unknown) => String(valor ?? '').trim();
   const estable = (valor: unknown): string => {
@@ -75,6 +80,21 @@ export async function validarIdentidadInstrumentosRecepcion(
       normalizar(recibido.estampilla) !== normalizar(actual.ESTAMPILLA);
     if (cambio) {
       throw new AppError(409, `No se puede cambiar el instrumento, la estampilla ni el IBC de entrada de "${actual.INSTRUMENTO}": la calibración ya inició.`);
+    }
+    if (idsCertificadosAprobados.has(actual.ID_INSTRUMENTO)) {
+      const cambioDatosInstrumento =
+        normalizar(recibido.tipoServicio) !== normalizar(actual.TIPO_SERVICIO) ||
+        normalizar(recibido.marca) !== normalizar(actual.MARCA) ||
+        normalizar(recibido.modelo) !== normalizar(actual.MODELO) ||
+        normalizar(recibido.serie) !== normalizar(actual.SERIE) ||
+        normalizar(recibido.codigoInventario) !== normalizar(actual.CODIGO_INVENTARIO) ||
+        normalizar(recibido.resolucion) !== normalizar(actual.RESOLUCION) ||
+        Boolean(recibido.sensorInt) !== Boolean(actual.TIPO_SENSOR_TEMP_init) ||
+        Boolean(recibido.sensorExt) !== Boolean(actual.TIPO_SENSOR_TEMP_ext) ||
+        normalizar(recibido.observaciones) !== normalizar(actual.OBSERVACIONES);
+      if (cambioDatosInstrumento) {
+        throw new AppError(409, `No se pueden editar los datos de "${actual.INSTRUMENTO}": su certificado ya fue aprobado.`);
+      }
     }
   }
 }

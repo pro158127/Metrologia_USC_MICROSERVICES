@@ -25,6 +25,7 @@ export interface FilaInstrumento {
   idInstrumento?: number;
   idUnidad?: string | null;
   calibracionIniciada?: boolean;
+  certificadoAprobado?: boolean;
   item?: number | null;
   instrumento: string;
   tipoServicio: string;
@@ -111,8 +112,6 @@ export interface DatosGeneralesSectionProps {
   solicitantes: SolicitanteRecepcion[];
   cargandoSolicitantes: boolean;
   onSeleccionarSolicitante: (cliente?: SolicitanteRecepcion) => void;
-  cotizaciones: CotizacionModel[];
-  ordenesTrabajo: OrdenTrabajoModel[];
   onUpdateGeneral: (field: string, value: string) => void;
   bloqueado?: boolean;
 }

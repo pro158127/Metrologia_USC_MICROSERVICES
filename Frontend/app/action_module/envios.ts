@@ -70,7 +70,8 @@ export interface RespuestaEnvio {
 
 export async function subirComprobante(
   idOT: number,
-  file: File
+  file: File,
+  correo?: string
 ): Promise<RespuestaEnvio> {
   try {
     const session = await auth();
@@ -78,7 +79,7 @@ export async function subirComprobante(
     form.append('comprobante', file, file.name);
     const res = await fastifyRequest<{ ok: boolean; data: { rutaUrl: string } }>(
       session,
-      `/api/v1/ordenes/${idOT}/comprobante`,
+      `/api/v1/ordenes/${idOT}/comprobante${correo ? `?correo=${encodeURIComponent(correo)}` : ''}`,
       { method: 'POST', body: form }
     );
     return { ok: true, rutaUrl: res.data?.rutaUrl };
@@ -88,13 +89,13 @@ export async function subirComprobante(
   }
 }
 
-export async function enviarCertificados(idOT: number): Promise<RespuestaEnvio> {
+export async function enviarCertificados(idOT: number, correo?: string): Promise<RespuestaEnvio> {
   try {
     const session = await auth();
     return await fastifyRequest<RespuestaEnvio>(
       session,
       `/api/v1/ordenes/${idOT}/enviar-certificados`,
-      { method: 'POST' }
+      { method: 'POST', ...(correo && { body: { correo } }) }
     );
   } catch (error) {
     console.error('Error al enviar certificados:', error);
@@ -117,6 +118,7 @@ export interface CertificadoEnvioCotizacion extends CertificadoEnvio {
 }
 
 export interface DocumentosEnvioCotizacion {
+  ultimoCorreo?: { estado: string; destinatario: string; error: string | null } | null;
   idCotizacion: number;
   codigoCotizacion: string | null;
   masterCodigo: string | null;
@@ -167,13 +169,15 @@ export async function subirComprobanteCotizacion(
   }
 }
 
-export async function enviarCertificadosCotizacion(idCotizacion: number): Promise<RespuestaEnvio> {
+export async function enviarCertificadosCotizacion(
+  idCotizacion: number, correo?: string, confirmarNoRecibido?: boolean,
+): Promise<RespuestaEnvio> {
   try {
     const session = await auth();
     return await fastifyRequest<RespuestaEnvio>(
       session,
       `/api/v1/cotizaciones/${idCotizacion}/enviar-certificados`,
-      { method: 'POST' }
+      { method: 'POST', body: { correo, confirmarNoRecibido } }
     );
   } catch (error) {
     console.error('Error al enviar certificados por cotización:', error);

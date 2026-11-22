@@ -44,7 +44,7 @@ const REC_INCLUDE = {
   recepcion_equipo_detalles: {
     where: { OR: [{ activacion: true }, { activacion: null }] },
     orderBy: { ITEM: 'asc' },
-              include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
+              include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true, certificados: { select: { ESTADO_REVISION: true } } } } },
   },
   documentos: true,
   cotizaciones: { include: {
@@ -259,7 +259,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           recepcion_equipo_detalles: {
             where: { OR: [{ activacion: true }, { activacion: null }] },
             orderBy: { ITEM: 'asc' },
-            include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
+            include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true, certificados: { select: { ESTADO_REVISION: true } } } } },
           },
           cotizaciones: { include: { clientes: true } },
           ordenes_trabajo: {
@@ -303,7 +303,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       recepcion_equipo_detalles: {
         where: { OR: [{ activacion: true }, { activacion: null }] },
         orderBy: { ITEM: 'asc' },
-        include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
+        include: { calibraciones: { select: { ID_INSTRUMENTO_FK: true, certificados: { select: { ESTADO_REVISION: true } } } } },
       },
       cotizaciones: { include: { clientes: true } },
       ordenes_trabajo: { include: { clientes: true, cotizaciones: true } },
@@ -379,7 +379,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     })) };
   });
 
-  // Autogenera Cotización base → OT → Recepción dentro de una transacción.
+  // Autogenera la cotización base y la recepción; la OT nace desde aprobación.
   app.post(
     '/api/v1/recepciones',
     {
@@ -397,6 +397,9 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const body = request.body;
+      if (body.cotizacionCodigo?.trim() || body.ordenTrabajoCodigo?.trim()) {
+        throw new AppError(409, 'No puedes vincular una cotización o una OT manualmente desde Recepciones. La asociación se realiza desde el flujo de cotización y aprobación.');
+      }
       const estadoCalculado = calcularEstadoRecepcion(
         body.instrumentos,
         body,
@@ -880,10 +883,15 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         }
 
         if (actual.ID_ORDEN_TRABAJO_FK) {
+          const detallesActivosOT = otDetalles.filter((detalle) => detalle.activacion !== false);
           await validarIdentidadInstrumentosRecepcion(
             tx,
             actual.ID_ORDEN_TRABAJO_FK,
-            actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false),
+            actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false).map((detalle) => ({
+              ...detalle,
+              TIPO_SERVICIO: vincularUnidadRecepcion(detalle, detallesActivosOT)?.TIPO_SERVICIO ??
+                servicioPorUnidad.get(detalle.ID_UNIDAD_FK ?? '') ?? null,
+            })),
             body.instrumentos,
           );
         }

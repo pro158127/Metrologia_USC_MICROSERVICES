@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT, Prisma } from '@prisma/client';
 import { PDFDocument } from 'pdf-lib';
@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
 import { deleteObject, uploadBuffer } from '../lib/minioClient.js';
 import { esPdfSelladoVigente } from '../services/documento-generado.service.js';
-import { enviarCorreoYEsperar } from '../services/email-delivery.service.js';
+import { correoValido, enviarCorreoYEsperar } from '../services/email-delivery.service.js';
 import { transicionarOT, evaluarTransicionesOT, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertAnyPermission } from '../lib/permissions.js';
@@ -15,6 +15,10 @@ import { pendientesEntregaSalida } from '../services/recepcion-entrega.service.j
 import { cerrarSeguimientoSiCompleto } from '../services/seguimiento-cierre.service.js';
 
 const otParamsSchema = z.object({ id: z.coerce.number() });
+const envioBodySchema = z.object({
+  correo: correoValido.optional(),
+  confirmarNoRecibido: z.boolean().optional(),
+}).nullish();
 
 /** Valida permisos del módulo entrega_y_envio. */
 function assertPermisoEntrega(
@@ -63,6 +67,9 @@ const respuestaDocumentosEnvioCotizacionSchema = z.object({
     masterCodigo: z.string().nullable(),
     cliente: z.string(),
     correo: z.string().nullable(),
+    ultimoCorreo: z.object({
+      estado: z.string(), destinatario: z.string(), error: z.string().nullable(),
+    }).nullable(),
     todosAprobados: z.boolean(),
     selladoPendiente: z.array(z.string()),
     entregaCompleta: z.boolean(),
@@ -215,6 +222,7 @@ async function cargarContextoCotizacion(db: LecturaEnvio, idCotizacion: number) 
   const ordenesVigentes = await db.ordenes_trabajo.findMany({
     where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true },
     include: datosOrdenEnvio,
+    orderBy: { ID_ORDEN_TRABAJO: 'asc' },
   });
   const { hijas, maestra: masterHeterogenea } = agruparOrdenesEnvio(ordenesVigentes);
 
@@ -369,18 +377,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     '/api/v1/ordenes/:id/comprobante',
     {
       preHandler: [fastify.authenticate],
-      schema: { params: otParamsSchema },
+      schema: { params: otParamsSchema, querystring: z.object({ correo: correoValido.optional() }) },
     },
     async (request) => {
       assertPermisoEntrega(request, 'marcar_ot_pagada');
       const idOT = request.params.id;
       const { ot, todosAprobados } = await cargarContextoOT(fastify.prisma, idOT);
       if (!ot.VIGENTE) throw new AppError(409, 'La orden dejó de estar vigente.');
-
-      const destinoPago = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
-      if (!destinoPago) {
-        throw new AppError(409, 'No se puede registrar el pago: la OT no tiene un correo válido. Revise o actualice el correo electrónico.');
-      }
 
       const cotizacion = ot.ID_COTIZACION_FK
         ? await fastify.prisma.cotizaciones.findUnique({
@@ -401,6 +404,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
 
       const mime: string = data.mimetype;
       let buffer: Buffer = await data.toBuffer();
+      const huellaComprobante = createHash('sha256').update(buffer).digest('hex');
 
       const esImagen = mime === 'image/png' || mime === 'image/jpeg' || mime === 'image/jpg';
       if (esImagen) {
@@ -424,6 +428,10 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           throw new AppError(409, 'La orden cambió mientras se cargaba el comprobante. Consulte su estado vigente.');
         }
         const yaPagada = contextoActual.ot.estado_pago === 'PAGADO';
+        const destinoPago = (request.query.correo ?? contextoActual.ot.CORREO_CERTIFICADO ?? contextoActual.ot.clientes?.CORREO ?? '').trim();
+        if (!yaPagada && !correoValido.safeParse(destinoPago).success) {
+          throw new AppError(409, 'Ingrese un correo válido para enviar la confirmación del pago.');
+        }
 
         const documento = await tx.documentos.create({
           data: {
@@ -449,21 +457,17 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           ? `FAC-${cotizacion.CODIGO_COTIZACION}`
           : null;
         if (numeroFactura) {
-          const facturaExistente = await tx.facturas.findUnique({
-            where: { NUMERO_FACTURA: numeroFactura },
+          await tx.facturas.createMany({
+            skipDuplicates: true,
+            data: {
+              NUMERO_FACTURA: numeroFactura,
+              ID_ORDEN_TRABAJO_FK: idOT,
+              ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? ot.ID_CLIENTE_FK ?? null,
+              FECHA: new Date(),
+              VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
+              ESTADO: 'EMITIDA',
+            },
           });
-          if (!facturaExistente) {
-            await tx.facturas.create({
-              data: {
-                NUMERO_FACTURA: numeroFactura,
-                ID_ORDEN_TRABAJO_FK: idOT,
-                ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? ot.ID_CLIENTE_FK ?? null,
-                FECHA: new Date(),
-                VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
-                ESTADO: 'EMITIDA',
-              },
-            });
-          }
         }
 
         await registrarBitacora(tx, {
@@ -484,14 +488,16 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
               nombreCliente: ot.clientes?.NOMBRE_CONTACTO ?? ot.clientes?.RAZON_SOCIAL ?? 'Cliente',
               numeroOT: ot.CODIGO_OT,
               numeroCotizacion: ot.no_cotizacion ?? null,
+              huellaComprobante,
             },
             minio_links: [key],
             id_registro: idOT,
+            id_cotizacion: ot.ID_COTIZACION_FK ?? undefined,
             notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
             modulo_origen: 'entrega_y_envio',
             tabla_origen: 'ordenes_trabajo',
             tipo_entry: 'prod',
-          });
+          }, fastify.prisma);
         }
 
         if (ot.ID_COTIZACION_FK) {
@@ -500,7 +506,12 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
 
         return { idDocumento: documento.ID_DOCUMENTO, rutaUrl: documento.RUTA_URL, yaPagada };
       }, { timeout: 180_000 }).catch(async (error) => {
-        await deleteObject(key).catch((err) => request.log.warn({ err, key }, 'Error al retirar el comprobante no registrado'));
+        try {
+          const referencia = await fastify.prisma.documentos.findFirst({ where: { RUTA_URL: key }, select: { ID_DOCUMENTO: true } });
+          if (!referencia) await deleteObject(key);
+        } catch (err) {
+          request.log.warn({ err, key }, 'No se pudo verificar o retirar el comprobante tras el fallo');
+        }
         throw error;
       });
 
@@ -522,7 +533,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     '/api/v1/ordenes/:id/enviar-certificados',
     {
       preHandler: [fastify.authenticate],
-      schema: { params: otParamsSchema },
+      schema: { params: otParamsSchema, body: envioBodySchema },
     },
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
@@ -551,9 +562,9 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           throw new AppError(409, `PDF sellado pendiente de publicación: ${selladoPendiente.join(', ')}.`);
         }
 
-        const destino = ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? null;
-        if (!destino) {
-          throw new AppError(409, 'La OT no tiene correo de certificados configurado.');
+        const destino = (request.body?.correo ?? ot.CORREO_CERTIFICADO ?? ot.clientes?.CORREO ?? '').trim();
+        if (!correoValido.safeParse(destino).success) {
+          throw new AppError(409, 'Ingrese un correo válido para los certificados de la OT.');
         }
 
         const links = [
@@ -579,6 +590,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           },
           minio_links: links,
           id_registro: idOT,
+          id_cotizacion: ot.ID_COTIZACION_FK ?? undefined,
           notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
           modulo_origen: 'entrega_y_envio',
           tabla_origen: 'ordenes_trabajo',
@@ -590,7 +602,10 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             userId: Number(request.user?.sub ?? 0), ip: request.ip,
             details: { codigoOT: ot.CODIGO_OT, totalCertificados: certificados.length },
         });
-        const jobId = await enviarCorreoYEsperar(emailData);
+        const jobId = await enviarCorreoYEsperar(emailData, fastify.prisma, request.body?.confirmarNoRecibido);
+        if (request.body?.correo) {
+          await tx.ordenes_trabajo.update({ where: { ID_ORDEN_TRABAJO: idOT }, data: { CORREO_CERTIFICADO: destino } });
+        }
         if (ot.ID_COTIZACION_FK) {
           await cerrarSeguimientoSiCompleto(tx, ot.ID_COTIZACION_FK, Number(request.user?.sub ?? 0) || null);
         }
@@ -629,6 +644,12 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
 
       const cliente = hijas[0]?.clientes?.RAZON_SOCIAL ?? '—';
       const correo = hijas[0]?.CORREO_CERTIFICADO ?? master?.CORREO_CERTIFICADO ?? hijas[0]?.clientes?.CORREO ?? null;
+      const ultimo = await fastify.prisma.correo_envios.findFirst({
+        where: { ID_COTIZACION_FK: idCotizacion, MODULO: 'entrega_y_envio', TIPO: 'envia_certifiados',
+          CONTEXTO: { path: ['origen'], equals: 'cotizaciones' } },
+        orderBy: { ID_ENVIO_CORREO: 'desc' },
+        select: { ESTADO: true, DESTINATARIO: true, ULTIMO_ERROR: true },
+      });
 
       return {
         ok: true as const,
@@ -638,6 +659,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           masterCodigo: master?.CODIGO_OT ?? null,
           cliente,
           correo,
+          ultimoCorreo: ultimo ? { estado: ultimo.ESTADO, destinatario: ultimo.DESTINATARIO, error: ultimo.ULTIMO_ERROR } : null,
           todosAprobados,
           selladoPendiente,
           entregaCompleta,
@@ -729,21 +751,17 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           ? `FAC-${cotizacion.CODIGO_COTIZACION}`
           : null;
         if (numeroFactura) {
-          const existente = await tx.facturas.findUnique({
-            where: { NUMERO_FACTURA: numeroFactura },
+          await tx.facturas.createMany({
+            skipDuplicates: true,
+            data: {
+              NUMERO_FACTURA: numeroFactura,
+              ID_ORDEN_TRABAJO_FK: master?.ID_ORDEN_TRABAJO ?? hijas[0].ID_ORDEN_TRABAJO,
+              ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? null,
+              FECHA: new Date(),
+              VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
+              ESTADO: 'EMITIDA',
+            },
           });
-          if (!existente) {
-            await tx.facturas.create({
-              data: {
-                NUMERO_FACTURA: numeroFactura,
-                ID_ORDEN_TRABAJO_FK: master?.ID_ORDEN_TRABAJO ?? hijas[0].ID_ORDEN_TRABAJO,
-                ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? null,
-                FECHA: new Date(),
-                VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
-                ESTADO: 'EMITIDA',
-              },
-            });
-          }
         }
 
         await registrarBitacora(tx, {
@@ -773,7 +791,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     '/api/v1/cotizaciones/:id/enviar-certificados',
     {
       preHandler: [fastify.authenticate],
-      schema: { params: otParamsSchema },
+      schema: { params: otParamsSchema, body: envioBodySchema },
     },
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
@@ -799,10 +817,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           throw new AppError(409, `PDF sellado pendiente de publicación: ${selladoPendiente.join(', ')}.`);
         }
 
-        const destino =
-          hijas[0]?.CORREO_CERTIFICADO ?? master?.CORREO_CERTIFICADO ?? hijas[0]?.clientes?.CORREO ?? null;
-        if (!destino) {
-          throw new AppError(409, 'La cotización no tiene correo de certificados configurado.');
+        const destino = (
+          request.body?.correo ?? hijas[0]?.CORREO_CERTIFICADO ?? master?.CORREO_CERTIFICADO ?? hijas[0]?.clientes?.CORREO ?? ''
+        ).trim();
+        if (!correoValido.safeParse(destino).success) {
+          throw new AppError(409, 'Ingrese un correo válido para los certificados de la cotización.');
         }
 
         const links = [
@@ -829,6 +848,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           },
           minio_links: links,
           id_registro: idCotizacion,
+          id_cotizacion: idCotizacion,
           notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
           modulo_origen: 'entrega_y_envio',
           tabla_origen: 'cotizaciones',
@@ -842,7 +862,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             userId: Number(request.user?.sub ?? 0), ip: request.ip,
             details: { idCotizacion, totalOTs: hijas.length, totalCertificados: certificados.length },
         });
-        const jobId = await enviarCorreoYEsperar(emailData);
+        const jobId = await enviarCorreoYEsperar(emailData, fastify.prisma, request.body?.confirmarNoRecibido);
+        if (request.body?.correo) {
+          await tx.ordenes_trabajo.updateMany({
+            where: { ID_ORDEN_TRABAJO: { in: [...hijas.map((ot) => ot.ID_ORDEN_TRABAJO), ...(master ? [master.ID_ORDEN_TRABAJO] : [])] } },
+            data: { CORREO_CERTIFICADO: destino },
+          });
+        }
         await cerrarSeguimientoSiCompleto(tx, idCotizacion, Number(request.user?.sub ?? 0) || null);
         return { destino, jobId };
       }, { timeout: 180_000 });

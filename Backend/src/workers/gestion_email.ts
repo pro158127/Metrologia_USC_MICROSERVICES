@@ -1,4 +1,4 @@
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, UnrecoverableError } from 'bullmq';
 import fs from 'fs';
 import path from 'path';
 import handlebars from 'handlebars';
@@ -8,7 +8,10 @@ import { Client as MinioClient } from 'minio';
 import { EMAIL_QUEUE_NAME, getRedisConnection } from '../lib/queue/queue.js';
 import { EmailJobData } from '../lib/queue/queue.js'; 
 import { PrismaClient } from '@prisma/client';
-import { registrarFalloCorreo } from '../services/email-delivery.service.js';
+import { correoValido, registrarFalloCorreo } from '../services/email-delivery.service.js';
+import { codigoSigueVigente } from '../services/recovery.service.js';
+import { abrirContenidoCorreo } from '../services/contenido-correo.service.js';
+import { verificarTokenAprobacion } from '../lib/approval-token.js';
 const prisma = new PrismaClient();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,7 +26,7 @@ const minioClient = new MinioClient({
   accessKey: process.env.MINIO_ACCESS_KEY || 'minioadmin', 
   secretKey: process.env.MINIO_SECRET_KEY || 'minioadmin'
 });
-const BUCKET_NAME = 'documentos-metrologia';
+const BUCKET_NAME = process.env.MINIO_BUCKET_NAME || 'documentos-metrologia';
 
 // 2. Configuración de Transporte SMTP (unificado con variables SMTP_* y
 //    fallback a las variables OUTLOOK_* usadas históricamente).
@@ -101,15 +104,21 @@ export const emailWorker = new Worker<EmailJobData>(
       minio_links, tipo_entry, id_registro
     } = job.data;
 
+    const persistido = /^(correo|directo)-/.test(String(job.id));
     if (job.data.id_envio_correo) {
-      await prisma.correo_envios.update({
-        where: { ID_ENVIO_CORREO: job.data.id_envio_correo },
+      const activo = await prisma.correo_envios.updateMany({
+        where: {
+          ID_ENVIO_CORREO: job.data.id_envio_correo,
+          ESTADO: { in: ['PENDIENTE', 'EN_PROCESO'] },
+          ...(persistido && { ID_JOB: String(job.id) }),
+        },
         data: {
           ESTADO: 'EN_PROCESO',
           INTENTOS: { increment: 1 },
           ID_JOB: String(job.id),
         },
       });
+      if (!activo.count) return { status: 'skipped_superseded' };
     }
 
     console.log(`[EmailWorker] Iniciando Job ${job.id} | Tipo: ${template_type} | Registro: ${id_registro}`);
@@ -126,8 +135,47 @@ export const emailWorker = new Worker<EmailJobData>(
     }
 
     try {
+      if (job.data.expira_en && Date.now() >= job.data.expira_en) {
+        throw new UnrecoverableError('El código expiró antes de enviarse. Solicite un código nuevo.');
+      }
+      const verificacion = job.data.codigo_verificacion;
+      let contextoRenderizado;
+      try {
+        contextoRenderizado = abrirContenidoCorreo(context_data);
+      } catch {
+        throw new UnrecoverableError('No se pudo recuperar la credencial protegida. Solicite una nueva.');
+      }
+      if (verificacion && !await codigoSigueVigente(verificacion.namespace, verificacion.entidad, String(contextoRenderizado.codigo))) {
+        throw new UnrecoverableError('El código ya cambió. Utilice el último código solicitado.');
+      }
+      if (job.data.version_credencial !== undefined && id_registro) {
+        const usuario = await prisma.usuarios.findUnique({
+          where: { ID_USUARIO_AUTO_INCREMENT: id_registro },
+          select: { CORREO_INSTITUCION: true, UPDATE_AT: true, elminado: true },
+        });
+        if (!usuario || usuario.elminado || usuario.CORREO_INSTITUCION !== to ||
+            (usuario.UPDATE_AT?.getTime() ?? 0) !== job.data.version_credencial) {
+          throw new UnrecoverableError('La cuenta cambió. Verifique su correo y emita una credencial nueva.');
+        }
+      }
+      if (template_type === 'crear_cotizacion' && job.data.id_cotizacion) {
+        const cotizacion = await prisma.cotizaciones.findUnique({
+          where: { ID_COTIZACION: job.data.id_cotizacion },
+          select: { CODIGO_COTIZACION: true, ESTADO: true },
+        });
+        const link = URL.canParse(String(contextoRenderizado.linkAprobacion))
+          ? new URL(String(contextoRenderizado.linkAprobacion)) : null;
+        const token = link?.searchParams.get('token');
+        if (cotizacion?.ESTADO !== 'ENVIADA' || cotizacion.CODIGO_COTIZACION !== contextoRenderizado.numeroCotizacion ||
+            !token || verificarTokenAprobacion(token)?.cotizacionId !== job.data.id_cotizacion) {
+          throw new UnrecoverableError('La cotización o su enlace de aprobación ya no están vigentes. Consulte su estado actual.');
+        }
+      }
+      if (!(Array.isArray(to) ? to : [to]).every((correo) => correoValido.safeParse(correo?.trim()).success)) {
+        throw new UnrecoverableError('La dirección de correo es inválida. Corríjala antes de volver a enviar.');
+      }
       // Construir cuerpo y extraer archivos desde MinIO
-      const htmlContent = renderHtml(template_type, context_data);
+      const htmlContent = renderHtml(template_type, contextoRenderizado);
       const emailAttachments = await procesarAdjuntosNodemailer(minio_links);
 
       console.log(`[EmailWorker] 🚀 Despachando SMTP... Archivos listos: ${emailAttachments.length}`);
@@ -150,11 +198,15 @@ export const emailWorker = new Worker<EmailJobData>(
       }
 
       console.log(`[EmailWorker] ✅ Éxito | Job ${job.id} procesado. MessageId: ${info.messageId}`);
-      return { status: 'delivered' };
+      return { status: 'delivered', messageId: info.messageId };
 
-    } catch (error: any) {
-      console.error(`[EmailWorker] ❌ Error en Job ${job.id}:`, error.message);
-      throw error; 
+    } catch (error) {
+      const smtp = error as { responseCode?: number; message?: string };
+      console.error(`[EmailWorker] Error en Job ${job.id}:`, smtp.message);
+      if (smtp.responseCode && smtp.responseCode >= 500 && smtp.responseCode < 600) {
+        throw new UnrecoverableError(smtp.message ?? 'El servidor SMTP rechazó permanentemente el envío.');
+      }
+      throw error;
     }
   },
   {
@@ -165,9 +217,9 @@ export const emailWorker = new Worker<EmailJobData>(
 
 emailWorker.on('completed', async (job, result) => {
   console.log(`[EmailWorker] Job encolado en Redis completado: ${job.id}`);
-  if (job?.data.id_envio_correo && result?.status !== 'skipped_test_mode') {
-    await prisma.correo_envios.update({
-      where: { ID_ENVIO_CORREO: job.data.id_envio_correo },
+  if (job?.data.id_envio_correo && !/^(correo|directo)-/.test(String(job.id)) && result?.status === 'delivered') {
+    await prisma.correo_envios.updateMany({
+      where: { ID_ENVIO_CORREO: job.data.id_envio_correo, ID_JOB: String(job.id), ESTADO: { in: ['EN_PROCESO', 'RESULTADO_INCIERTO'] } },
       data: { ESTADO: 'ENVIADO', ENVIADO_AT: new Date(), ULTIMO_ERROR: null },
     }).catch((error) => console.error('[EmailWorker] No se pudo marcar el correo como enviado:', error));
   }
@@ -176,13 +228,16 @@ emailWorker.on('completed', async (job, result) => {
 emailWorker.on('failed', async (job, err) => {
   console.error(`[EmailWorker] Job fallido: ${job?.id} | Error: ${err.message}`);
 
-  if (job && job.data) {
-    const { id_registro } = job.data;
-
-    const totalIntentos = Number(job.opts.attempts ?? 1);
-    if (job.attemptsMade >= totalIntentos) {
+  if (!job || /^(correo|directo)-/.test(String(job.id))) return;
+  try {
+    if (await job.getState() === 'failed') {
       await registrarFalloCorreo(prisma, job.data, String(job.id), err, job.attemptsMade);
     }
-
+  } catch (error) {
+    console.error('[EmailWorker] No se pudo registrar el fallo definitivo:', error);
   }
+});
+
+emailWorker.on('error', (err) => {
+  console.error('[EmailWorker] Error del worker:', err);
 });

@@ -39,9 +39,8 @@ const transicionesValidas: Record<Estados, Estados[]> = {
   RECHAZADA: [],
   EN_SEGUIMIENTO: [],
 };
-import { getEmailQueue } from '../lib/queue/queue.js';
+import { correoValido, nuevoIdColaCorreo } from '../services/email-delivery.service.js';
 import { registrarGeneracionPendiente } from '../services/generacion-pendiente.service.js';
-import { EmailJobData } from '../lib/queue/queue.js';
 
 
 async function validarCotizacionParaEnvio(
@@ -52,7 +51,7 @@ async function validarCotizacionParaEnvio(
     idCliente != null ? tx.clientes.findUnique({ where: { ID_CLIENTE: idCliente }, select: { CORREO: true } }) : null,
   ]);
   if (!cantidad) throw new AppError(409, 'Agrega al menos un instrumento antes de enviar la cotización.');
-  if (!z.email().safeParse(cliente?.CORREO).success) {
+  if (!correoValido.safeParse(cliente?.CORREO).success) {
     throw new AppError(409, 'Actualiza el correo del cliente antes de enviar la cotización.');
   }
 }
@@ -157,7 +156,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
 
       const envios = await fastify.prisma.correo_envios.findMany({
-        where: { ID_COTIZACION_FK: idCotizacion },
+        where: { ID_COTIZACION_FK: idCotizacion, MODULO: { in: ['cotizaciones', 'ordenes_trabajo'] } },
         orderBy: { CREATED_AT: 'desc' },
       });
       return {
@@ -193,109 +192,59 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       const correoNuevo = request.body.correo?.trim().toLowerCase();
       const idUsuario = Number(request.user?.sub ?? 0) || null;
 
-      const envio = await fastify.prisma.correo_envios.findFirst({
-        where: { ID_ENVIO_CORREO: idEnvio, ID_COTIZACION_FK: idCotizacion },
-      });
-      if (!envio) throw new AppError(404, 'No se encontró el envío de correo solicitado.');
-      if (envio.ESTADO !== 'FALLIDO') {
-        throw new AppError(409, `Solo se pueden reintentar correos fallidos. Estado actual: ${envio.ESTADO}.`);
-      }
+      return fastify.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${idCotizacion} FOR UPDATE`;
+        const envio = await tx.correo_envios.findFirst({
+          where: { ID_ENVIO_CORREO: idEnvio, ID_COTIZACION_FK: idCotizacion,
+            MODULO: { in: ['cotizaciones', 'ordenes_trabajo'] } },
+        });
+        if (!envio) throw new AppError(404, 'El envío documental no existe.');
+        if (envio.ESTADO !== 'FALLIDO') throw new AppError(409, 'Solo se pueden reintentar los correos fallidos.');
 
-      const cotizacion = await fastify.prisma.cotizaciones.findUnique({
-        where: { ID_COTIZACION: idCotizacion },
-        select: { ID_COTIZACION: true, ID_CLIENTE_FK: true, CODIGO_COTIZACION: true, ESTADO: true, CREATED_AT: true, UPDATED_AT: true, clientes: { select: { CORREO: true } } },
-      });
-      if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
-      const contextData = { ...(envio.CONTEXTO as Record<string, unknown> | null) };
-      if (envio.TEMPLATE_TYPE === 'crear_cotizacion' &&
-          (cotizacion.ESTADO !== Estados.ENVIADA || contextData.numeroCotizacion !== cotizacion.CODIGO_COTIZACION)) {
-        throw new AppError(409, 'La cotización ya no admite aprobación mediante ese enlace. Consulte su versión vigente.');
-      }
-      if (correoNuevo && cotizacion.ID_CLIENTE_FK) {
-        const correoAnterior = cotizacion.clientes?.CORREO ?? null;
-        if (correoAnterior !== correoNuevo) {
-          await fastify.prisma.clientes.update({
-            where: { ID_CLIENTE: cotizacion.ID_CLIENTE_FK },
-            data: { CORREO: correoNuevo },
-          });
-          await registrarBitacora(fastify.prisma, {
-            action: 'ACTUALIZAR_CORREO_PARA_REENVIO',
-            tableName: 'clientes',
-            recordId: cotizacion.ID_CLIENTE_FK,
-            userId: idUsuario,
-            ip: request.ip,
-            details: { idCotizacion, correoAnterior, correoNuevo },
+        const cotizacion = await tx.cotizaciones.findUnique({
+          where: { ID_COTIZACION: idCotizacion },
+          select: { ID_COTIZACION: true, ID_CLIENTE_FK: true, CODIGO_COTIZACION: true, ESTADO: true, CREATED_AT: true, UPDATED_AT: true,
+            clientes: { select: { CORREO: true } } },
+        });
+        if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
+        const destinatario = correoNuevo ?? cotizacion.clientes?.CORREO ?? envio.DESTINATARIO;
+        if (!correoValido.safeParse(destinatario).success) {
+          throw new AppError(409, 'Ingrese una dirección válida para reintentar.');
+        }
+        const contextData: Record<string, string> = { ...(envio.CONTEXTO as Record<string, string> | null), emailDestino: destinatario };
+        if (envio.TEMPLATE_TYPE === 'crear_cotizacion') {
+          const fecha = fechaVencimientoCotizacion(await inicioVigenciaCotizacion(tx, cotizacion), await diasVigenciaCotizacion(tx));
+          const segundos = Math.ceil((fecha.getTime() - Date.now()) / 1000);
+          if (cotizacion.ESTADO !== Estados.ENVIADA || segundos <= 0 || !contextData.linkAprobacion ||
+              contextData.numeroCotizacion !== cotizacion.CODIGO_COTIZACION) {
+            throw new AppError(409, 'La cotización ya no admite aprobación mediante ese enlace. Consulte su estado vigente.');
+          }
+          const link = new URL(contextData.linkAprobacion);
+          link.searchParams.set('token', firmarTokenAprobacion(idCotizacion, segundos, cotizacion.CODIGO_COTIZACION));
+          contextData.linkAprobacion = link.toString();
+          contextData.fechaVencimiento = fecha.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' });
+        }
+
+        const idJob = nuevoIdColaCorreo();
+        const reservado = await tx.correo_envios.updateMany({
+          where: { ID_ENVIO_CORREO: idEnvio, ESTADO: 'FALLIDO' },
+          data: { ESTADO: 'PENDIENTE', DESTINATARIO: destinatario, CONTEXTO: contextData,
+            ID_JOB: idJob, ULTIMO_ERROR: null, SOLICITADO_POR: idUsuario ?? envio.SOLICITADO_POR, ENVIADO_AT: null },
+        });
+        if (!reservado.count) throw new AppError(409, 'Este correo ya fue tomado por otro reintento.');
+        if (correoNuevo && cotizacion.ID_CLIENTE_FK && cotizacion.clientes?.CORREO !== correoNuevo) {
+          await tx.clientes.update({ where: { ID_CLIENTE: cotizacion.ID_CLIENTE_FK }, data: { CORREO: correoNuevo } });
+          await registrarBitacora(tx, {
+            action: 'ACTUALIZAR_CORREO_PARA_REENVIO', tableName: 'clientes', recordId: cotizacion.ID_CLIENTE_FK,
+            userId: idUsuario, ip: request.ip, details: { idCotizacion, correoAnterior: cotizacion.clientes?.CORREO, correoNuevo },
           });
         }
-      }
-      const destinatario = correoNuevo ?? cotizacion.clientes?.CORREO ?? envio.DESTINATARIO;
-      if (!destinatario) throw new AppError(409, 'El cliente no tiene un correo configurado. Ingrese una dirección válida para reintentar.');
-
-      const minioLinks = Array.isArray(envio.MINIO_LINKS)
-        ? envio.MINIO_LINKS.filter((link): link is string => typeof link === 'string')
-        : [];
-      if (cotizacion.ESTADO === Estados.ENVIADA && typeof contextData.linkAprobacion === 'string') {
-        const fecha = fechaVencimientoCotizacion(await inicioVigenciaCotizacion(fastify.prisma, cotizacion),
-          await diasVigenciaCotizacion(fastify.prisma));
-        const segundos = Math.ceil((fecha.getTime() - Date.now()) / 1000);
-        if (segundos <= 0) {
-          throw new AppError(409, 'El plazo de aprobación venció. Actualiza y envía la cotización de nuevo.');
-        }
-        const link = new URL(contextData.linkAprobacion);
-        link.searchParams.set('token', firmarTokenAprobacion(idCotizacion, segundos, cotizacion.CODIGO_COTIZACION));
-        contextData.linkAprobacion = link.toString();
-        contextData.fechaVencimiento = fecha.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' });
-      }
-      const reservado = await fastify.prisma.correo_envios.updateMany({
-        where: { ID_ENVIO_CORREO: idEnvio, ID_COTIZACION_FK: idCotizacion, ESTADO: 'FALLIDO' },
-        data: {
-          ESTADO: 'PENDIENTE',
-          DESTINATARIO: destinatario,
-          ULTIMO_ERROR: null,
-          SOLICITADO_POR: idUsuario,
-          ENVIADO_AT: null,
-        },
+        await registrarBitacora(tx, {
+          action: 'REINTENTO_CORREO', tableName: 'correo_envios', recordId: idEnvio, userId: idUsuario, ip: request.ip,
+          details: { idCotizacion, destinatario, jobId: idJob, tipo: envio.TIPO },
+        });
+        return { ok: true as const, data: { idEnvio, idJob, destinatario } };
       });
-      if (reservado.count !== 1) throw new AppError(409, 'Este correo ya fue tomado por otro reintento. Actualice la vista.');
-
-      const jobData: EmailJobData = {
-        to: destinatario,
-        subject: envio.ASUNTO,
-        template_type: envio.TEMPLATE_TYPE as EmailJobData['template_type'],
-        context_data: contextData,
-        minio_links: minioLinks,
-        id_registro: envio.ID_REGISTRO,
-        id_cotizacion: idCotizacion,
-        id_envio_correo: idEnvio,
-        notificar_usuario_id: idUsuario ?? envio.SOLICITADO_POR,
-        modulo_origen: envio.MODULO,
-        tabla_origen: envio.MODULO,
-        tipo_entry: 'prod',
-      };
-
-      try {
-        const job = await getEmailQueue().add(envio.TEMPLATE_TYPE, jobData);
-        await fastify.prisma.correo_envios.update({
-          where: { ID_ENVIO_CORREO: idEnvio },
-          data: { ID_JOB: String(job.id) },
-        });
-        await registrarBitacora(fastify.prisma, {
-          action: 'REINTENTO_CORREO',
-          tableName: 'correo_envios',
-          recordId: idEnvio,
-          userId: idUsuario,
-          ip: request.ip,
-          details: { idCotizacion, destinatario, jobId: String(job.id), tipo: envio.TIPO },
-        });
-        return { ok: true as const, data: { idEnvio, idJob: String(job.id), destinatario } };
-      } catch (error) {
-        const motivo = error instanceof Error ? error.message : String(error);
-        await fastify.prisma.correo_envios.update({
-          where: { ID_ENVIO_CORREO: idEnvio },
-          data: { ESTADO: 'FALLIDO', ULTIMO_ERROR: motivo },
-        });
-        throw new AppError(503, `No se pudo programar el reenvío: ${motivo}`);
-      }
     }
   );
 
