@@ -13,6 +13,16 @@ export function datosSitioOT(sitio: 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC') {
   };
 }
 
+/** Una familia vigente tiene una maestra o una sola orden operativa. */
+export function ordenPrincipalVigente<T extends { ID_ORDEN_TRABAJO: number; ID_OT_PADRE_FK: number | null }>(
+  ordenes: readonly T[],
+): T | undefined {
+  if (ordenes.length === 1) return ordenes[0];
+  const padres = new Set(ordenes.map((orden) => orden.ID_OT_PADRE_FK));
+  const maestras = ordenes.filter((orden) => padres.has(orden.ID_ORDEN_TRABAJO));
+  return maestras.length === 1 ? maestras[0] : undefined;
+}
+
 /** Actualiza el resumen de la maestra con todas sus hijas vigentes. */
 export async function sincronizarOTMaestraDesdeRecepcion(tx: Tx, idMaestra: number, esNueva = false): Promise<boolean> {
   const maestra = await tx.ordenes_trabajo.findUnique({

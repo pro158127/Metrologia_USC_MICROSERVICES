@@ -1,5 +1,5 @@
 import { diasVigenciaCotizacion, inicioVigenciaCotizacion, fechaVencimientoCotizacion } from '../services/vigencia-cotizacion.service.js';
-import { datosSitioOT, verificarGruposOperativos } from '../services/recepcion-ot-sync.service.js';
+import { datosSitioOT, ordenPrincipalVigente, verificarGruposOperativos } from '../services/recepcion-ot-sync.service.js';
 import { esPdfSelladoVigente, esPdfGenerado, nombreArchivoDocumento, type TipoDocumentoGenerado } from '../services/documento-generado.service.js';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Estados, Prisma } from '@prisma/client';
@@ -1123,6 +1123,31 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         },
       });
 
+      const actualizacionAprobada = cotizacionActualizada.ESTADO === Estados.APROBADA;
+      let idOTParaCorreo: number | undefined;
+      if (actualizacionAprobada && regenerarCotizacionDoc) {
+        const ordenesVigentes = await tx.ordenes_trabajo.findMany({
+          where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true },
+          select: { ID_ORDEN_TRABAJO: true, ID_OT_PADRE_FK: true, CODIGO_OT: true, ID_CLIENTE_FK: true },
+        });
+        const principal = ordenPrincipalVigente(ordenesVigentes);
+        if (principal && principal.ID_CLIENTE_FK === cotizacionActualizada.ID_CLIENTE_FK) {
+          idOTParaCorreo = principal.ID_ORDEN_TRABAJO;
+          if (!otsParaRegenerar.some((orden) => orden.id === principal.ID_ORDEN_TRABAJO)) {
+            // El formato de OT incluye la referencia al código de la nueva versión de la cotización.
+            const codigo = await generarConsecutivo(tx, 'OT', principal.CODIGO_OT);
+            await tx.ordenes_trabajo.update({
+              where: { ID_ORDEN_TRABAJO: principal.ID_ORDEN_TRABAJO },
+              data: { CODIGO_OT: codigo },
+            });
+            otsParaRegenerar.push({ id: principal.ID_ORDEN_TRABAJO, codigo });
+          }
+        } else {
+          request.log.warn({ idCotizacion, idOT: principal?.ID_ORDEN_TRABAJO },
+            'Correo de actualización omitido: falta una OT principal vigente del cliente de la cotización');
+        }
+      }
+
       const trackingJobs: Record<string, string[]> = {};
 
       if (regenerarCotizacionDoc || primerEnvio) {
@@ -1130,7 +1155,8 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
           tipo_entry: 'prod',
           id_registro: cotizacionActualizada.ID_COTIZACION,
-          action: cotizacionActualizada.ESTADO === Estados.ENVIADA ? 'cot_create' : 'cot_update',
+          action: actualizacionAprobada ? undefined
+            : cotizacionActualizada.ESTADO === Estados.ENVIADA ? 'cot_create' : 'cot_update',
           codigo_actual: cotizacionActualizada.CODIGO_COTIZACION,
           tipo: 1,
           id_usuario: idUsuario,
@@ -1140,14 +1166,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         trackingJobs.cot = [quoteTracker.id];
       }
 
-      // 7.2. SOLO generamos el Excel de OT si realmente existe una OT vinculada
-      for (const otActualizada of otsParaRegenerar) {
+      // Los formatos de todas las OT modificadas se conservan para consulta interna.
+      const ordenesParaGenerar = new Map(otsParaRegenerar.map((orden) => [orden.id, orden]));
+      for (const otActualizada of ordenesParaGenerar.values()) {
         const ordeneo_tracke = await registrarGeneracionPendiente(tx, 'actualizacion_ordenes_ot', {
 
           tipo_entry: 'prod',
           id_registro: otActualizada.id,
           codigo_actual: otActualizada.codigo,
-          action: 'ot_actualizar',
+          action: !actualizacionAprobada || otActualizada.id === idOTParaCorreo ? 'ot_actualizar' : undefined,
           tipo: 2,
           id_usuario: idUsuario,
           id_cotizacion: cotizacionActualizada.ID_COTIZACION,
