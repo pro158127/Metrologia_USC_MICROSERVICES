@@ -132,6 +132,7 @@ export type CotizacionVista = {
   } | null;
   historialEstados: HistorialEstadoCotizacionModel[];
   historial_cambio : HistorialCambioItem[],
+  seguimientosComerciales?: EventoSeguimientoCotizacion[];
 };
 
 // ============================================================
@@ -262,11 +263,22 @@ export interface HistorialCambioItem {
   updatedAt: string | Date;
 }
 
+export interface EventoSeguimientoCotizacion {
+  id: number;
+  tipo: string;
+  descripcion: string;
+  fecha: string | Date;
+  resultado: string | null;
+  origen: string;
+  usuario: string | null;
+}
+
 // Props del componente Modal
 export interface ModalHistorialCambiosProps {
   isOpen: boolean;
   onClose: () => void;
   codigo_cotizacion: string;
   historial: HistorialCambioItem[];
+  eventosComerciales?: EventoSeguimientoCotizacion[];
   isLoading?: boolean;
 }

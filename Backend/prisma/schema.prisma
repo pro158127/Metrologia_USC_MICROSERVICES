@@ -382,6 +382,7 @@ INTERNO_USC
 }
 
 model recepciones_equipo {
+  /// Active receipt uniqueness by linked OT/site or pending quote/site is enforced by the SQL migration uq_recepcion_vigente_*.
   ID_RECEPCION              Int                         @id @default(autoincrement())
   CODIGO_RECEPCION          String                      @unique
   ID_COTIZACION_FK          Int?

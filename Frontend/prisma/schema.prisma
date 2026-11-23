@@ -427,6 +427,7 @@ model OrdenTrabajoDetalle {
   @@map("orden_trabajo_detalles")
 }
 
+/// Active receipt uniqueness by linked OT/site or pending quote/site is enforced by the SQL migration uq_recepcion_vigente_*.
 model RecepcionEquipo {
   idRecepcion          Int                      @id @default(autoincrement()) @map("ID_RECEPCION")
   codigo               String                   @unique @map("CODIGO_RECEPCION")

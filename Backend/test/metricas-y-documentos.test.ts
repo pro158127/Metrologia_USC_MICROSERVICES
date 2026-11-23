@@ -21,6 +21,11 @@ test('el perfil enlaza solo los códigos vigentes y deja los documentos anterior
   app.decorate('authenticate', async () => {});
   app.decorate('prisma', {
     cotizaciones: { findUnique: async () => ({ CODIGO_COTIZACION: 'COT-26-0001C' }) },
+    seguimientos_comerciales: { findMany: async () => [{
+      ID_SEGUIMIENTO: 41, TIPO: 'LLAMADA', DESCRIPCION: 'Aprobación automática',
+      FECHA_GESTION: fecha, RESULTADO: 'APROBADA', ORIGEN: 'SISTEMA',
+      usuarios: { NOMBRE_COMPLETO: 'Sistema' },
+    }] },
     ordenes_trabajo: { findMany: async () => [ot(2, 'OT-26-0002B', false, 'LABORATORIO'), ot(3, 'OT-26-0002C', true, 'LABORATORIO')] },
     recepciones_equipo: { findMany: async () => [{
       ID_RECEPCION: 5, CODIGO_RECEPCION: 'REC-26-0005B', VIGENTE: true, activacion: true,
@@ -65,6 +70,11 @@ test('el perfil enlaza solo los códigos vigentes y deja los documentos anterior
     assert.deepEqual(data.pendientes.certificados, ['CERT-12']);
     assert.deepEqual(data.categorias.certificados.map((cert: { nombre: string }) => cert.nombre), ['CERT-13.pdf']);
     assert.equal(data.archivados.certificados[0].nombre, 'CERT-11.pdf');
+    assert.deepEqual(data.trazabilidadComercial.map((evento: { id: number; origen: string }) => [evento.id, evento.origen]), [[41, 'SISTEMA']]);
+
+    const timeline = await app.inject('/api/v1/cotizaciones/1/trazabilidad-comercial');
+    assert.equal(timeline.statusCode, 200, timeline.body);
+    assert.equal(timeline.json().data[0].usuario, 'Sistema');
   } finally {
     await app.close();
   }

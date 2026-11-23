@@ -12,6 +12,7 @@ import {
   cambiarEstadoCotizacion,
   obtenerEnviosCorreoCotizacion,
   reintentarEnvioCorreoCotizacion,
+  obtenerTrazabilidadComercialCotizacion,
   type EnvioCorreoCotizacion,
   
 } from "@/app/action_module/cotizacion";
@@ -639,6 +640,7 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
   onClose,
   codigo_cotizacion,
   historial,
+  eventosComerciales = [],
   isLoading = false,
 }) => {
   if (!isOpen) return null;
@@ -720,6 +722,26 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
           </table>
         </div>
 
+        <section className="mt-4 rounded-xl border border-slate-200 p-3">
+          <h4 className="text-xs font-bold uppercase tracking-wide text-slate-600">Trazabilidad comercial y eventos automáticos</h4>
+          {eventosComerciales.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-400">No hay gestiones ni eventos registrados.</p>
+          ) : (
+            <ul className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+              {eventosComerciales.map((evento) => (
+                <li key={evento.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                  <div className="flex flex-wrap justify-between gap-2 text-slate-500">
+                    <span className="font-semibold">{evento.tipo} · {evento.origen === "SISTEMA" ? "Automático" : "Manual"}</span>
+                    <time>{new Date(evento.fecha).toLocaleString("es-CO")}</time>
+                  </div>
+                  <p className="mt-1 text-slate-700">{evento.descripcion}</p>
+                  {evento.resultado && <p className="mt-1 text-slate-500">Resultado: {evento.resultado}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
         {/* Pie del Modal */}
         <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-4">
           <span className="text-xs text-slate-400 font-mono">
@@ -756,6 +778,7 @@ export default function Cotizaciones() {
     })),
     historialEstados: cotizacion.historialEstados ?? [],
     historial_cambio: cotizacion.Historiacambios ?? [],
+    seguimientosComerciales: cotizacion.seguimientosComerciales ?? [],
   })), [cotizaciones]);
   const usuarios = useDbTable("usuarios");
   const tarifasStore = useDbTable("tarifas");
@@ -777,7 +800,20 @@ export default function Cotizaciones() {
   const [viaticos, setViaticos] = useState<number>(0);
   const [idCotizacionAbierta, setIdCotizacionAbierta] = useState<number | null>(null);
   const [historialAbierto, setHistorialAbierto] = useState(false);
+  const [eventosComerciales, setEventosComerciales] = useState<CotizacionVista["seguimientosComerciales"]>([]);
+  const [cargandoEventosComerciales, setCargandoEventosComerciales] = useState(false);
   const selectedQuotation = cotizacionesStore.find((cotizacion) => cotizacion.idCotizacion === idCotizacionAbierta) ?? null;
+  const selectedQuotationId = selectedQuotation?.idCotizacion;
+  useEffect(() => {
+    if (!historialAbierto || selectedQuotationId == null) return;
+    let vigente = true;
+    const timer = window.setTimeout(() => { if (vigente) setCargandoEventosComerciales(true); }, 0);
+    obtenerTrazabilidadComercialCotizacion(selectedQuotationId)
+      .then((eventos) => { if (vigente) setEventosComerciales(eventos); })
+      .catch(() => { if (vigente) setEventosComerciales([]); })
+      .finally(() => { if (vigente) setCargandoEventosComerciales(false); });
+    return () => { vigente = false; window.clearTimeout(timer); };
+  }, [historialAbierto, selectedQuotationId]);
   const idCotizacionCorreo = useRef<number | null>(null);
   const solicitudCorreo = useRef(0);
   const [codigoBorrador, setCodigoBorrador] = useState<string | null>(null);
@@ -1366,6 +1402,8 @@ const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
           historial={selectedQuotation.historial_cambio.filter(
             (cambio) => cambio.idCotizacion === selectedQuotation.idCotizacion,
           )}
+          eventosComerciales={eventosComerciales}
+          isLoading={cargandoEventosComerciales}
           isOpen={historialAbierto}
           onClose={() => setHistorialAbierto(false)}
         />

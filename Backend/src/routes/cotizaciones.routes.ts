@@ -42,6 +42,7 @@ const transicionesValidas: Record<Estados, Estados[]> = {
 };
 import { correoValido, nuevoIdColaCorreo } from '../services/email-delivery.service.js';
 import { registrarGeneracionPendiente } from '../services/generacion-pendiente.service.js';
+import { validarClienteActivoParaOperacion } from '../services/cliente-operacion.service.js';
 
 
 async function validarCotizacionParaEnvio(
@@ -121,6 +122,15 @@ const documentoCertificadoItemSchema = z.object({
   versiones: z.array(documentoVersionItemSchema),
   trazabilidad: certificadoTrazaSchema,
 });
+const eventoComercialCotizacionSchema = z.object({
+  id: z.number(),
+  tipo: z.string(),
+  descripcion: z.string(),
+  fecha: z.coerce.date(),
+  resultado: z.string().nullable(),
+  origen: z.string(),
+  usuario: z.string().nullable(),
+});
 const respuestaDocumentosCotizacionSchema = z.object({
   ok: z.literal(true),
   data: z.object({
@@ -129,6 +139,7 @@ const respuestaDocumentosCotizacionSchema = z.object({
     archivados: z.object({ cotizacion: z.array(documentoItemSchema), ordenTrabajo: z.array(documentoItemSchema),
       recepcion: z.array(documentoItemSchema), certificados: z.array(documentoCertificadoItemSchema) }),
     pendientes: z.object({ cotizacion: z.array(z.string()), ordenTrabajo: z.array(z.string()), recepcion: z.array(z.string()), certificados: z.array(z.string()) }),
+    trazabilidadComercial: z.array(eventoComercialCotizacionSchema),
     categorias: z.object({
       recepcion: z.array(documentoItemSchema),
       cotizacion: z.array(documentoItemSchema),
@@ -288,6 +299,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       let id_jobs: string | undefined; 
       
       const resultado = await fastify.prisma.$transaction(async (tx) => {
+        await validarClienteActivoParaOperacion(tx, request.body.idCliente);
         let subtotalDetalles = new Prisma.Decimal(0);
         const detallesMapeados = request.body.detalles.map((d) => {
           const valorTotal = calcularValorDetalle(d.cantidad, d.valorUnitario);
@@ -1199,6 +1211,9 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${idCotizacion} FOR UPDATE`;
         const actual = await tx.cotizaciones.findUnique({ where: { ID_COTIZACION: idCotizacion } });
         if (!actual) throw new AppError(404, 'Cotización no encontrada');
+        if (nuevoEstado === Estados.APROBADA || nuevoEstado === Estados.ENVIADA) {
+          await validarClienteActivoParaOperacion(tx, actual.ID_CLIENTE_FK);
+        }
 
         // 1.1 Validar la transición permitida (FSM) — mismo criterio que el PUT.
         const permitidos = transicionesValidas[actual.ESTADO] || [];
@@ -1466,6 +1481,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         if (fechaVencimientoCotizacion(inicio, dias).getTime() <= Date.now()) {
           return { aprobadaAhora: false as const, vencida: true, cotizacion: null, creador: null };
         }
+        await validarClienteActivoParaOperacion(tx, vigente.ID_CLIENTE_FK);
 
         // Reclamo condicional para que dos clics simultáneos en el link no
         // generen dos juegos de OT/recepciones.
@@ -1717,6 +1733,30 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
   //   principal de documentos) y se lista el ciclo de vida completo + trazabilidad.
   // ==========================================================================
   app.get(
+    '/api/v1/cotizaciones/:id/trazabilidad-comercial',
+    { preHandler: [fastify.authenticate], schema: { params: idParamSchema } },
+    async (request) => {
+      const cotizacion = await fastify.prisma.cotizaciones.findUnique({
+        where: { ID_COTIZACION: request.params.id }, select: { ID_COTIZACION: true },
+      });
+      if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
+      const eventos = await fastify.prisma.seguimientos_comerciales.findMany({
+        where: { ID_COTIZACION_FK: request.params.id, ELIMINADO_AT: null },
+        select: {
+          ID_SEGUIMIENTO: true, TIPO: true, DESCRIPCION: true, FECHA_GESTION: true,
+          RESULTADO: true, ORIGEN: true, usuarios: { select: { NOMBRE_COMPLETO: true } },
+        },
+        orderBy: [{ FECHA_GESTION: 'desc' }, { ID_SEGUIMIENTO: 'desc' }],
+      });
+      return { ok: true as const, data: eventos.map((evento) => ({
+        id: evento.ID_SEGUIMIENTO, tipo: evento.TIPO, descripcion: evento.DESCRIPCION,
+        fecha: evento.FECHA_GESTION, resultado: evento.RESULTADO, origen: evento.ORIGEN,
+        usuario: evento.usuarios?.NOMBRE_COMPLETO ?? null,
+      })) };
+    },
+  );
+
+  app.get(
     '/api/v1/cotizaciones/:id/documentos',
     {
       preHandler: [fastify.authenticate],
@@ -1732,6 +1772,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         where: { ID_COTIZACION: idCotizacion },
       });
       if (!cotizacion) throw new AppError(404, 'Cotización no encontrada');
+
+      const trazabilidadComercial = await fastify.prisma.seguimientos_comerciales.findMany({
+        where: { ID_COTIZACION_FK: idCotizacion, ELIMINADO_AT: null },
+        select: {
+          ID_SEGUIMIENTO: true, TIPO: true, DESCRIPCION: true, FECHA_GESTION: true,
+          RESULTADO: true, ORIGEN: true, usuarios: { select: { NOMBRE_COMPLETO: true } },
+        },
+        orderBy: [{ FECHA_GESTION: 'desc' }, { ID_SEGUIMIENTO: 'desc' }],
+      });
 
       const ordenes = await fastify.prisma.ordenes_trabajo.findMany({
         where: { ID_COTIZACION_FK: idCotizacion },
@@ -2047,6 +2096,15 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           categorias,
           archivados,
           pendientes,
+          trazabilidadComercial: trazabilidadComercial.map((evento) => ({
+            id: evento.ID_SEGUIMIENTO,
+            tipo: evento.TIPO,
+            descripcion: evento.DESCRIPCION,
+            fecha: evento.FECHA_GESTION,
+            resultado: evento.RESULTADO,
+            origen: evento.ORIGEN,
+            usuario: evento.usuarios?.NOMBRE_COMPLETO ?? null,
+          })),
         },
       };
     }

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolverPlantillaOperativa } from '../services/plantillas-readiness.service.js';
 import { FastifyInstance } from 'fastify';
+import { Estados, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -28,6 +29,8 @@ import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
 import { siguienteVersionOT } from '../services/versionado-ot.service.js';
+import { cotizacionAdmiteImportacionVinculada } from '../services/importacion-cotizacion.service.js';
+import { validarClienteActivoParaOperacion } from '../services/cliente-operacion.service.js';
 
 function parsearFechaHoraCalibracion(fecha?: string | null, hora?: string | null): Date | null {
   if (!fecha) return null;
@@ -44,6 +47,61 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
   fastify.setSerializerCompiler(serializerCompiler);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.get(
+    '/api/v1/ordenes/cotizaciones-importables',
+    { preHandler: [fastify.authenticate], schema: { querystring: z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      limit: z.coerce.number().int().min(1).max(100).default(20),
+      busqueda: z.string().trim().max(100).optional(),
+    }) } },
+    async (request) => {
+      assertPermission(request, 'ordenesOt', 'acceso');
+      const { page, limit, busqueda } = request.query;
+      const where: Prisma.cotizacionesWhereInput = {
+        ESTADO: Estados.APROBADA,
+        clientes: { status: 'ACTIVO' },
+        ...(busqueda ? { OR: [
+          { CODIGO_COTIZACION: { contains: busqueda, mode: 'insensitive' as const } },
+          { clientes: { RAZON_SOCIAL: { contains: busqueda, mode: 'insensitive' as const } } },
+        ] } : {}),
+      };
+      const [total, cotizaciones] = await fastify.prisma.$transaction([
+        fastify.prisma.cotizaciones.count({ where }),
+        fastify.prisma.cotizaciones.findMany({
+          where,
+          orderBy: { CREATED_AT: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+          select: {
+            ID_COTIZACION: true, CODIGO_COTIZACION: true, CREATED_AT: true, ESTADO: true,
+            clientes: { select: { RAZON_SOCIAL: true } },
+            cotizacion_detalles: { where: { activacion: true }, select: { CANTIDAD: true } },
+            ordenes_trabajo: {
+              where: { VIGENTE: true },
+              select: { ID_ORDEN_TRABAJO: true, CODIGO_OT: true, VERSION: true, estado: true },
+              orderBy: [{ VERSION: 'desc' }, { ID_ORDEN_TRABAJO: 'desc' }],
+            },
+          },
+        }),
+      ]);
+      return {
+        ok: true as const,
+        data: cotizaciones.map((cotizacion) => ({
+          idCotizacion: cotizacion.ID_COTIZACION,
+          codigo: cotizacion.CODIGO_COTIZACION,
+          cliente: cotizacion.clientes?.RAZON_SOCIAL ?? 'Cliente sin razón social',
+          createdAt: cotizacion.CREATED_AT,
+          estado: cotizacion.ESTADO,
+          equiposContados: cotizacion.cotizacion_detalles.reduce((sum, detalle) => sum + detalle.CANTIDAD, 0),
+          otsExistentes: cotizacion.ordenes_trabajo.map((ot) => ({
+            id: ot.ID_ORDEN_TRABAJO, codigo: ot.CODIGO_OT, version: ot.VERSION, estado: ot.estado,
+          })),
+        })),
+        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      };
+    },
+  );
 
   app.post(
     '/api/v1/ordenes/importar-ote',
@@ -67,12 +125,13 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
       if (idCotizacion !== undefined) {
         const cotizacion = await fastify.prisma.cotizaciones.findUnique({
           where: { ID_COTIZACION: idCotizacion },
-          select: { ID_COTIZACION: true, ESTADO: true },
+          select: { ID_COTIZACION: true, ESTADO: true, ID_CLIENTE_FK: true },
         });
         if (!cotizacion) throw new AppError(404, 'La cotización seleccionada no existe.');
-        if (!['APROBADA', 'ENVIADA'].includes(cotizacion.ESTADO)) {
-          throw new AppError(409, `No se puede importar una OT para una cotización en estado ${cotizacion.ESTADO}.`);
+        if (!cotizacionAdmiteImportacionVinculada(cotizacion.ESTADO)) {
+          throw new AppError(409, `La importación vinculada requiere una cotización APROBADA. Estado actual: ${cotizacion.ESTADO}.`);
         }
+        await validarClienteActivoParaOperacion(fastify.prisma, cotizacion.ID_CLIENTE_FK);
       }
 
       try {

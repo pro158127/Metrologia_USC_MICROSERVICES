@@ -6,6 +6,7 @@ import { CotizacionModel } from "@/tipos/entidades";
 import type {
   CotizacionConDetalles,
   CrearCotizacionInput,
+  EventoSeguimientoCotizacion,
   ObtenerCotizacionesParams,
 } from "@/tipos/cotizacion";
 import type { ActionResponse } from "@/tipos/comunes";
@@ -21,6 +22,15 @@ export interface EnvioCorreoCotizacion {
   intentos: number;
   creadoAt: string | Date;
   enviadoAt: string | Date | null;
+}
+
+export async function obtenerTrazabilidadComercialCotizacion(idCotizacion: number): Promise<EventoSeguimientoCotizacion[]> {
+  const session = await auth();
+  const respuesta = await fastifyRequest<{ ok: true; data: EventoSeguimientoCotizacion[] }>(
+    session,
+    `/api/v1/cotizaciones/${idCotizacion}/trazabilidad-comercial`,
+  );
+  return respuesta.data;
 }
 
 export async function obtenerEnviosCorreoCotizacion(

@@ -136,6 +136,7 @@ export type ReportesJobData = {
   tipo?: 'consolidado';
   formato: 'pdf' | 'excel';
   usuarioId: number;
+  snapshotKey?: string;
   filtros: {
     fechaInicio?: string;
     fechaFin?: string;
@@ -147,6 +148,7 @@ export type ReportesJobData = {
   tipo: 'trazabilidad_factura';
   numeroFactura: string;
   usuarioId: number;
+  snapshotKey?: string;
 };
 
 export function getReportesQueue(): Queue {

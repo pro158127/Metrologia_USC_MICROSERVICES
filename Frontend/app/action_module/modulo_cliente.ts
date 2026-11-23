@@ -369,9 +369,20 @@ export interface DocumentoCertificadoItem {
   trazabilidad: CertificadoTrazabilidad;
 }
 
+export interface EventoTrazabilidadComercial {
+  id: number;
+  tipo: string;
+  descripcion: string;
+  fecha: string;
+  resultado: string | null;
+  origen: string;
+  usuario: string | null;
+}
+
 export interface DocumentosCotizacionCategorias {
   idCotizacion: number;
   codigo: string;
+  trazabilidadComercial: EventoTrazabilidadComercial[];
   archivados?: { cotizacion: DocumentoItem[]; ordenTrabajo: DocumentoItem[]; recepcion: DocumentoItem[]; certificados?: DocumentoCertificadoItem[] };
   pendientes?: { cotizacion: string[]; ordenTrabajo: string[]; recepcion: string[]; certificados?: string[] };
   categorias: {

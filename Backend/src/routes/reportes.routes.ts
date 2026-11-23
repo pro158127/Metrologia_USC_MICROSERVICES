@@ -1,7 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
-import { obtenerDatosReporte } from '../services/reportes.service.js';
+import { obtenerDatosReporte, obtenerReporteAuditoriaFactura } from '../services/reportes.service.js';
 import { getReportesQueue } from '../lib/queue/queue.js';
+import { deleteObject, uploadBuffer } from '../lib/minioClient.js';
+import { randomUUID } from 'node:crypto';
 import { AppError } from '../lib/errors.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { getObjectStream } from '../lib/minioClient.js';
@@ -52,13 +54,23 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       assertPermission(request, 'reportes_y_consolidados', 'exportar_base_de_datos');
+      const datos = await fastify.prisma.$transaction(
+        (tx) => obtenerDatosReporte(tx, request.body ?? {}),
+        { isolationLevel: 'RepeatableRead' },
+      );
+      const snapshotKey = `reportes/snapshots/${randomUUID()}.json`;
+      await uploadBuffer(snapshotKey, Buffer.from(JSON.stringify({ generatedAt: new Date().toISOString(), data: datos })), 'application/json');
       const queue = getReportesQueue();
-      const job = await queue.add('exportar-reporte-pdf', {
-        tipo: 'consolidado',
-        formato: 'pdf',
-        filtros: request.body ?? {},
-        usuarioId: Number(request.user?.sub ?? 0),
-      });
+      let job;
+      try {
+        job = await queue.add('exportar-reporte-pdf', {
+          tipo: 'consolidado', formato: 'pdf', filtros: request.body ?? {}, snapshotKey,
+          usuarioId: Number(request.user?.sub ?? 0),
+        });
+      } catch (error) {
+        await deleteObject(snapshotKey).catch(() => undefined);
+        throw error;
+      }
       return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
     }
   );
@@ -74,13 +86,23 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
     },
     async (request, reply) => {
       assertPermission(request, 'reportes_y_consolidados', 'exportar_base_de_datos');
+      const datos = await fastify.prisma.$transaction(
+        (tx) => obtenerDatosReporte(tx, request.body ?? {}),
+        { isolationLevel: 'RepeatableRead' },
+      );
+      const snapshotKey = `reportes/snapshots/${randomUUID()}.json`;
+      await uploadBuffer(snapshotKey, Buffer.from(JSON.stringify({ generatedAt: new Date().toISOString(), data: datos })), 'application/json');
       const queue = getReportesQueue();
-      const job = await queue.add('exportar-reporte-excel', {
-        tipo: 'consolidado',
-        formato: 'excel',
-        filtros: request.body ?? {},
-        usuarioId: Number(request.user?.sub ?? 0),
-      });
+      let job;
+      try {
+        job = await queue.add('exportar-reporte-excel', {
+          tipo: 'consolidado', formato: 'excel', filtros: request.body ?? {}, snapshotKey,
+          usuarioId: Number(request.user?.sub ?? 0),
+        });
+      } catch (error) {
+        await deleteObject(snapshotKey).catch(() => undefined);
+        throw error;
+      }
       return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
     }
   );
@@ -103,13 +125,25 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       if (!['Director Técnico', 'Coordinadora'].includes(usuario?.roles.NOMBRE_ROL ?? '')) {
         throw new AppError(403, 'El reporte de auditoría está disponible solo para Director Técnico y Coordinadora.');
       }
-      const queue = getReportesQueue();
       const numeroFactura = request.body.numeroFactura.trim();
-      const job = await queue.add('reporte-trazabilidad-factura', {
-        tipo: 'trazabilidad_factura',
-        numeroFactura,
-        usuarioId: Number(request.user?.sub ?? 0),
-      });
+      const datos = await fastify.prisma.$transaction(
+        (tx) => obtenerReporteAuditoriaFactura(tx, numeroFactura),
+        { isolationLevel: 'RepeatableRead' },
+      );
+      if (!datos) throw new AppError(404, 'No existe una factura con el número indicado.');
+      const snapshotKey = `reportes/snapshots/${randomUUID()}.json`;
+      await uploadBuffer(snapshotKey, Buffer.from(JSON.stringify({ generatedAt: new Date().toISOString(), data: datos })), 'application/json');
+      const queue = getReportesQueue();
+      let job;
+      try {
+        job = await queue.add('reporte-trazabilidad-factura', {
+          tipo: 'trazabilidad_factura', numeroFactura, snapshotKey,
+          usuarioId: Number(request.user?.sub ?? 0),
+        });
+      } catch (error) {
+        await deleteObject(snapshotKey).catch(() => undefined);
+        throw error;
+      }
       return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
     }
   );

@@ -15,6 +15,7 @@ import {
   validarInstrumentoSinCertificado,
 } from '../services/ot-edit-lock.service.js';
 import { registrarGeneracionPendiente } from '../services/generacion-pendiente.service.js';
+import { validarClienteActivoParaOperacion } from '../services/cliente-operacion.service.js';
 import { verificarPlantillasOperativas } from '../services/plantillas-readiness.service.js';
 import { calcularEstadoRecepcion } from '../services/recepcion-entrega.service.js';
 import { datosSitioOT, sincronizarOTMaestraDesdeRecepcion } from '../services/recepcion-ot-sync.service.js';
@@ -457,6 +458,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         const clienteCotizacion = clienteSeleccionado ?? (cotizacion.ID_CLIENTE_FK != null
           ? await tx.clientes.findUnique({ where: { ID_CLIENTE: cotizacion.ID_CLIENTE_FK }, select: datosClienteRecepcion })
           : null);
+        await validarClienteActivoParaOperacion(tx, cotizacion.ID_CLIENTE_FK);
         if (codigoCotizacion && cotizacion.CODIGO_COTIZACION !== codigoCotizacion) {
           throw new AppError(409, 'La cotización cambió mientras se abría la recepción. Usa el consecutivo vigente.');
         }

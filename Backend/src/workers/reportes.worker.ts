@@ -17,7 +17,8 @@ import {
   generarAuditoriaFacturaPdf,
   generarAuditoriaFacturaExcel,
 } from '../services/reportes.service.js';
-import { uploadBuffer } from '../lib/minioClient.js';
+import { deleteObject, getObjectBuffer, uploadBuffer } from '../lib/minioClient.js';
+import type { DatosReporte, ReporteAuditoriaFactura } from '../services/reportes.service.js';
 
 const prisma = new PrismaClient();
 
@@ -40,7 +41,9 @@ export const reportesWorker = new Worker<ReportesJobData>(
       if (job.data.tipo === 'trazabilidad_factura') {
         etapa = 'consultar_factura';
         const consultaAuditoriaStartedAt = Date.now();
-        const datosAuditoria = await obtenerReporteAuditoriaFactura(prisma, job.data.numeroFactura);
+        const datosAuditoria = job.data.snapshotKey
+          ? (JSON.parse((await getObjectBuffer(job.data.snapshotKey)).toString('utf8')) as { data: ReporteAuditoriaFactura }).data
+          : await obtenerReporteAuditoriaFactura(prisma, job.data.numeroFactura);
         if (!datosAuditoria) throw new Error('No existe una factura con el número indicado.');
         log('trazabilidad_lista', {
           duracionMs: Date.now() - consultaAuditoriaStartedAt,
@@ -70,6 +73,11 @@ export const reportesWorker = new Worker<ReportesJobData>(
           uploadBuffer(pdfKey, pdf, 'application/pdf', { originalName: pdfFilename }),
           uploadBuffer(excelKey, excel, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { originalName: excelFilename }),
         ]);
+        if (job.data.snapshotKey) {
+          await deleteObject(job.data.snapshotKey).catch((error) => log('snapshot_no_eliminado', {
+            snapshotKey: job.data.snapshotKey, error: error instanceof Error ? error.message : String(error),
+          }));
+        }
         log('auditoria_subida', {
           numeroFactura: datosAuditoria.numeroFactura,
           duracionTotalMs: Date.now() - jobStartedAt,
@@ -96,7 +104,9 @@ export const reportesWorker = new Worker<ReportesJobData>(
       }
 
       const consultaStartedAt = Date.now();
-      const datos = await obtenerDatosReporte(prisma, filtros);
+      const datos = job.data.snapshotKey
+        ? (JSON.parse((await getObjectBuffer(job.data.snapshotKey)).toString('utf8')) as { data: DatosReporte }).data
+        : await obtenerDatosReporte(prisma, filtros);
       log('datos_listos', {
         duracionMs: Date.now() - consultaStartedAt,
         certificados: datos.certificados.length,
@@ -128,6 +138,11 @@ export const reportesWorker = new Worker<ReportesJobData>(
       const key = `reportes/reporte_${Date.now()}.${ext}`;
       const subidaStartedAt = Date.now();
       await uploadBuffer(key, buffer, mime, { originalName: `reporte.${ext}` });
+      if (job.data.snapshotKey) {
+        await deleteObject(job.data.snapshotKey).catch((error) => log('snapshot_no_eliminado', {
+          snapshotKey: job.data.snapshotKey, error: error instanceof Error ? error.message : String(error),
+        }));
+      }
       log('archivo_subido', {
         duracionMs: Date.now() - subidaStartedAt,
         bytes: buffer.byteLength,

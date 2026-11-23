@@ -23,6 +23,8 @@ import { registrarGeneracionPendiente, type SolicitudGeneracion } from '../servi
 import { normalizarServicioCotizado } from '../services/cotizacion-sync.service.js';
 import { sincronizarOTMaestraDesdeRecepcion } from '../services/recepcion-ot-sync.service.js';
 import { randomUUID } from 'node:crypto';
+import { cotizacionAdmiteImportacionVinculada } from '../services/importacion-cotizacion.service.js';
+import { validarClienteActivoParaOperacion } from '../services/cliente-operacion.service.js';
 
 const prisma = new PrismaClient();
 
@@ -872,6 +874,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
 
       const cliente = await tx.clientes.findFirst({
         where: {
+          status: 'ACTIVO',
           NIT: {
             equals: nitLimpio,
             mode: 'insensitive',
@@ -1095,21 +1098,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         if (!cotizacionExistente) {
           throw new Error(`La cotización '${idCotizacionFinal}' no existe.`);
         }
+        await validarClienteActivoParaOperacion(tx, cotizacionExistente.ID_CLIENTE_FK);
 
-        if (!['APROBADA', 'ENVIADA'].includes(cotizacionExistente.ESTADO)) {
+        if (!cotizacionAdmiteImportacionVinculada(cotizacionExistente.ESTADO)) {
           throw new UnrecoverableError(
-            `No se puede importar una OT para la cotización ${cotizacionExistente.CODIGO_COTIZACION} en estado ${cotizacionExistente.ESTADO}.`,
+            `La importación vinculada requiere una cotización APROBADA. La cotización ${cotizacionExistente.CODIGO_COTIZACION} está en estado ${cotizacionExistente.ESTADO}.`,
           );
-        }
-
-        if (cotizacionExistente.ESTADO === 'BORRADOR' || cotizacionExistente.ESTADO === 'ENVIADA') {
-          const recepcionPendiente = await tx.recepciones_equipo.findFirst({
-            where: { ID_COTIZACION_FK: idCotizacionFinal, ID_ORDEN_TRABAJO_FK: null, VIGENTE: true, activacion: true },
-            select: { ID_RECEPCION: true },
-          });
-          if (recepcionPendiente) {
-            throw new UnrecoverableError('La cotización tiene una recepción pendiente de aprobación. Aprueba la cotización antes de importar su OT.');
-          }
         }
 
         // 1. NIT del cliente.

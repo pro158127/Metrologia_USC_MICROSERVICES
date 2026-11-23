@@ -222,6 +222,7 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
   const [showFiles, setShowFiles] = useState(false);
   const [docs, setDocs] = useState<DocumentosCotizacionCategorias["categorias"] | null>(null);
   const [pendientes, setPendientes] = useState<DocumentosCotizacionCategorias["pendientes"]>();
+  const [trazabilidadComercial, setTrazabilidadComercial] = useState<DocumentosCotizacionCategorias["trazabilidadComercial"]>([]);
   const [archivados, setArchivados] = useState<DocumentosCotizacionCategorias["archivados"]>();
   const [consultaCargada, setConsultaCargada] = useState<string>();
   const [openFolder, setOpenFolder] = useState<CategoriaKey | null>(null);
@@ -255,10 +256,12 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
           setDocs(data.categorias);
           setArchivados(data.archivados);
           setPendientes(data.pendientes);
+          setTrazabilidadComercial(data.trazabilidadComercial ?? []);
         } else if (activo) {
           setDocs(null);
           setArchivados(undefined);
           setPendientes(undefined);
+          setTrazabilidadComercial([]);
         }
       } finally {
         if (activo) setConsultaCargada(claveConsulta);
@@ -346,6 +349,27 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
             <div className="text-[11px] text-slate-400 py-4 text-center">Cargando documentos...</div>
           ) : (
             <div className="flex flex-col gap-1">
+              <details className="rounded-lg border border-slate-100 bg-white p-2">
+                <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                  Trazabilidad comercial ({trazabilidadComercial.length})
+                </summary>
+                {trazabilidadComercial.length === 0 ? (
+                  <p className="px-1 py-2 text-[11px] text-slate-400">No hay gestiones ni eventos registrados.</p>
+                ) : (
+                  <ul className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                    {trazabilidadComercial.map((evento) => (
+                      <li key={evento.id} className="rounded-md bg-slate-50 px-2 py-1.5 text-[11px]">
+                        <div className="flex flex-wrap justify-between gap-2 text-slate-500">
+                          <span className="font-semibold">{evento.tipo} · {evento.origen === "SISTEMA" ? "Automático" : "Manual"}</span>
+                          <time>{new Date(evento.fecha).toLocaleString("es-CO")}</time>
+                        </div>
+                        <p className="mt-1 text-slate-700">{evento.descripcion}</p>
+                        {evento.resultado && <p className="mt-1 text-slate-500">Resultado: {evento.resultado}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </details>
               {CARPETA_FOLDERS.map((f) => {
                 const items = docs ? docs[f.key] : [];
                 const clave = f.key;
@@ -598,19 +622,18 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
   const [trazabilidad, setTrazabilidad] = useState<TrazabilidadCliente | null>(null);
   const [cargandoTrazabilidad, setCargandoTrazabilidad] = useState(true);
-  useModuleSplashReady("perfil_cliente", !cargandoTrazabilidad);
+  useModuleSplashReady("perfil_cliente", (id_cliente === null || id_cliente === undefined) || !cargandoTrazabilidad);
   const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
   const revisionCotizaciones = useRevisionTablas("cotizaciones", "documentos", "version_documentos");
 
   useEffect(() => {
     if (id_cliente === null || id_cliente === undefined) {
-      setCargandoTrazabilidad(false);
       return;
     }
 
     let activo = true;
-    setCargandoTrazabilidad(true);
     const timer = window.setTimeout(async () => {
+      if (activo) setCargandoTrazabilidad(true);
       try {
         const resultado = await obtenerTrazabilidadCliente(id_cliente);
         if (activo && resultado?.data) setTrazabilidad(resultado.data);

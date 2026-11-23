@@ -191,6 +191,17 @@ export interface CotizacionModel {
   cliente: ClienteModel | null;
   historialEstados: HistorialEstadoCotizacionModel[];
   Historiacambios: HistorialCambioItem[];
+  seguimientosComerciales?: SeguimientoComercialTraza[];
+}
+
+export interface SeguimientoComercialTraza {
+  id: number;
+  tipo: string;
+  descripcion: string;
+  fecha: Date | string;
+  resultado: string | null;
+  origen: string;
+  usuario: string | null;
 }
 
 export interface OrdenTrabajoDetalleModel {

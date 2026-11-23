@@ -31,6 +31,27 @@ export async function obtenerOrdenesListado(): Promise<OrdenTrabajoModel[]> {
   return fastifyRequest(await auth(), '/api/v1/ordenes/listado');
 }
 
+export interface CotizacionImportable {
+  idCotizacion: number;
+  codigo: string;
+  cliente: string;
+  createdAt: string;
+  estado: 'APROBADA';
+  equiposContados: number;
+  otsExistentes: { id: number; codigo: string; version: number | null; estado: string | null }[];
+}
+
+export async function obtenerCotizacionesImportables(options: { page: number; busqueda?: string }) {
+  const session = await auth();
+  const params = new URLSearchParams({ page: String(options.page), limit: '20' });
+  if (options.busqueda?.trim()) params.set('busqueda', options.busqueda.trim());
+  return fastifyRequest<{
+    ok: true;
+    data: CotizacionImportable[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  }>(session, `/api/v1/ordenes/cotizaciones-importables?${params.toString()}`);
+}
+
 export async function obtenerDatosIniciales(): Promise<DatosInicialesOrdenes> {
   try {
     const session = await auth();

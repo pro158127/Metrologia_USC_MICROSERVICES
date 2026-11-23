@@ -103,7 +103,7 @@ function enRangoFecha(fecha: Date | null | undefined, inicio?: string, fin?: str
 const norm = (s?: string | null): string => (s ?? '').trim().toLowerCase();
 
 export async function obtenerDatosReporte(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   filtros: FiltrosReporte = {},
 ): Promise<DatosReporte> {
   // ======================================================================
@@ -413,7 +413,7 @@ export async function obtenerDatosReporte(
 
 /** Consulta una sola factura y sigue sus OTs operativas, recepciones, unidades y certificados. */
 export async function obtenerReporteAuditoriaFactura(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   numeroFactura: string,
 ): Promise<ReporteAuditoriaFactura | null> {
   const factura = await prisma.facturas.findUnique({
