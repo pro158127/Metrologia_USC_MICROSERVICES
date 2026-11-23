@@ -228,6 +228,9 @@ function PdfViewer({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Los archivos remotos se dejan en manos del visor PDF del navegador.
+    // Así puede pedir rangos y mostrar páginas sin descargar primero todo el PDF.
+    if (fileUrl && !file) return;
     let cancelled = false;
     let createdUrl: string | null = null;
     setError(null);
@@ -250,6 +253,9 @@ function PdfViewer({
   }, [fileUrl, file, fetchOptions]);
 
   if (error) return <CenteredMessage text={`Error: ${error}`} isError />;
+  if (fileUrl && !file) {
+    return <iframe src={fileUrl} title="Visor de PDF" className="h-full w-full border-0" />;
+  }
   if (!objectUrl) return <CenteredMessage text="Cargando PDF..." />;
 
   return <iframe src={objectUrl} title="Visor de PDF" className="h-full w-full border-0" />;

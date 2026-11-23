@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { s3Client, BUCKET_NAME, streamToBuffer } from '../lib/s3Client.js';
@@ -21,14 +21,15 @@ function sanitizeFileName(fileName: string): string {
   return `${cleanBase}${extension}`;
 }
 
-/** Streama un objeto de MinIO hacia el navegador (con CORS y Content-Disposition). */
-async function streamArchivo(fastify: FastifyInstance, key: string, reply: FastifyReply): Promise<void> {
-  const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
+/** Transmite desde MinIO sin almacenar el archivo completo en memoria. */
+async function streamArchivo(key: string, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const range = typeof request.headers.range === 'string' ? request.headers.range : undefined;
+  const match = range?.match(/^bytes=(\d*)-(\d*)$/);
+  const s3Range = match ? `bytes=${match[1]}-${match[2]}` : undefined;
+  const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key, ...(s3Range && { Range: s3Range }) });
   const s3Response = await s3Client.send(getCommand);
 
   if (!s3Response.Body) throw new AppError(400, 'El archivo recuperado está vacío');
-
-  const buffer = await streamToBuffer(s3Response.Body as Readable);
   const contentType = s3Response.ContentType || 'application/octet-stream';
 
   let originalFilename = key.split('/').pop() || 'archivo';
@@ -43,13 +44,17 @@ async function streamArchivo(fastify: FastifyInstance, key: string, reply: Fasti
   const encodedFilename = encodeURIComponent(originalFilename);
 
   reply.header('Content-Type', contentType);
+  reply.header('Accept-Ranges', 'bytes');
+  if (s3Response.ContentLength != null) reply.header('Content-Length', s3Response.ContentLength);
+  if (s3Response.ContentRange) reply.header('Content-Range', s3Response.ContentRange);
   reply.header(
     'Content-Disposition',
     `inline; filename="${sanitizeFileName(originalFilename)}"; filename*=UTF-8''${encodedFilename}`
   );
   reply.header('Access-Control-Allow-Origin', '*');
 
-  void reply.send(buffer);
+  if (s3Response.ContentRange) reply.code(206);
+  void reply.send(s3Response.Body as Readable);
 }
 
 export default async function documentosRoutes(fastify: FastifyInstance) {
@@ -176,7 +181,7 @@ export default async function documentosRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        await streamArchivo(fastify, key, reply);
+        await streamArchivo(key, request, reply);
       } catch (error) {
         if (error instanceof AppError) throw error;
         request.log.error(error);
