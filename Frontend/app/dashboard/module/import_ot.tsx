@@ -5,6 +5,7 @@
   import { Link, FileText, Unlink, Layers, AlertTriangle, Search, Filter } from "lucide-react";
   import { useDbStore } from "../../stores/dbstore"; 
   import { useDbLoading } from "@/app/componets/tables_recharge";
+  import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
   import { procesarImportacionOTAction, consultarEstadoJobAction } from "@/app/action_module/ordenes";
   import { subirArchivoDocumento } from "@/app/action_module/archivos";
 import { validarArchivo } from "@/app/lib/upload";
@@ -257,9 +258,10 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
 
     const { cotizaciones, ordenes_trabajo, loadTable } = useDbStore();
     const loadingOTs = useDbLoading("ordenes_trabajo");
+    const loadingCotizaciones = useDbLoading("cotizaciones");
     const { can } = usePermissions();
     const tieneAcceso = can("ordenesOt", "acceso");
-    const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
+    const { estado: estadoPlantillas, cargando: cargandoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
 
     const [file, setFile] = useState<File | null>(null);
     const [showForm, setShowForm] = useState(false);
@@ -277,6 +279,8 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
       loadTable('ordenes_trabajo');
       loadTable('cotizaciones');
     }, [loadTable]);
+
+    useModuleSplashReady("importarOrden", isMounted && !loadingOTs && !loadingCotizaciones && !cargandoPlantillas);
 
     useEffect(() => {
       if (toast) {

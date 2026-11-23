@@ -14,6 +14,7 @@ import {
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import ResponsiveTable from "@/app/dashboard/components/ResponsiveTable";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 const tipoIcono: Record<string, React.ReactNode> = {
   LLAMADA: <Phone size={13} />,
@@ -45,6 +46,7 @@ function origenSeguimiento(cotizacion: CotizacionModel): string {
 export default function SeguimientoComercial() {
   const [enSeguimiento, setEnSeguimiento] = useState<CotizacionModel[]>([]);
   const [loading, setLoading] = useState(true);
+  useModuleSplashReady("seguimiento", !loading);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const revision = useRevisionTablas("cotizaciones", "historial_estado_cotizacion", "seguimientos_comerciales");
   const seguimientos = useDbTable("seguimientos_comerciales") as unknown as SeguimientoComercialModel[];

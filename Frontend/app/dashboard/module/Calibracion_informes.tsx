@@ -8,6 +8,7 @@ import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { useSellosOperativos } from "@/app/lib/useSellosOperativos";
 import { useRevisionTablas } from "@/app/componets/tables_recharge";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import type {
   InstrumentoAsignado,
   EstadoInstrumento,
@@ -390,7 +391,8 @@ const InstrumentCard: React.FC<InstrumentCardProps> = ({
 export const CalibracionInformes: React.FC = () => {
   const [instrumentos, setInstrumentos] = useState<InstrumentoAsignado[]>([]);
   const [cargando, setCargando] = useState(true);
-  const { estado: estadoSellos, todasCompletas: sellosCompletas } = useSellosOperativos();
+  const { estado: estadoSellos, cargando: cargandoSellos, todasCompletas: sellosCompletas } = useSellosOperativos();
+  useModuleSplashReady("calibracion", !cargando && !cargandoSellos);
   const revision = useRevisionTablas(
     "ordenes_trabajo", "orden_trabajo_detalles", "recepciones_equipo",
     "recepcion_equipo_detalles", "calibraciones", "certificados",

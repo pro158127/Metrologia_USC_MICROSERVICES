@@ -5,6 +5,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   Send,
   Eye,
@@ -462,6 +463,7 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
   );
   const [listado, setListado] = useState<CotizacionListaEnvio[]>([]);
   const [loadingEnvio, setLoadingEnvio] = useState(true);
+  useModuleSplashReady("entrega", !loadingEnvio);
   const [errorListado, setErrorListado] = useState(false);
   const [recarga, setRecarga] = useState(0);
 

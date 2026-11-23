@@ -15,6 +15,7 @@ import {
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { useRevisionTablas } from "@/app/componets/tables_recharge";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   obtenerCertificadosRevision,
   aprobarCertificado,
@@ -483,6 +484,7 @@ export function RevisionCertificados({ certificadoInicial = null }: { certificad
   );
   const [certsRaw, setCertsRaw] = useState<CertificadoRevision[]>([]);
   const [cargando, setCargando] = useState(true);
+  useModuleSplashReady("revision", !cargando);
   const [selected, setSelected] = useState<number | null>(certificadoInicial);
   const [showDevolver, setShowDevolver] = useState<number | null>(null);
   const [showAprobar, setShowAprobar] = useState<number | null>(null);

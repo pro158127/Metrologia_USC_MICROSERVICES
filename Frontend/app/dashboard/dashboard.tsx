@@ -2,6 +2,7 @@
 
 // 1. Imports
 import React, { useEffect, useMemo, useState } from "react";
+import { useModuleSplashReady } from "./components/PageLoadSplash";
 import {
   Wrench,
   FileText,
@@ -367,6 +368,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     loadingCertificados ||
     loadingFacturas ||
     loadingClientes;
+  useModuleSplashReady("dashboard", !loadingDashboard);
 
   useEffect(() => {
     loadTable("cotizaciones");

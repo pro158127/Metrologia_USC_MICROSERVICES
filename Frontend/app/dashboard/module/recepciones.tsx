@@ -8,6 +8,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   Package,
   FileText,
@@ -22,7 +23,7 @@ import {
 } from "lucide-react";
 
 // Importar el contexto y los tipos
-import { useDbTable, useDbActions } from "./../../componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading } from "./../../componets/tables_recharge";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
@@ -1025,6 +1026,11 @@ export function MainRenderers() {
   // Lista de recepciones enriquecidas (server action)
   const [recepcionesEnriquecidas, setRecepcionesEnriquecidas] = useState<RecepcionConInfo[]>([]);
   const [cargandoListadoRecepciones, setCargandoListadoRecepciones] = useState(true);
+  const cargandoRecepcionesStore = useDbLoading("recepciones_equipo");
+  const cargandoCotizacionesStore = useDbLoading("cotizaciones");
+  const cargandoOTsStore = useDbLoading("ordenes_trabajo");
+  const cargandoTarifasStore = useDbLoading("tarifas");
+  useModuleSplashReady("recepcion", !cargandoListadoRecepciones && !cargandoRecepcionesStore && !cargandoCotizacionesStore && !cargandoOTsStore && !cargandoTarifasStore);
 
   useEffect(() => {
     let activo = true;

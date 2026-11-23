@@ -37,6 +37,7 @@ import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
 import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 // ==========================================
 // Tipos y Estilos
@@ -759,6 +760,9 @@ export default function Cotizaciones() {
   const usuarios = useDbTable("usuarios");
   const tarifasStore = useDbTable("tarifas");
   const loadingCotizaciones = useDbLoading("cotizaciones");
+  const loadingTarifas = useDbLoading("tarifas");
+  const loadingClientes = useDbLoading("clientes");
+  const loadingUsuarios = useDbLoading("usuarios");
   const { loadTable } = useDbActions();
 
   const [view, setView] = useState<ViewCotizacion>("list");
@@ -786,7 +790,8 @@ export default function Cotizaciones() {
   const [toast, setToast] = useState("");
   const [rejectTargetId, setRejectTargetId] = useState<number | null>(null);
   const [rejectMotivo, setRejectMotivo] = useState("");
-  const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
+  const { estado: estadoPlantillas, cargando: cargandoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
+  useModuleSplashReady("cotizaciones", !loadingCotizaciones && !loadingTarifas && !loadingClientes && !loadingUsuarios && !cargandoPlantillas);
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================

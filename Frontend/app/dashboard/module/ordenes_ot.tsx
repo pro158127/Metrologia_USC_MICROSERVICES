@@ -1445,6 +1445,7 @@ export const TreeView: React.FC<{
 import { obtenerTecnicosOrdenes } from "@/app/action_module/ordenes";
 import { useDbTable, useDbActions, useDbLoading, useRevisionTablas, OrdenTrabajoModel } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
   const ordenesTrabajo = useDbTable("ordenes_trabajo");
@@ -1452,9 +1453,12 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   const tarifas = useDbTable("tarifas");
   const { loadTable } = useDbActions();
   const loadingOrdenes = useDbLoading("ordenes_trabajo");
+  const loadingClientes = useDbLoading("clientes");
+  const loadingTarifas = useDbLoading("tarifas");
   // El hook global se activa desde un effect; sin este estado local, el primer
   // render puede mostrar el tablero vacío antes de que empiece la consulta.
   const [cargaInicialOrdenes, setCargaInicialOrdenes] = useState(true);
+  useModuleSplashReady("ordenes", !loadingOrdenes && !loadingClientes && !loadingTarifas && !cargaInicialOrdenes);
   const [errorCargaOrdenes, setErrorCargaOrdenes] = useState(false);
 
   // Vista actual (kanban, lista o detalle de OT)

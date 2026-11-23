@@ -40,3 +40,138 @@ body {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Global full-page cover used while a dashboard module loads its first data. */
+.page-load-splash {
+  position: fixed;
+  z-index: 9999;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #f8fafc;
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(30, 64, 175, 0.2), transparent 38%),
+    linear-gradient(145deg, #07111f 0%, #0b1730 52%, #101b35 100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 240ms ease, visibility 240ms ease;
+}
+
+.page-load-splash--visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.page-load-splash--hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.page-load-splash__glow {
+  position: absolute;
+  width: min(72vw, 720px);
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  background: conic-gradient(from 20deg, transparent 0deg, rgba(14, 165, 233, 0.15) 70deg, transparent 150deg, rgba(99, 102, 241, 0.12) 250deg, transparent 330deg);
+  filter: blur(70px);
+  animation: splash-ambient-turn 16s linear infinite;
+}
+
+.page-load-splash__content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 28px;
+}
+
+.page-load-splash__logo-wrap {
+  position: relative;
+  isolation: isolate;
+  width: min(72vw, 300px);
+  aspect-ratio: 300 / 171;
+  margin-bottom: 9px;
+  filter: drop-shadow(0 0 14px rgba(56, 189, 248, 0.28));
+}
+
+.page-load-splash__logo {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(96, 165, 250, 0.3));
+}
+
+/* The moving highlight is alpha-masked by the actual PNG silhouette. */
+.page-load-splash__contour-light {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 248deg,
+    rgba(34, 211, 238, 0.12) 270deg,
+    rgba(103, 232, 249, 0.9) 286deg,
+    rgba(255, 255, 255, 1) 293deg,
+    rgba(129, 140, 248, 0.92) 300deg,
+    rgba(56, 189, 248, 0.08) 318deg,
+    transparent 332deg 360deg
+  );
+  -webkit-mask-image: url("/logo.png");
+  mask-image: url("/logo.png");
+  -webkit-mask-mode: alpha;
+  mask-mode: alpha;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  filter: drop-shadow(0 0 5px rgba(103, 232, 249, 0.95)) drop-shadow(0 0 16px rgba(59, 130, 246, 0.8));
+  animation: splash-logo-light 2.8s linear infinite;
+}
+
+.page-load-splash__title {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.025em;
+  text-align: center;
+}
+
+.page-load-splash__caption {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+@keyframes splash-logo-light {
+  to { transform: rotate(1turn); }
+}
+
+@keyframes splash-ambient-turn {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-load-splash__contour-light,
+  .page-load-splash__glow {
+    animation: none;
+  }
+  .page-load-splash__contour-light {
+    opacity: 0.72;
+  }
+  .page-load-splash {
+    transition-duration: 1ms;
+  }
+}

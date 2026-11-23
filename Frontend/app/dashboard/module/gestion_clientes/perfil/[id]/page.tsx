@@ -590,22 +590,35 @@ const CotizacionCard = ({ cotizacion }: CotizacionCardProps) => {
 // ========== COMPONENTE PRINCIPAL ==========
 import { obtenerTrazabilidadCliente } from "@/app/action_module/modulo_cliente";
 import FileViewer from "@/app/utils/FileViewer";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetailPageProps) {
   const [is_open_documento, setIsOpenDocumento] = useState(false);
   const [searchCodigo, setSearchCodigo] = useState("");
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
   const [trazabilidad, setTrazabilidad] = useState<TrazabilidadCliente | null>(null);
+  const [cargandoTrazabilidad, setCargandoTrazabilidad] = useState(true);
+  useModuleSplashReady("perfil_cliente", !cargandoTrazabilidad);
   const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
   const revisionCotizaciones = useRevisionTablas("cotizaciones", "documentos", "version_documentos");
 
   useEffect(() => {
-    if (id_cliente === null || id_cliente === undefined) return;
+    if (id_cliente === null || id_cliente === undefined) {
+      setCargandoTrazabilidad(false);
+      return;
+    }
 
     let activo = true;
+    setCargandoTrazabilidad(true);
     const timer = window.setTimeout(async () => {
-      const resultado = await obtenerTrazabilidadCliente(id_cliente);
-      if (activo && resultado?.data) setTrazabilidad(resultado.data);
+      try {
+        const resultado = await obtenerTrazabilidadCliente(id_cliente);
+        if (activo && resultado?.data) setTrazabilidad(resultado.data);
+      } catch (error) {
+        console.error("No se pudo cargar la trazabilidad del cliente:", error);
+      } finally {
+        if (activo) setCargandoTrazabilidad(false);
+      }
     }, 150);
     return () => {
       activo = false;

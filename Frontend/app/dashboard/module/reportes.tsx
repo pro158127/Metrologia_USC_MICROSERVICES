@@ -14,8 +14,9 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Download, Search, FileText, X } from "lucide-react";
-import { useDbTable, useDbActions, useRevisionTablas } from "@/app/componets/tables_recharge";
+import { useDbTable, useDbActions, useDbLoading, useRevisionTablas } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   obtenerReportes,
   exportarReportePdf,
@@ -408,11 +409,14 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
 export function MainRendererreport() {
   const clientes = useDbTable("clientes");
   const tarifas = useDbTable("tarifas");
+  const loadingClientes = useDbLoading("clientes");
+  const loadingTarifas = useDbLoading("tarifas");
   const { loadTable } = useDbActions();
 
   const [filtros, setFiltros] = useState<FiltrosReporte>({});
   const [datos, setDatos] = useState<DatosReporte | null>(null);
   const [cargandoReporte, setCargandoReporte] = useState(true);
+  useModuleSplashReady("reportes", !cargandoReporte && !loadingClientes && !loadingTarifas);
   const [exportando, setExportando] = useState(false);
   const [toast, setToast] = useState("");
   const [viewer, setViewer] = useState<{ url: string | null; titulo: string } | null>(null);

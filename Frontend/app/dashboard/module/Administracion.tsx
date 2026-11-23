@@ -1682,6 +1682,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
 // 🔄 Reemplazar useDbRealtime por los nuevos hooks
 import { UsuarioModel, useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import { warn } from "console";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 // ==========================================
 // COMPONENTE PRINCIPAL
@@ -1706,6 +1707,10 @@ export function Administracion() {
   const roles = useDbTable("roles");
   const { loadAllData, loadTable } = useDbActions();
   const loadingUsuarios = useDbLoading("usuarios");
+  const loadingRoles = useDbLoading("roles");
+  const loadingParametros = useDbLoading("parametros_sistema");
+  const loadingSellos = useDbLoading("sellos");
+  useModuleSplashReady("administracion", !loadingUsuarios && !loadingRoles && !loadingParametros && !loadingSellos);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);

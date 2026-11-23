@@ -1,7 +1,7 @@
 "use client";
 
 // 1. IMPORTS
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import dynamic from "next/dynamic";
 import { Sidebar, ModuleKey } from "./components/sidebar";
@@ -9,6 +9,7 @@ import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { permisionMapping } from "@/app/lib/permissions/mapping";
 import { Header } from "./components/Header";
 import Perfil from "./components/Perfil";
+import { MODULE_READY_EVENT, PageLoadSplash } from "./components/PageLoadSplash";
 
 // Carga perezosa (code-splitting): evita que Next compile todos los módulos
 // pesados (xlsx, @univerjs, pdfjs, recharts, etc.) en el primer render del
@@ -67,8 +68,6 @@ const FondoDecorativo = () => {
 /**
  * Decide qué pantalla/módulo mostrar según lo que seleccionó el usuario
  */
-
-import { useEffect } from "react";
 
 interface ModuloActivoProps {
   modulo: ModuleKey;
@@ -137,6 +136,12 @@ export const MainRenderer = () => {
 
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
+  const activeModuleRef = useRef<ModuleKey>("dashboard");
+  const pendingModuleRef = useRef<{ key: ModuleKey; id: number } | null>({ key: "dashboard", id: 0 });
+  const navigationIdRef = useRef(0);
+  const splashDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const splashWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [splashVisible, setSplashVisible] = useState(false);
   const [cliente, setCliente] = useState<number | null>(null);
   const [certificadoToOpen, setCertificadoToOpen] = useState<number | null>(null);
   const [otToOpen, setOtToOpen] = useState<number | null>(null);
@@ -147,10 +152,67 @@ export const MainRenderer = () => {
     return key === true || hasModule(key as string);
   }, [hasModule]);
 
+  const iniciarNavegacionModulo = useCallback((module: ModuleKey) => {
+    if (module === activeModuleRef.current) return;
+    activeModuleRef.current = module;
+    setActiveModule(module);
+
+    const renderizaModulo = new Set<ModuleKey>([
+      "dashboard", "clientes", "cotizaciones", "seguimiento", "ordenes", "importarOrden",
+      "recepcion", "calibracion", "revision", "entrega", "reportes", "administracion", "perfil_cliente",
+    ]).has(module);
+    const id = ++navigationIdRef.current;
+    pendingModuleRef.current = renderizaModulo ? { key: module, id } : null;
+    setSplashVisible(false);
+    if (splashDelayRef.current) clearTimeout(splashDelayRef.current);
+    if (splashWatchdogRef.current) clearTimeout(splashWatchdogRef.current);
+    if (!renderizaModulo) return;
+
+    // Fast module changes stay unobstructed; slower loads reveal the full-page splash.
+    splashDelayRef.current = setTimeout(() => {
+      if (pendingModuleRef.current?.id === id) setSplashVisible(true);
+    }, 120);
+    // A broken request must not leave the screen covered indefinitely.
+    splashWatchdogRef.current = setTimeout(() => {
+      if (pendingModuleRef.current?.id !== id) return;
+      pendingModuleRef.current = null;
+      setSplashVisible(false);
+    }, 15000);
+  }, []);
+
+  useEffect(() => {
+    const confirmarCargaModulo = (event: Event) => {
+      const key = (event as CustomEvent<{ moduleKey?: ModuleKey }>).detail?.moduleKey;
+      if (!key || pendingModuleRef.current?.key !== key || activeModuleRef.current !== key) return;
+      pendingModuleRef.current = null;
+      if (splashDelayRef.current) clearTimeout(splashDelayRef.current);
+      if (splashWatchdogRef.current) clearTimeout(splashWatchdogRef.current);
+      setSplashVisible(false);
+    };
+    window.addEventListener(MODULE_READY_EVENT, confirmarCargaModulo);
+    // The first dashboard module can also need a full-page initial load.
+    const id = pendingModuleRef.current?.id;
+    if (id != null) {
+      splashDelayRef.current = setTimeout(() => {
+        if (pendingModuleRef.current?.id === id) setSplashVisible(true);
+      }, 120);
+      splashWatchdogRef.current = setTimeout(() => {
+        if (pendingModuleRef.current?.id !== id) return;
+        pendingModuleRef.current = null;
+        setSplashVisible(false);
+      }, 15000);
+    }
+    return () => {
+      window.removeEventListener(MODULE_READY_EVENT, confirmarCargaModulo);
+      if (splashDelayRef.current) clearTimeout(splashDelayRef.current);
+      if (splashWatchdogRef.current) clearTimeout(splashWatchdogRef.current);
+    };
+  }, []);
+
   const navegarSeguro = useCallback((m: ModuleKey, idCertificado?: number) => {
     setCertificadoToOpen(m === "revision" ? idCertificado ?? null : null);
-    setActiveModule(puedeVer(m) ? m : "dashboard");
-  }, [puedeVer]);
+    iniciarNavegacionModulo(puedeVer(m) ? m : "dashboard");
+  }, [iniciarNavegacionModulo, puedeVer]);
 
 
   useEffect(() => {
@@ -159,24 +221,24 @@ export const MainRenderer = () => {
   // Funciones para cambiar de pantalla y seleccionar cliente
   const change_perfil = {
     change_id_cliente: (n: number) => setCliente(n),
-    change_module: () => setActiveModule("perfil_cliente"),
-    change_cliente: () => setActiveModule("clientes"),
+    change_module: () => iniciarNavegacionModulo("perfil_cliente"),
+    change_cliente: () => iniciarNavegacionModulo("clientes"),
   };
 
   const handleSelectCliente = useCallback((id: number) => {
   setCliente(id);
-  setActiveModule("perfil_cliente"); // Navega automáticamente
-}, []);
+  iniciarNavegacionModulo("perfil_cliente"); // Navega automáticamente
+}, [iniciarNavegacionModulo]);
 
 
 const handleVolverClientes = useCallback(() => {
-  setActiveModule("clientes");
-}, []);
+  iniciarNavegacionModulo("clientes");
+}, [iniciarNavegacionModulo]);
 
 const handleOpenOt = useCallback((id: number) => {
   setOtToOpen(id);
-  setActiveModule("ordenes");
-}, []);
+  iniciarNavegacionModulo("ordenes");
+}, [iniciarNavegacionModulo]);
 
   const handleLogout = async () => {
     try {
@@ -235,6 +297,7 @@ const handleOpenOt = useCallback((id: number) => {
       </div>
 
       {showProfile && <Perfil onClose={() => setShowProfile(false)} />}
+      <PageLoadSplash visible={splashVisible} moduleTitle={MODULE_TITLES[activeModule] || "Módulo"} />
     </div>
   );
 };

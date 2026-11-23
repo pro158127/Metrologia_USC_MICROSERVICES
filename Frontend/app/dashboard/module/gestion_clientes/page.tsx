@@ -22,6 +22,7 @@ import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada, crear
 import { subirArchivoDocumento } from "@/app/action_module/archivos";
 import { validarArchivo } from "@/app/lib/upload";
 import { toast } from "sonner";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 const CIUDADES_COLOMBIA = [
   "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena", 
@@ -429,6 +430,7 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
   const clientes = useDbTable("clientes") as unknown as ClienteVista[];
   const {loadTable}=useDbActions()
   const loadingClientes = useDbLoading("clientes");
+  useModuleSplashReady("clientes", !loadingClientes);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("Todos");
   const { data: session } = useSession();

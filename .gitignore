@@ -51,3 +51,6 @@ next-env.d.ts
 
 .docker-data/
 *.sql.gz.pnpm-store/
+
+# Documentación de trabajo local: no publicar ni incluir en commits.
+/docs-local/
