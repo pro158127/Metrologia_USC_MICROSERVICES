@@ -8,7 +8,7 @@ const { Worker } = require('node:worker_threads');
 
 const frontendRoot = path.resolve(__dirname, '..', 'Frontend');
 const ExcelJS = require(require.resolve('exceljs', { paths: [frontendRoot] }));
-const workerPath = path.join(frontendRoot, 'app', 'lib', 'Workers', 'excelParse.worker.js');
+const workerPath = path.join(frontendRoot, 'app', 'lib', 'Workers', 'excelParse.worker.mjs');
 
 function procesarArchivo(absolutePath, documentId) {
   return new Promise((resolve, reject) => {

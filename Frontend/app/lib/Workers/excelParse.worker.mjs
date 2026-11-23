@@ -1,20 +1,20 @@
 // lib/workers/excelParser.worker.js
-const { parentPort, workerData } = require('worker_threads');
-const ExcelJS = require('exceljs');
-const fs = require('fs');
+import { parentPort, workerData } from 'node:worker_threads';
+import ExcelJS from 'exceljs';
+import fs from 'node:fs';
 
 /**
  * Convierte formatos de color ARGB / Theme de ExcelJS a HEX estándar de CSS
  */
 function argbToHex(colorObj) {
   if (!colorObj) return null;
-  
+
   // Si viene en formato string ARGB direct "FF1E1B4B"
   if (typeof colorObj === 'string') {
     const clean = colorObj.replace(/^FF/i, '');
     return `#${clean.padStart(6, '0')}`;
   }
-  
+
   // Si viene como objeto { argb: "FF1E1B4B" }
   if (colorObj.argb) {
     const clean = colorObj.argb.replace(/^FF/i, '');
@@ -45,7 +45,7 @@ async function parseExcelToSnapshot() {
       const imagenesHoja = [];
 
       // Mapear celdas y extraer propiedades visuales
-      worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      worksheet.eachRow({ includeEmpty: false }, (row) => {
         row.eachCell({ includeEmpty: false }, (cell) => {
           const address = cell.address; // Ej: "A1", "B3"
 
@@ -94,7 +94,7 @@ async function parseExcelToSnapshot() {
         if (media && media.buffer) {
           const extension = media.extension || 'png';
           const base64 = `data:image/${extension};base64,${media.buffer.toString('base64')}`;
-          
+
           imagenesHoja.push({
             id: img.imageId,
             range: img.range, // Posición de la imagen (tl/br anchors)

@@ -2,7 +2,7 @@
 import ExcelJS from 'exceljs';
 
 export function parseCell(cell: ExcelJS.Cell, styleId: string | null) {
-  const out: any = {};
+  const out: { f?: string; v?: unknown; t?: number; s?: string | null } = {};
 
   if (cell.formula) {
     out.f = cell.formula;
@@ -14,11 +14,11 @@ export function parseCell(cell: ExcelJS.Cell, styleId: string | null) {
       if (cell.value instanceof Date) {
         out.v = dateToExcelSerial(cell.value);
         out.t = 2;
-      } else if ('richText' in cell.value && Array.isArray((cell.value as any).richText)) {
-        out.v = (cell.value as any).richText.map((r: any) => r.text || '').join('');
+      } else if ('richText' in cell.value && Array.isArray(cell.value.richText)) {
+        out.v = cell.value.richText.map((r) => r.text || '').join('');
         out.t = 1;
       } else if ('text' in cell.value && 'hyperlink' in cell.value) {
-        out.v = (cell.value as any).text || (cell.value as any).hyperlink || '';
+        out.v = cell.value.text || cell.value.hyperlink || '';
         out.t = 1;
       } else {
         out.v = JSON.stringify(cell.value);

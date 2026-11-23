@@ -1,35 +1,33 @@
 'use client';
-import { toast, Toaster } from "sonner";
-import React, { useEffect, useState, useMemo } from "react";
 import {
-  Plus,
-  Edit3,
-  Power,
-  Search,
-  X,
-  Save,
-  History,
-  Calendar,
-  Filter,
- Upload
-} from "lucide-react";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
-import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import {
-  crearTarifa,
-  actualizarPrecioTarifa,
-  cambiarEstadoTarifa,
-  TarifaModel,
-  actulzar_tarifa,
+actulzar_tarifa,
+cambiarEstadoTarifa,
+crearTarifa,
+TarifaModel
 } from "@/app/action_module/tarifas";
+import { useDbActions,useDbTable } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import type {
-  PriceRecord,
-  CatalogItem,
-  CatalogHeaderControlsProps,
-  PriceHistoryModalProps,
-  CatalogFormModalProps,
-  CatalogRowProps,
+CatalogFormModalProps,
+CatalogHeaderControlsProps,
+CatalogItem,
+CatalogRowProps,
+PriceHistoryModalProps
 } from "@/tipos/tarifas";
+import {
+Calendar,
+Edit3,
+Filter,
+History,
+Plus,
+Power,
+Save,
+Search,
+Upload,
+X
+} from "lucide-react";
+import React,{ useEffect,useMemo,useState } from "react";
+import { toast } from "sonner";
 
 const formatCurrency = (val: number) => {
   return new Intl.NumberFormat("es-CO", {
@@ -42,10 +40,9 @@ const formatCurrency = (val: number) => {
 // ----------------------------------------------------------------------
 // Componentes Hijos
 // ----------------------------------------------------------------------
-import { consolidarTarifas } from "@/app/action_module/template";
-import { consultar_outputshema } from "@/app/action_module/template";
-import { MapeoConfigTarifas } from "backend/src/routes/plantillas.schemas";
+import { consolidarTarifas,consultar_outputshema } from "@/app/action_module/template";
 import { MappingConfig } from "@/tipos/plantillas";
+import { MapeoConfigTarifas } from "backend/src/routes/plantillas.schemas";
 const CatalogHeaderControls = ({
   searchTerm,
   setSearchTerm,
@@ -70,9 +67,9 @@ const handleButton_tarifas = async () => {
       console.log("esta aqio ")
       console.log(schema.response.data.MAPPING_CONFIG,"CONFIGURACION DE MAPEOS",schema)
       const toparse = (schema.response.data.MAPPING_CONFIG || {}) as MappingConfig;
-      
+
       const tablaTarifas = toparse.mappings.tables.find((e) => e.key === "tabla_tarifas");
-      
+
       const parse: MapeoConfigTarifas = {
         columnas: {
           instrumento: tablaTarifas?.columns.find((i) => i.key === "instrumentos")?.column ?? 'sin definir',
@@ -99,7 +96,7 @@ const handleButton_tarifas = async () => {
   return (
     <div className="flex flex-col space-y-4 px-6 py-5 border-b border-slate-100 bg-slate-50/50">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
-  
+
   {/* Sección de Texto */}
   <div>
     <div className="flex items-center gap-2">
@@ -113,7 +110,7 @@ const handleButton_tarifas = async () => {
 
   {/* Sección de Acciones: Agrupadas en su propio flex-container */}
   <div className="flex items-center gap-2 self-end sm:self-auto">
-    
+
     {/* Botón Secundario (Importar) */}
     {puedeGestionar && (
     <button
@@ -143,7 +140,7 @@ const handleButton_tarifas = async () => {
       <span>Nuevo Ítem</span>
     </button>
     )}
-    
+
   </div>
 </div>
 
@@ -287,6 +284,7 @@ const CatalogFormModal = ({
 
   // Al abrir el modal, precargar datos
   useEffect(() => {
+    const timer = window.setTimeout(() => {
     if (initialData) {
       const historialVigente = initialData.historialPrecios?.find(h => !h.fechaFin);
       setFormData({
@@ -316,6 +314,8 @@ const CatalogFormModal = ({
         norma: "",
       });
     }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [initialData, isOpen, today]);
 
   if (!isOpen) return null;

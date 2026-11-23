@@ -1,21 +1,18 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
-import { Eye, EyeOff, Ruler, Lock, Mail, Shield } from "lucide-react";
-import REsetPassword from "./componente/sign_up";
+import Image from "next/image";
+import { Eye,EyeOff,Lock,Mail,Shield } from "lucide-react";
 import { signIn } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter,useSearchParams } from "next/navigation";
+import { Suspense,useState } from "react";
+import REsetPassword from "./componente/sign_up";
 
-interface LoginProps {
-  onLogin?: () => void;
-}
 
 // 1. Extraemos la lógica que lee la URL
-function LoginContent({ onLogin }: LoginProps) {
+function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [attempts, setAttempts] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [view, setView] = useState<"login" | "reset">("login");
@@ -23,9 +20,8 @@ function LoginContent({ onLogin }: LoginProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  useEffect(() => {
-    const errorType = searchParams.get("code");
-    if (!errorType) return;
+  const errorType = searchParams.get("code");
+
 
     const errorMessages: Record<string, string> = {
       user_blocked_or_inactive: "Tu cuenta está inactiva o ha sido bloqueada. Usa 'restablecer contraseña' para desbloquearla.",
@@ -34,10 +30,7 @@ function LoginContent({ onLogin }: LoginProps) {
       user_not_found: "El correo ingresado no está registrado.",
     };
 
-    setError(errorMessages[errorType] || "Credenciales inválidas o error en el servidor.");
-    setAttempts((prev) => prev + 1);
-    setIsLoading(false);
-  }, [searchParams]);
+  const urlError = errorType ? errorMessages[errorType] || "Credenciales inválidas o error en el servidor." : "";
 
   const handleLogin = async () => {
     setIsLoading(true); // Fix: Iniciar estado de carga
@@ -81,8 +74,8 @@ function LoginContent({ onLogin }: LoginProps) {
       >
         <div className="relative z-10 max-w-md text-center">
           <div className="relative mx-auto mb-8 flex justify-center items-center">
-  <img 
-    src="/logo.png" 
+  <Image width={96} height={96}
+    src="/logo.png"
     alt="logo"
     className="h-28 w-auto object-contain drop-shadow-[0_0_25px_rgba(99,102,241,0.7)] group-hover:scale-105 group-hover:drop-shadow-[0_0_35px_rgba(56,189,248,1)] transition-all duration-300"
   />
@@ -100,9 +93,9 @@ function LoginContent({ onLogin }: LoginProps) {
             <p className="mt-2 text-sm text-slate-500">Accede con tu correo institucional USC</p>
           </div>
 
-          {error && (
+          {(error || urlError) && (
             <div className="mb-6 rounded-2xl border border-rose-200/90 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
+              {error || urlError}
             </div>
           )}
 
@@ -184,10 +177,10 @@ function LoginContent({ onLogin }: LoginProps) {
 }
 
 // 2. Exportación envuelta en Suspense para evitar fallos de HMR/Build
-export default function Login(props: LoginProps) {
+export default function Login() {
   return (
     <Suspense fallback={<div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-white">Cargando...</div>}>
-      <LoginContent {...props} />
+      <LoginContent />
     </Suspense>
   );
 }

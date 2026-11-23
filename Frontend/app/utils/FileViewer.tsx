@@ -92,7 +92,7 @@ function ExcelViewer({
   file?: File;
   fetchOptions?: RequestInit;
 }) {
-  const [sheets, setSheets] = useState<Record<string, any[][]>>({});
+  const [sheets, setSheets] = useState<Record<string, unknown[][]>>({});
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -100,13 +100,16 @@ function ExcelViewer({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setLoading(true);
+      setError(null);
+    });
 
     getArrayBuffer(fileUrl, file, fetchOptions)
       .then((buffer) => {
         const workbook = XLSX.read(buffer, { type: "array" });
-        const result: Record<string, any[][]> = {};
+        const result: Record<string, unknown[][]> = {};
         workbook.SheetNames.forEach((name) => {
           const sheet = workbook.Sheets[name];
           result[name] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
@@ -186,8 +189,11 @@ function WordViewer({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setLoading(true);
+      setError(null);
+    });
 
     getArrayBuffer(fileUrl, file, fetchOptions)
       .then((buffer) => mammoth.convertToHtml({ arrayBuffer: buffer }))
@@ -230,8 +236,11 @@ function PdfViewer({
   useEffect(() => {
     let cancelled = false;
     let createdUrl: string | null = null;
-    setError(null);
-    setObjectUrl(null);
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setError(null);
+      setObjectUrl(null);
+    });
     console.log(fileUrl ? "Cargando PDF desde URL:" : "Cargando PDF desde File:", fileUrl || file);
     getArrayBuffer(fileUrl, file, fetchOptions)
       .then((buffer) => {

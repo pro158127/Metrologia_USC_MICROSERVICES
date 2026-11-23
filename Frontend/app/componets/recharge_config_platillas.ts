@@ -5,7 +5,15 @@ interface EventoRealtimePayload {
   tabla: TablaPlantillas;
   operacion: Operacion;
   // payload con los campos de la tabla afectada
-  data: Record<string, any>;
+  data: {
+    ID_PLANTILLA?: number; idPlantilla?: number; MODULO?: string; modulo?: string;
+    ACTIVA?: boolean; activa?: boolean; NOMBRE?: string; nombre?: string;
+    versiones?: VersionPlantillaModel[]; ID_VERSION_PLANTILLA?: number; idVersionPlantilla?: number;
+    ID_PLANTILLA_FK?: number; VERSION?: number; version?: number;
+    MAPEO_EXCEL_JSON?: VersionPlantillaModel['mapeoExcelJson']; mapeoExcelJson?: VersionPlantillaModel['mapeoExcelJson'];
+    ID_USUARIO_CREADOR_FK?: number; idUsuarioCreador?: number; CREATED_AT?: Date; createdAt?: Date;
+    ID_DOCUMENTOS_FK?: number; iddocumentos?: number;
+  };
 }
 
 import type { PlantillaModel, VersionPlantillaModel } from "@/tipos/entidades";
@@ -50,7 +58,7 @@ const processPlantillasRealtime = (
       version: Number(data.VERSION ?? data.version ?? 1),
       mapeoExcelJson: data.MAPEO_EXCEL_JSON ?? data.mapeoExcelJson ?? null,
       idUsuarioCreador: Number(data.ID_USUARIO_CREADOR_FK ?? data.idUsuarioCreador),
-      createdAt: data.CREATED_AT ?? data.createdAt,
+      createdAt: data.CREATED_AT ?? data.createdAt ?? new Date(),
       iddocumentos: data.ID_DOCUMENTOS_FK ?? data.iddocumentos ?? null,
     };
     const idPlantilla = version.idPlantilla;

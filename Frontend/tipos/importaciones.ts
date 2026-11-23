@@ -23,5 +23,5 @@ export interface RespuestaWorkerJob {
 export interface PollingJobStatus {
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   fileUrl?: string;
-  data?: any;
+  data?: { error?: string; [key: string]: unknown };
 }

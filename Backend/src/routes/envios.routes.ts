@@ -1,3 +1,4 @@
+import { registrarFacturaPago } from '../services/factura-pago.service.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT, Prisma } from '@prisma/client';
@@ -101,7 +102,7 @@ const respuestaDocumentosEnvioCotizacionSchema = z.object({
 
 const datosOrdenEnvio = {
   clientes: true,
-  cotizaciones: { select: { CODIGO_COTIZACION: true, MONTO_TOTAL: true, ID_CLIENTE_FK: true } },
+  cotizaciones: { select: { ID_COTIZACION: true, CODIGO_COTIZACION: true, MONTO_TOTAL: true, ID_CLIENTE_FK: true } },
   orden_trabajo_detalles: {
     where: { OR: [{ activacion: true }, { activacion: null }] },
     select: { ID_UNIDAD_FK: true, ITEM: true },
@@ -388,7 +389,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
       const cotizacion = ot.ID_COTIZACION_FK
         ? await fastify.prisma.cotizaciones.findUnique({
             where: { ID_COTIZACION: ot.ID_COTIZACION_FK },
-            select: { CODIGO_COTIZACION: true, MONTO_TOTAL: true, ID_CLIENTE_FK: true },
+            select: { ID_COTIZACION: true, CODIGO_COTIZACION: true, MONTO_TOTAL: true, ID_CLIENTE_FK: true },
           })
         : null;
 
@@ -452,20 +453,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         await evaluarTransicionesOT(tx, idOT);
 
         // Crear (idempotente) la factura asociada a la cotización.
-        const numeroFactura = cotizacion?.CODIGO_COTIZACION
-          ? `FAC-${cotizacion.CODIGO_COTIZACION}`
-          : null;
-        if (numeroFactura) {
-          await tx.facturas.createMany({
-            skipDuplicates: true,
-            data: {
-              NUMERO_FACTURA: numeroFactura,
-              ID_ORDEN_TRABAJO_FK: idOT,
-              ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? ot.ID_CLIENTE_FK ?? null,
-              FECHA: new Date(),
-              VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
-              ESTADO: 'EMITIDA',
-            },
+        if (cotizacion) {
+          await registrarFacturaPago(tx, {
+            idCotizacion: cotizacion.ID_COTIZACION,
+            codigoCotizacion: cotizacion.CODIGO_COTIZACION,
+            idOrdenTrabajo: idOT,
+            idCliente: cotizacion.ID_CLIENTE_FK,
+            valor: Number(cotizacion.MONTO_TOTAL ?? 0),
           });
         }
 
@@ -745,20 +739,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         await cerrarSeguimientoSiCompleto(tx, idCotizacion, Number(request.user?.sub ?? 0) || null);
 
         // Crear (idempotente) la factura asociada a la cotización.
-        const numeroFactura = cotizacion?.CODIGO_COTIZACION
-          ? `FAC-${cotizacion.CODIGO_COTIZACION}`
-          : null;
-        if (numeroFactura) {
-          await tx.facturas.createMany({
-            skipDuplicates: true,
-            data: {
-              NUMERO_FACTURA: numeroFactura,
-              ID_ORDEN_TRABAJO_FK: master?.ID_ORDEN_TRABAJO ?? hijas[0].ID_ORDEN_TRABAJO,
-              ID_CLIENTE_FK: cotizacion?.ID_CLIENTE_FK ?? null,
-              FECHA: new Date(),
-              VALOR: Number(cotizacion?.MONTO_TOTAL ?? 0),
-              ESTADO: 'EMITIDA',
-            },
+        if (cotizacion) {
+          await registrarFacturaPago(tx, {
+            idCotizacion: cotizacion.ID_COTIZACION,
+            codigoCotizacion: cotizacion.CODIGO_COTIZACION,
+            idOrdenTrabajo: master?.ID_ORDEN_TRABAJO ?? hijas[0].ID_ORDEN_TRABAJO,
+            idCliente: cotizacion.ID_CLIENTE_FK,
+            valor: Number(cotizacion.MONTO_TOTAL ?? 0),
           });
         }
 

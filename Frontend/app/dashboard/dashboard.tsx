@@ -41,10 +41,9 @@ import type {
   SystemStat,
   RecentActivityItem,
 } from "@/tipos/dashboard";
-import { useDbTable, useDbActions, useDbLoading, useRevisionTablas } from "@/app/componets/tables_recharge";
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import { obtenerCertificadosRevision, type CertificadoRevisionItem } from "@/app/action_module/certificados";
-import { obtenerMetricasCotizacionesDashboard } from "@/app/action_module/cotizacion";
+import { obtenerDashboardSnapshot, type DashboardSnapshot } from "@/app/action_module/dashboard";
 import { useSession } from "next-auth/react";
 
 // ========== UTILIDADES DE FORMATO ==========
@@ -342,60 +341,32 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const puedeAcreditados = can("revision", "revisar_aprobar_acreditados");
   const puedeNoAcreditados = can("revision", "revisar_aprobar_no_acreditados");
   const puedeRevisar = puedeAcreditados || puedeNoAcreditados;
-  const revisionCertificados = useRevisionTablas("certificados", "calibraciones", "orden_trabajo_detalles");
-  const revisionCotizaciones = useRevisionTablas("cotizaciones", "historial_estado_cotizacion");
+  const revision = useRevisionTablas("certificados", "calibraciones", "orden_trabajo_detalles", "cotizaciones", "historial_estado_cotizacion", "ordenes_trabajo", "facturas", "clientes", "recepciones_equipo", "recepcion_equipo_detalles");
   const [retryRequest, setRetryRequest] = useState(0);
-  const metricasRequestKey = `${revisionCotizaciones}:${retryRequest}`;
-  const bandejaRequestKey = `${revisionCertificados}:${retryRequest}`;
-  const [bandejaCargada, setBandejaCargada] = useState<{ revision: unknown; status: "error" | "ready"; data: CertificadoRevisionItem[] }>({ revision: null, status: "ready", data: [] });
-  const [metricasCargadas, setMetricasCargadas] = useState<{ revision: unknown; status: "error" | "ready"; data: Awaited<ReturnType<typeof obtenerMetricasCotizacionesDashboard>> }>({ revision: null, status: "ready", data: null });
-  const metricasVigentes = Object.is(metricasCargadas.revision, metricasRequestKey);
-  const metricasCotizaciones = metricasVigentes ? metricasCargadas.data : null;
-  const estadoMetricas = metricasVigentes ? metricasCargadas.status : "loading";
-  const bandejaVigente = puedeRevisar && Object.is(bandejaCargada.revision, bandejaRequestKey);
-  const bandejaRevision = useMemo(() => bandejaVigente ? bandejaCargada.data : [], [bandejaVigente, bandejaCargada.data]);
-  const estadoBandeja = !puedeRevisar ? "ready" : bandejaVigente ? bandejaCargada.status : "loading";
+  const requestKey = `${revision}:${retryRequest}:${session?.user?.id_user}:${puedeAcreditados}:${puedeNoAcreditados}`;
+  const [resultado, setResultado] = useState<{ key: string; data: DashboardSnapshot | null; error: boolean } | null>(null);
   useEffect(() => {
     let vigente = true;
-    obtenerMetricasCotizacionesDashboard({ propagarError: true }).then((datos) => {
-      if (vigente) setMetricasCargadas({ revision: metricasRequestKey, status: "ready", data: datos });
-    }).catch(() => { if (vigente) setMetricasCargadas({ revision: metricasRequestKey, status: "error", data: null }); });
+    obtenerDashboardSnapshot().then((data) => {
+      if (vigente) setResultado({ key: requestKey, data, error: false });
+    }).catch(() => {
+      if (vigente) setResultado({ key: requestKey, data: null, error: true });
+    });
     return () => { vigente = false; };
-  }, [metricasRequestKey]);
-  useEffect(() => {
-    if (!puedeRevisar) return;
-    let vigente = true;
-    obtenerCertificadosRevision({ propagarError: true }).then((datos) => {
-      if (vigente) setBandejaCargada({ revision: bandejaRequestKey, status: "ready", data: datos });
-    }).catch(() => { if (vigente) setBandejaCargada({ revision: bandejaRequestKey, status: "error", data: [] }); });
-    return () => { vigente = false; };
-  }, [puedeRevisar, bandejaRequestKey]);
-  const cotizaciones = useDbTable("cotizaciones");
-  const ordenes = useDbTable("ordenes_trabajo");
-  const certificados = useDbTable("certificados");
-  const facturas = useDbTable("facturas");
-  const clientes = useDbTable("clientes");
-  const { loadTable } = useDbActions();
-  const loadingCotizaciones = useDbLoading("cotizaciones");
-  const loadingOrdenes = useDbLoading("ordenes_trabajo");
-  const loadingCertificados = useDbLoading("certificados");
-  const loadingFacturas = useDbLoading("facturas");
-  const loadingClientes = useDbLoading("clientes");
-  const loadingDashboard =
-    loadingCotizaciones ||
-    loadingOrdenes ||
-    loadingCertificados ||
-    loadingFacturas ||
-    loadingClientes;
+  }, [requestKey]);
+  const vigente = resultado?.key === requestKey;
+  const snapshot = vigente ? resultado.data : null;
+  const loadingDashboard = !vigente;
+  const estadoMetricas = loadingDashboard ? "loading" : resultado?.error ? "error" : "ready";
+  const estadoBandeja = estadoMetricas;
+  const metricasCotizaciones = snapshot?.metricas ?? null;
+  const bandejaRevision = useMemo(() => snapshot?.bandeja ?? [], [snapshot]);
+  const cotizaciones = useMemo(() => snapshot?.cotizaciones ?? [], [snapshot]);
+  const ordenes = useMemo(() => snapshot?.ordenes ?? [], [snapshot]);
+  const certificados = useMemo(() => snapshot?.certificados ?? [], [snapshot]);
+  const facturas = useMemo(() => snapshot?.facturas ?? [], [snapshot]);
+  const clientes = useMemo(() => snapshot?.clientes ?? [], [snapshot]);
   useModuleSplashReady("dashboard", !loadingDashboard);
-
-  useEffect(() => {
-    loadTable("cotizaciones");
-    loadTable("ordenes_trabajo");
-    loadTable("certificados");
-    loadTable("facturas");
-    loadTable("clientes");
-  }, [loadTable]);
 
   const operativasVigentes = useMemo(() => {
     const padres = new Set(ordenes.flatMap((o) => o.idOrdenTrabajoPadre == null ? [] : [o.idOrdenTrabajoPadre]));
@@ -649,6 +620,13 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     return actividades;
   }, [cotizaciones, ordenes, facturas]);
 
+  if (vigente && resultado?.error) {
+    return <div role="alert" className="m-8 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+      No se pudo cargar el resumen. Reintenta para consultar un conjunto actualizado de datos.
+      <button type="button" onClick={() => setRetryRequest((value) => value + 1)} className="ml-4 rounded-lg bg-white px-3 py-2 font-bold">Reintentar</button>
+    </div>;
+  }
+
   return (
     <div className="p-8 overflow-y-auto h-full bg-[#F8FAFC] text-slate-900">
       {loadingDashboard ? (
@@ -672,6 +650,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <button type="button" onClick={() => setRetryRequest((value) => value + 1)} className="rounded-lg bg-white px-3 py-1.5 font-bold text-rose-700 border border-rose-200">Reintentar</button>
             </div>
           )}
+          {snapshot && <p className="mb-3 text-xs text-slate-500">Datos al {formatFechaCorta(snapshot.generatedAt)}</p>}
           <WelcomeHeaderSection systemStats={systemStats} userName={session?.user?.name} />
           <KpiGridSection kpiData={kpiData} />
           <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">

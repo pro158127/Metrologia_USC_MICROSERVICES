@@ -85,7 +85,7 @@ export interface ColumnMapping {
   dataType?: string;
   type?: 'OBJECT';
   subfields?: SubfieldMapping[];
-  
+
 }
 
 export interface TableMapping {
@@ -285,7 +285,7 @@ export interface MapeoConfigTarifas {
     norma: string;
     tipoServicio: string;
   };
-  columnasPrecios?: string[]; 
+  columnasPrecios?: string[];
 }
 export type EstadoJobTarifasValue = 'PENDIENTE' | 'PROCESANDO' | 'COMPLETADO' | 'ERROR' | string;
 
@@ -339,6 +339,6 @@ export interface GeneracionPlantillatest {
 
 export interface GeneracionPlantillaResponse {
   success: boolean;
-  data?: any; // Ajusta esto según lo que retorne tu Fastify (ej. { url: string, jobId: string })
+  data?: unknown; // Ajusta esto según lo que retorne tu Fastify (ej. { url: string, jobId: string })
   error?: string;
 }

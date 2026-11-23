@@ -54,7 +54,7 @@ const initialState: RealtimeTablesState = {
   facturas: [],
   plantillas_sellos:[],
   seguimientos_comerciales: [],
-  
+
 };
 
 export const useDbStore = create<
@@ -86,11 +86,11 @@ updateTable: (table, updater) =>
   set((state) => {
     const currentTableData = state[table] || [];
     const updatedTableData = updater(currentTableData);
-    
+
     // Retornamos un objeto de estado explícitamente NUEVO
     return {
       ...state,
-      [table]: [...updatedTableData], 
+      [table]: [...updatedTableData],
     };
   }),
 
@@ -127,7 +127,7 @@ updateTable: (table, updater) =>
 
   setTableLoading: (table, value) =>
     set((s) => ({ loading: { ...s.loading, [table]: value } })),
-  
+
   reset: () => {
     generacionStore += 1;
     cargasEnCurso.clear();
@@ -150,14 +150,14 @@ updateTable: (table, updater) =>
       while (generacion === generacionStore) {
         recargasSolicitadas.delete(table);
         revisionAlIniciar = obtenerRevisionRealtime(table);
-        let data: any[] = [];
+        let data: unknown[] = [];
         let snapshotValido = false;
         switch (table) {
           case 'usuarios': {
             const res = await obtenerUsuariosPorPermiso();
             if (res?.success && Array.isArray(res.data)) {
               snapshotValido = true;
-              data = res.data.map((u: any) => ({
+              data = res.data.map((u) => ({
                 ...u,
                 rolnombre: u.rol?.nombreRol || 'Sin rol',
               }));

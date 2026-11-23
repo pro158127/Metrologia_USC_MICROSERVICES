@@ -6,11 +6,11 @@ import { getActualDimensions } from './parseDimensions';
 import { getOrCreateStyleId } from './styleRegistry';
 
 export function parseSheet(
-  worksheet: ExcelJS.Worksheet, 
-  styleRegistry: any, 
+  worksheet: ExcelJS.Worksheet,
+  styleRegistry: import("./styleRegistry").StyleRegistry,
   sheetIndex: number
 ) {
-  const cellData: Record<number, Record<number, any>> = {};
+  const cellData: Record<number, Record<number, ReturnType<typeof parseCell>>> = {};
   const mergeData = parseMerges(worksheet);
 
   // ✅ Crear Set de celdas fusionadas (excluyendo la primera)
@@ -34,7 +34,7 @@ export function parseSheet(
       // ✅ Obtener el valor real
       const value = cell.value;
       const hasValue = value !== null && value !== undefined && value !== '';
-      
+
       // ✅ Verificar si tiene estilo real
       const hasStyle = cell.style && Object.keys(cell.style).length > 0;
 
@@ -90,8 +90,8 @@ export function parseSheet(
 
 // ✅ Configuración de columnas
 function getColumnConfigs(worksheet: ExcelJS.Worksheet) {
-  const columnData: any = {};
-  
+  const columnData: Record<number, { w: number }> = {};
+
   const defaultWidths: Record<number, number> = {
     0: 40, 1: 80, 2: 120, 3: 80, 4: 60, 5: 60, 6: 80, 7: 80,
     8: 120, 13: 60, 14: 80, 15: 100, 19: 60, 20: 80, 21: 80,
@@ -106,25 +106,25 @@ function getColumnConfigs(worksheet: ExcelJS.Worksheet) {
       columnData[index] = { w: Math.round(width * 7.5) };
     });
   }
-  
+
   return Object.keys(columnData).length > 0 ? columnData : undefined;
 }
 
 // ✅ Configuración de filas mejorada
 function getRowConfigs(worksheet: ExcelJS.Worksheet) {
-  const rowData: any = {};
-  
+  const rowData: Record<number, { h: number }> = {};
+
   const MIN_HEIGHT = 18;
   const MAX_HEIGHT = 200;
 
   worksheet.eachRow((row, index) => {
     const rowIdx = index - 1;
-    
+
     // ✅ Verificar si la fila tiene contenido real
     let hasContent = false;
     let maxLines = 1;
     let maxTextLength = 0;
-    
+
     row.eachCell((cell) => {
       const value = cell.value;
       if (value !== null && value !== undefined && value !== '') {
@@ -158,7 +158,7 @@ function getRowConfigs(worksheet: ExcelJS.Worksheet) {
     // Aplicar mínimos y máximos
     height = Math.max(height, MIN_HEIGHT);
     height = Math.min(height, MAX_HEIGHT);
-    
+
     rowData[rowIdx] = { h: height };
   });
 

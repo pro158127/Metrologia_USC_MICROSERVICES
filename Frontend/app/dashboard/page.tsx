@@ -1,15 +1,15 @@
 "use client";
 
 // 1. IMPORTS
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { permisionMapping } from "@/app/lib/permissions/mapping";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { signOut } from "next-auth/react";
 import dynamic from "next/dynamic";
-import { Sidebar, ModuleKey } from "./components/sidebar";
-import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import { permisionMapping } from "@/app/lib/permissions/mapping";
+import { useCallback,useEffect,useRef,useState } from "react";
 import { Header } from "./components/Header";
+import { MODULE_READY_EVENT,PageLoadSplash } from "./components/PageLoadSplash";
 import Perfil from "./components/Perfil";
-import { MODULE_READY_EVENT, PageLoadSplash } from "./components/PageLoadSplash";
+import { ModuleKey,Sidebar } from "./components/sidebar";
 
 // Carga perezosa (code-splitting): evita que Next compile todos los módulos
 // pesados (xlsx, @univerjs, pdfjs, recharts, etc.) en el primer render del
@@ -22,7 +22,6 @@ const SeguimientoComercial = dynamic(() => import("./module/seguimiento"), { ssr
 const Dashboard = dynamic(() => import("./dashboard"), { ssr: false });
 const OrdenesTrabajo = dynamic(() => import("./module/ordenes_ot"), { ssr: false });
 const MainRenderers = dynamic(() => import("./module/recepciones").then((m) => m.MainRenderers), { ssr: false });
-const SocketDebugger = dynamic(() => import("../componets/debugges_webscoekt "), { ssr: false });
 const RevisionCertificados = dynamic(() => import("./module/Revison_certifados"), { ssr: false });
 const CalibracionInformesMockup = dynamic(() => import("./module/Calibracion_informes"), { ssr: false });
 const MainRendererenv = dynamic(() => import("./module/Envio_entrega"), { ssr: false });
@@ -73,7 +72,7 @@ interface ModuloActivoProps {
   modulo: ModuleKey;
   clienteId: number | null;                 // ← el ID del cliente seleccionado
   onSelectCliente: (id: number) => void;   // ← navega a perfil
-  onVolver: () => void;     
+  onVolver: () => void;
   onNavigarte: (modulo: ModuleKey, idCertificado?: number) => void;
   certificadoToOpen: number | null;               // ← vuelve a lista
   otToOpen: number | null;                 // ← OT a preseleccionar en Órdenes
@@ -81,9 +80,9 @@ interface ModuloActivoProps {
 }
 
 const ModuloActivo = ({
-    modulo, 
-  clienteId, 
-  onSelectCliente, 
+    modulo,
+  clienteId,
+  onSelectCliente,
   onVolver ,
   onNavigarte,
   certificadoToOpen,
@@ -99,7 +98,7 @@ const ModuloActivo = ({
 
     case "perfil_cliente":
       return <ClienteDetailPage onVolver={onVolver} id_cliente={clienteId} />;
-    
+
     case "cotizaciones":
       return <Cotizaciones />;
 
@@ -219,11 +218,7 @@ export const MainRenderer = () => {
     console.log("Módulo activo:", activeModule);
   }, [activeModule]);
   // Funciones para cambiar de pantalla y seleccionar cliente
-  const change_perfil = {
-    change_id_cliente: (n: number) => setCliente(n),
-    change_module: () => iniciarNavegacionModulo("perfil_cliente"),
-    change_cliente: () => iniciarNavegacionModulo("clientes"),
-  };
+
 
   const handleSelectCliente = useCallback((id: number) => {
   setCliente(id);

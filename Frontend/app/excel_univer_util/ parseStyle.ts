@@ -1,9 +1,11 @@
+import type { Style } from "exceljs";
+type ConvertedStyle = Record<string, unknown>;
 // utils/excel-univer/parseStyle.ts
 
-export function convertStyleToUniver(style: any): any {
+export function convertStyleToUniver(style: Partial<Style>): ConvertedStyle | null {
   if (!style || Object.keys(style).length === 0) return null;
 
-  const univerStyle: any = {};
+  const univerStyle: ConvertedStyle = {};
 
   if (style.font) {
     const f = style.font;
@@ -22,7 +24,7 @@ export function convertStyleToUniver(style: any): any {
     }
   }
 
-  const fill = style.fill as any;
+  const fill = style.fill;
   if (fill) {
     if (fill.type === 'pattern' && fill.fgColor?.argb) {
       univerStyle.bg = { rgb: argbToRgb(fill.fgColor.argb) };
@@ -59,7 +61,7 @@ export function convertStyleToUniver(style: any): any {
 
   if (style.border) {
     const b = style.border;
-    const borderObj: any = {};
+    const borderObj: Record<string, unknown> = {};
 
     ['top', 'bottom', 'left', 'right'].forEach((side) => {
       const sideStyle = b[side as keyof typeof b];

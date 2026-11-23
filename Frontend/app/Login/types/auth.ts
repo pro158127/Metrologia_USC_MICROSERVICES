@@ -81,7 +81,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (typeof token.email === "string") {
           session.user.email = token.email;
         }
-        session.user.permissions = token.permissions as string;
+        session.user.permissions = token.permissions;
         session.user.sessionVersion = Number(token.sessionVersion ?? 0);
         session.accessToken = token.accessToken
         const secret = process.env.AUTH_SECRET;

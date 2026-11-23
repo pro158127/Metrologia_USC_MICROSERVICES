@@ -1,33 +1,33 @@
 'use client';
 
 // 1. IMPORTS
-import React, { useEffect, useState, useMemo, useCallback } from "react";
-import { Search, Plus, Eye, Edit, X, CheckCircle, CircleSlash, Upload, FileText, RefreshCw } from "lucide-react";
-import { useSession } from "next-auth/react";
-import { useDbTable,useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
-import type { ClienteModel } from "@/tipos/entidades";
-import type {
-  ClienteVista,
-  ClienteFormData,
-  ClienteFormSaveData,
-  PermisosUsuario,
-  ModalHeaderProps,
-  RutFileInputProps,
-  ClientFormModalProps,
-  CustomerTableRowProps,
-  ClientControlsProps,
-  ClientesModuloProps,
-} from "@/tipos/clientes";
-import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada, crearDocumento, actualizarCliente, cambiarEstadoCliente } from "@/app/action_module/modulo_cliente";
 import { subirArchivoDocumento } from "@/app/action_module/archivos";
-import { validarArchivo } from "@/app/lib/upload";
-import { toast } from "sonner";
+import { actualizarCliente,cambiarEstadoCliente,crearCliente,crearDocumento,obtenerUltimaCotizacionFinalizada } from "@/app/action_module/modulo_cliente";
+import { useDbActions,useDbLoading,useDbTable } from "@/app/componets/tables_recharge";
 import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
+import { validarArchivo } from "@/app/lib/upload";
+import type {
+ClientControlsProps,
+ClienteFormData,
+ClienteFormSaveData,
+ClientesModuloProps,
+ClienteVista,
+ClientFormModalProps,
+CustomerTableRowProps,
+ModalHeaderProps,
+PermisosUsuario,
+RutFileInputProps,
+} from "@/tipos/clientes";
+import type { ClienteModel } from "@/tipos/entidades";
+import { CheckCircle,CircleSlash,Edit,Eye,FileText,Plus,RefreshCw,Search,Upload,X } from "lucide-react";
+import { useSession } from "next-auth/react";
+import React,{ useCallback,useEffect,useMemo,useState } from "react";
+import { toast } from "sonner";
 
 const CIUDADES_COLOMBIA = [
-  "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena", 
-  "Bucaramanga", "Pereira", "Manizales", "Cúcuta", "Santa Marta", 
-  "Ibagué", "Pasto", "Palmira", "Buenaventura", "Popayán", 
+  "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena",
+  "Bucaramanga", "Pereira", "Manizales", "Cúcuta", "Santa Marta",
+  "Ibagué", "Pasto", "Palmira", "Buenaventura", "Popayán",
   "Armenia", "Villavicencio", "Neiva", "Montería", "Tuluá"
 ] as const;
 
@@ -223,7 +223,7 @@ export const ClientFormModal = ({
                 ))}
               </select>
 
-          
+
             </div>
             <div>
               <label className="block text-slate-400 font-bold mb-1">Tipo de Cliente</label>
@@ -235,7 +235,7 @@ export const ClientFormModal = ({
                 <option value="NATURAL">Natural</option>
                 <option value="JURIDICO">Jurídico</option>
               </select>
-          
+
             </div>
                   <div>
               <label className="block text-slate-400 font-bold mb-1">Dirrecion</label>
@@ -427,7 +427,7 @@ const ClientControls = ({
 );
 
 // 3. COMPONENTE PADRE (MainRenderer)
-export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps) {
+export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
   const clientes = useDbTable("clientes") as unknown as ClienteVista[];
   const {loadTable}=useDbActions()
   const loadingClientes = useDbLoading("clientes");
@@ -502,7 +502,7 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
           tipoCliente: data.tipoCliente,
           idRutDocumento,
           ciudad: data.ciudad ?? "Cali",
-          
+
         });
         if (!result.success) throw new Error(result.error || "Error al actualizar cliente");
       }
@@ -541,8 +541,8 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
         c.nitCedula.includes(search);
       return matchSearch && (filter === "Todos" || c.estado === (filter === "ACTIVO" ? "ACTIVO" : "INACTIVO"));
     });
-    
-  }, [clientes, search, filter,loadTable]);
+
+  }, [clientes, search, filter]);
 
 
   const permisos = useMemo<PermisosUsuario | undefined>(

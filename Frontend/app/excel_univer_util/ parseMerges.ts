@@ -1,21 +1,8 @@
+import type { Worksheet } from "exceljs";
 // utils/excel-univer/parseMerges.ts
 
-export function parseMerges(worksheet: any) {
-  // ✅ Intentar obtener merges de diferentes formas
-  let merges: string[] = [];
-  
-  // Forma 1: worksheet.model.merges (más común)
-  if (worksheet.model?.merges) {
-    merges = worksheet.model.merges;
-  }
-  // Forma 2: worksheet.merges (algunas versiones)
-  else if (worksheet.merges) {
-    merges = worksheet.merges;
-  }
-  // Forma 3: worksheet._merges (internamente)
-  else if (worksheet._merges) {
-    merges = worksheet._merges;
-  }
+export function parseMerges(worksheet: Worksheet) {
+  const merges = worksheet.model.merges ?? [];
 
   // ✅ Si no hay merges, retornar array vacío
   if (!merges || !Array.isArray(merges) || merges.length === 0) {
@@ -24,17 +11,17 @@ export function parseMerges(worksheet: any) {
 
   // ✅ Filtrar y procesar solo merges válidos
   const validMerges = merges
-    .filter((mergeRef: any) => {
+    .filter((mergeRef: string) => {
       if (typeof mergeRef !== 'string') return false;
       if (!mergeRef.includes(':')) return false;
-      
+
       // ✅ Verificar que sea una referencia de celda válida
       const parts = mergeRef.split(':');
       if (parts.length !== 2) return false;
-      
+
       const startMatch = parts[0].match(/^[A-Z]+\d+$/);
       const endMatch = parts[1].match(/^[A-Z]+\d+$/);
-      
+
       return startMatch && endMatch;
     })
     .map((mergeRef: string) => {
@@ -58,7 +45,7 @@ export function parseMerges(worksheet: any) {
 
   // ✅ Remover duplicados (por si hay merges repetidos)
   const uniqueMerges = validMerges.filter((merge, index, self) => {
-    return index === self.findIndex((m) => 
+    return index === self.findIndex((m) =>
       m.startRow === merge.startRow &&
       m.startColumn === merge.startColumn &&
       m.endRow === merge.endRow &&

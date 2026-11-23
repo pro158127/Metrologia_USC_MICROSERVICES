@@ -1,20 +1,18 @@
 "use client";
 
-import { useState,useMemo,useEffect } from "react";
-import { Menu,Check, Bell, ChevronDown, CheckCircle, X, Ruler,Trash2 } from "lucide-react";
-import { useSession } from "next-auth/react";
-import { warn } from "console";
-import { useDbTable, useDbActions, useRevisionTablas } from "@/app/componets/tables_recharge";
+import { useDbActions,useDbTable,useRevisionTablas } from "@/app/componets/tables_recharge";
 import type RealtimeTablesState from "@/tipos/store";
+import { ChevronDown,Menu,Ruler } from "lucide-react";
+import { useSession } from "next-auth/react";
+import { useEffect,useState } from "react";
 
 
-import { 
-  marcarNotificacionComoLeida, 
-  eliminarNotificacion, 
-  marcarTodasComoLeidas, 
-  eliminarTodasLasNotificaciones ,
-  getHistorialCompletoNotificaciones
-  
+import {
+eliminarNotificacion,
+eliminarTodasLasNotificaciones,
+getHistorialCompletoNotificaciones,
+marcarNotificacionComoLeida,
+marcarTodasComoLeidas
 } from '@/app/action_module/notify'; // Ajusta la ruta a tu archivo de funciones
 
 const priorityStyles: Record<string, { bg: string; text: string; label: string }> = {
@@ -109,7 +107,7 @@ export default function NotificationCenter() {
       } catch (error) {
         console.error("Error al eliminar la notificación:", error);
         setExitingIds((prev) => prev.filter((id) => id !== idNotificacion));
-      } 
+      }
     }, 300);
   };
 
@@ -119,7 +117,7 @@ export default function NotificationCenter() {
 
     try {
       const result = await marcarTodasComoLeidas(Number(currentUserId));
-      
+
       if (result.success) {
         setDbState((prev) => ({
           ...prev,
@@ -137,7 +135,7 @@ export default function NotificationCenter() {
 
     try {
       const result = await eliminarTodasLasNotificaciones(Number(currentUserId));
-      
+
       if (result.success) {
         setDbState((prev) => ({
           ...prev,
@@ -181,7 +179,7 @@ export default function NotificationCenter() {
       {/* Panel Desplegable de Notificaciones */}
       {showPanel && (
         <div className="absolute right-0 mt-2 w-96 max-h-[500px] flex flex-col bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden transform origin-top-right transition-all">
-          
+
           {/* Cabecera del Panel */}
           <div className="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
             <div>
@@ -288,14 +286,14 @@ export default function NotificationCenter() {
   );
 }
 
-export function Header({ moduleTitle, isSidebarOpen, setIsSidebarOpen, onOpenProfile }: any) {
+export function Header({ moduleTitle, isSidebarOpen, setIsSidebarOpen, onOpenProfile }: { moduleTitle: string; isSidebarOpen: boolean; setIsSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>; onOpenProfile: () => void }) {
 
-  const [showPanel, setShowPanel] = useState(false);
+  const [, setShowPanel] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const  {data:session}=useSession();
 
 
-  
+
 
 const getInitials = (fullName: string | null | undefined): string => {
   if (!fullName) return "";
@@ -319,7 +317,7 @@ const inital=getInitials(session?.user?.name)
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/85 backdrop-blur-xl shadow-sm">
       <div className="flex h-16 items-center justify-between px-4 sm:px-6">
-        
+
         {/* SECCIÓN IZQUIERDA: Botón Sidebar + Logo + Título */}
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           {/* Botón de Menú (Hamburguesa) - Integrado y alineado dentro del flujo */}
@@ -373,13 +371,13 @@ const inital=getInitials(session?.user?.name)
               <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-slate-950 text-xs sm:text-sm font-medium text-white shrink-0">
                 {inital}
               </div>
-              
+
               {/* Nombre y Cargo (Ocultos en móvil para priorizar espacio) */}
               <div className="hidden md:flex flex-col text-left">
                 <span className="text-sm font-medium text-slate-950 leading-none mb-1">{session?.user.name}</span>
                 <span className="text-xs text-slate-500">{session?.user.role}</span>
               </div>
-              
+
               <ChevronDown size={14} className="text-slate-500" />
             </button>
 

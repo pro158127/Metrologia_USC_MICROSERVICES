@@ -1,20 +1,17 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
 const READY_EVENT = "metrologia:module-ready";
 
 /** Reports that a module's first screen data has settled (success or failure). */
 export function useModuleSplashReady(moduleKey: string, ready: boolean) {
-  const readyRef = useRef(ready);
-  readyRef.current = ready;
 
   useEffect(() => {
     if (!ready) return;
     // Let sibling effects start their initial requests before releasing the cover.
     const frame = window.requestAnimationFrame(() => {
-      if (!readyRef.current) return;
       window.dispatchEvent(new CustomEvent(READY_EVENT, { detail: { moduleKey } }));
     });
     return () => window.cancelAnimationFrame(frame);
