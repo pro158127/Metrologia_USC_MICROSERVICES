@@ -25,12 +25,14 @@ function sanitizeFileName(fileName: string): string {
 async function streamArchivo(key: string, request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const range = typeof request.headers.range === 'string' ? request.headers.range : undefined;
   const match = range?.match(/^bytes=(\d*)-(\d*)$/);
-  const s3Range = match ? `bytes=${match[1]}-${match[2]}` : undefined;
+  const s3Range = match && (match[1] || match[2]) ? `bytes=${match[1]}-${match[2]}` : undefined;
   const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key, ...(s3Range && { Range: s3Range }) });
   const s3Response = await s3Client.send(getCommand);
 
   if (!s3Response.Body) throw new AppError(400, 'El archivo recuperado está vacío');
-  const contentType = s3Response.ContentType || 'application/octet-stream';
+  const contentType = /\.pdf$/i.test(key)
+    ? 'application/pdf'
+    : s3Response.ContentType || 'application/octet-stream';
 
   let originalFilename = key.split('/').pop() || 'archivo';
   if (s3Response.Metadata?.originalname) {
@@ -45,6 +47,8 @@ async function streamArchivo(key: string, request: FastifyRequest, reply: Fastif
 
   reply.header('Content-Type', contentType);
   reply.header('Accept-Ranges', 'bytes');
+  reply.header('Access-Control-Allow-Headers', 'Range');
+  reply.header('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Length, Content-Range, Content-Disposition');
   if (s3Response.ContentLength != null) reply.header('Content-Length', s3Response.ContentLength);
   if (s3Response.ContentRange) reply.header('Content-Range', s3Response.ContentRange);
   reply.header(
