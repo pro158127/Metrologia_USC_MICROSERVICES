@@ -1323,7 +1323,10 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
             tipo_entry: 'prod',
             id_registro: ot.ID_ORDEN_TRABAJO,
-            action: esMaster || !hayMasterResultado ? "ot_create" : "ot_update",
+            // En cotizaciones heterogéneas el cliente recibe solo la OT maestra,
+            // que es la que se usa para importar la orden. Las hijas se generan
+            // para operación interna, pero no deben disparar correos al cliente.
+            action: esMaster || !hayMasterResultado ? "ot_create" : undefined,
             codigo_actual: ot.CODIGO_OT,
             tipo: 2,
             id_usuario: idUsuario,
@@ -1528,7 +1531,9 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
 
             tipo_entry: 'prod',
             id_registro: ot.ID_ORDEN_TRABAJO,
-            action: esMaster || !hayMasterOts ? 'ot_create' : 'ot_update',
+            // La maestra es el único documento OT que se envía en una aprobación
+            // heterogénea; las hijas permanecen disponibles para el flujo operativo.
+            action: esMaster || !hayMasterOts ? 'ot_create' : undefined,
             codigo_actual: ot.CODIGO_OT,
             tipo: 2,
             id_usuario: creador ?? undefined,
