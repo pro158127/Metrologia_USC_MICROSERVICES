@@ -65,7 +65,7 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
     : tipo === 2 ? { ID_ORDEN_TRABAJO_FK: id_registro }
     : { ID_RECEPCION_FK: id_registro };
   const buscarDocumentos = (tx: Prisma.TransactionClient) => tx.documentos.findMany({
-    where: { ...fkDocumento, ordenPagoId: null, certificados: { none: {} } },
+    where: { ...fkDocumento, ordenPagoId: null, certificado: null },
     include: {
       version_documentos: { orderBy: [{ VERSION: 'desc' }, { ID_VERSION: 'desc' }] },
     },
@@ -323,7 +323,17 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
         if (!anterior?.version_documentos.some((version) => version.RUTA_URL === s3Key_pdf)) {
           const datos = { NOMBRE: `${nombreBase}.pdf`, RUTA_URL: s3Key_pdf, MIME_TYPE: 'application/pdf' };
           const documento = anterior
-            ? await tx.documentos.update({ where: { ID_DOCUMENTO: anterior.ID_DOCUMENTO }, data: datos })
+            ? await tx.documentos.update({
+                where: { ID_DOCUMENTO: anterior.ID_DOCUMENTO },
+                data: {
+                  ...datos,
+                  ID_COTIZACION_FK: tipo === 1 ? id_registro : null,
+                  ID_ORDEN_TRABAJO_FK: tipo === 2 ? id_registro : null,
+                  ID_RECEPCION_FK: tipo === 3 ? id_registro : null,
+                  ID_PLANTILLA_FK: null,
+                  ordenPagoId: null,
+                },
+              })
             : await tx.documentos.create({ data: { ...datos, ...fkDocumento, PROVEEDOR: 'AWS_S3' } });
           await tx.version_documentos.create({
             data: {

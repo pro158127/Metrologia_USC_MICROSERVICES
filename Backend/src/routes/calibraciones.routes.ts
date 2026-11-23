@@ -231,7 +231,16 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
         if (certExistente) {
           await tx.documentos.update({
             where: { ID_DOCUMENTO: certExistente.ID_DOCUMENTO_FK },
-            data: { RUTA_URL: key, MIME_TYPE: 'application/pdf', PROVEEDOR: 'AWS_S3' },
+            data: {
+              RUTA_URL: key,
+              MIME_TYPE: 'application/pdf',
+              PROVEEDOR: 'AWS_S3',
+              ID_COTIZACION_FK: null,
+              ID_ORDEN_TRABAJO_FK: null,
+              ID_RECEPCION_FK: null,
+              ID_PLANTILLA_FK: null,
+              ordenPagoId: null,
+            },
           });
           const last = await tx.version_documentos.findFirst({
             where: { ID_DOCUMENTO_FK: certExistente.ID_DOCUMENTO_FK },
@@ -264,8 +273,6 @@ export default async function calibracionesRoutes(fastify: FastifyInstance) {
               RUTA_URL: key,
               PROVEEDOR: 'AWS_S3',
               MIME_TYPE: 'application/pdf',
-              ID_RECEPCION_FK: recepcion?.ID_RECEPCION ?? null,
-              ID_ORDEN_TRABAJO_FK: ot?.ID_ORDEN_TRABAJO ?? null,
             },
           });
           await tx.version_documentos.create({

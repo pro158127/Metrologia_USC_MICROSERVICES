@@ -68,7 +68,6 @@ export default async function facturasRoutes(fastify: FastifyInstance) {
               RUTA_URL: archivo.rutaUrl,
               MIME_TYPE: archivo.mimeType || 'application/pdf',
               PROVEEDOR: 'AWS_S3',
-              ID_ORDEN_TRABAJO_FK: idOrdenTrabajo ?? null,
             },
           });
           idDocumento = documento.ID_DOCUMENTO;

@@ -726,6 +726,11 @@ async function publicarImportacion(payload: ImportarOTEPayload, publicacion: Pub
           data: {
             NOMBRE: codigoOTFinal,
             RUTA_URL: s3KeyDefinitiva,
+            ID_COTIZACION_FK: null,
+            ID_ORDEN_TRABAJO_FK: idOtFinal,
+            ID_RECEPCION_FK: null,
+            ID_PLANTILLA_FK: null,
+            ordenPagoId: null,
           },
         });
       } else {

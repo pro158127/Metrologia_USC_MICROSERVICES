@@ -217,7 +217,16 @@ export async function generarCertificadoFinal(
         actual.ID_DOCUMENTO_FK !== cert.ID_DOCUMENTO_FK) return false;
     const documento = await tx.documentos.updateMany({
       where: { ID_DOCUMENTO: cert.ID_DOCUMENTO_FK, RUTA_URL: cert.documentos.RUTA_URL },
-      data: { RUTA_URL: outputKey, MIME_TYPE: 'application/pdf', PROVEEDOR: 'AWS_S3' },
+      data: {
+        RUTA_URL: outputKey,
+        MIME_TYPE: 'application/pdf',
+        PROVEEDOR: 'AWS_S3',
+        ID_COTIZACION_FK: null,
+        ID_ORDEN_TRABAJO_FK: null,
+        ID_RECEPCION_FK: null,
+        ID_PLANTILLA_FK: null,
+        ordenPagoId: null,
+      },
     });
     if (!documento.count) return false;
 

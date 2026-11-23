@@ -494,7 +494,7 @@ model Certificado {
   idCertificado Int                @id @default(autoincrement()) @map("ID_CERTIFICADO")
   codigo        String             @unique @map("CODIGO_CERTIFICADO")
   idCalibracion Int                @unique @map("ID_CALIBRACION_FK")
-  idDocumento   Int                @map("ID_DOCUMENTO_FK")
+  idDocumento   Int                @unique @map("ID_DOCUMENTO_FK")
   estadoRevision   String    @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
   motivoRechazo    String?   @map("MOTIVO_RECHAZO")
   idRevisor        Int?      @map("ID_REVISOR_FK")
@@ -521,7 +521,7 @@ model Documento {
   idPlantilla     Int?                    @map("ID_PLANTILLA_FK")
   ordenPagoId    Int?
   ordenPago      OrdenTrabajo? @relation("OrdenPago", fields: [ordenPagoId], references: [idOrdenTrabajo])
-  certificados    Certificado[]
+  certificado     Certificado?
   clienteRut      Cliente?                @relation("ClienteRut")
   chunksIA        DocumentChunk[]
   cotizacion      Cotizacion?             @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)

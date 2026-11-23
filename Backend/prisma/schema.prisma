@@ -74,7 +74,7 @@ model certificados {
   ID_CERTIFICADO        Int                  @id @default(autoincrement())
   CODIGO_CERTIFICADO    String               @unique
   ID_CALIBRACION_FK     Int                  @unique
-  ID_DOCUMENTO_FK       Int
+  ID_DOCUMENTO_FK       Int                  @unique
   ESTADO_REVISION       String               @default("PENDIENTE_REVISION")
   MOTIVO_RECHAZO        String?
   ID_REVISOR_FK         Int?
@@ -167,7 +167,7 @@ model documentos {
   ID_RECEPCION_FK                                         Int?
   ID_PLANTILLA_FK                                         Int?
   ordenPagoId                                             Int?
-  certificados                                            certificados[]
+  certificado                                             certificados?
   clientes                                                clientes?
   document_chunks                                         document_chunks[]
   cotizaciones                                            cotizaciones?           @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)

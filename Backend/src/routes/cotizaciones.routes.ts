@@ -1855,9 +1855,8 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         revisores.map((u) => [u.ID_USUARIO_AUTO_INCREMENT, u.NOMBRE_COMPLETO])
       );
 
-      // Los documentos de certificados también guardan sus FK de OT/recepción
-      // para facilitar consultas. No deben volver a clasificarse como formatos
-      // de OT o recepción en las carpetas genéricas.
+      // Los documentos de certificados se clasifican por certificados.ID_DOCUMENTO_FK,
+      // nunca por las FK directas de OT o recepción.
       const idsDocumentoCertificado = new Set(
         certificados.map((cert) => cert.ID_DOCUMENTO_FK)
       );

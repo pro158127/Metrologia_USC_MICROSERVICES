@@ -439,7 +439,6 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             RUTA_URL: key,
             PROVEEDOR: 'AWS_S3',
             MIME_TYPE: 'application/pdf',
-            ID_ORDEN_TRABAJO_FK: idOT,
             ordenPagoId: idOT,
           },
         });
@@ -732,7 +731,6 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
             RUTA_URL: key,
             PROVEEDOR: 'AWS_S3',
             MIME_TYPE: 'application/pdf',
-            ID_ORDEN_TRABAJO_FK: idVinculo,
             ordenPagoId: idVinculo,
           },
         });
