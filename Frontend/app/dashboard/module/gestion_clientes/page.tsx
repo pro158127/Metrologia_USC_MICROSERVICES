@@ -74,7 +74,7 @@ const RutFileInput = ({
         accept=".pdf,png,.jpg,.jpeg"
         onChange={onFileChange}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        required={!isEditMode && !idRutDocumento}
+        required={!idRutDocumento && !selectedFile}
       />
       {selectedFile ? (
         <div className="flex items-center gap-2 text-emerald-400 font-medium">
@@ -108,8 +108,6 @@ export const ClientFormModal = ({
   onClose,
   onSave,
 }: ClientFormModalProps) => {
-  if (!isOpen) return null;
-
   const isEditMode = client !== null;
   const [formData, setFormData] = useState<Partial<ClienteFormData>>(
     isEditMode
@@ -129,6 +127,8 @@ export const ClientFormModal = ({
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  if (!isOpen) return null;
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const archivo = e.target.files[0];
@@ -141,9 +141,9 @@ export const ClientFormModal = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    onSave(
+    const saved = await onSave(
       {
         ...formData,
         idRutDocumento: formData.idRutDocumento ?? null,
@@ -151,6 +151,7 @@ export const ClientFormModal = ({
       },
       isEditMode ? "edit" : "create"
     );
+    if (saved) onClose();
   };
 
   return (
@@ -448,27 +449,33 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
     setIsModalOpen(true);
   }, []);
 
-  const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit") => {
-    let url_ar = "";
-    if (mode === "create") {
-      if (data.rutFile) {
+  const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit"): Promise<boolean> => {
+    try {
+      let idRutDocumento = data.idRutDocumento ?? undefined;
+      if (mode === "create" || data.rutFile) {
+        if (!data.rutFile) {
+          toast.error("Adjunta el documento RUT para continuar.");
+          return false;
+        }
         const up = await subirArchivoDocumento(data.rutFile as File);
         if (!up.ok || !up.rutaUrl) {
-          console.error("Error al subir el archivo:", up.error);
-          return;
+          toast.error(up.error || "No se pudo subir el RUT.");
+          return false;
         }
-        url_ar = up.rutaUrl;
-      }
-
-      console.log("Crear cliente con datos:", data, "Ruta URL:", url_ar);
-      try {
-        const resul1 = crearDocumento({
+        const documento = await crearDocumento({
           nombre: `Rut_${data.nitCedula}`,
-          rutaUrl: url_ar,
+          rutaUrl: up.rutaUrl,
           mimeType: (data.rutFile as File).type,
           proveedor: "AWS_S3",
         });
-        console.log("Resultado de crearDocumento:", await resul1, "Ruta URL:", url_ar);
+        if (!documento.success || !documento.data?.idDocumento) {
+          toast.error(documento.error || "No se pudo registrar el documento RUT.");
+          return false;
+        }
+        idRutDocumento = documento.data.idDocumento;
+      }
+
+      if (mode === "create") {
         const result = await crearCliente({
           correo: data.correo ?? "",
           nitCedula: data.nitCedula ?? "",
@@ -477,18 +484,13 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
           telefono: data.telefono ?? "",
           observacion: data.observacion ?? "",
           tipoCliente: data.tipoCliente,
-          idRutDocumento: (await resul1).data?.idDocumento,
+          idRutDocumento: idRutDocumento!,
           dirrecion:data.dirrecion??"sin dirrecion",
           ciudad: data.ciudad ?? "Cali",
         });
         if (!result.success) throw new Error(result.error || "Error al crear cliente");
-      } catch (error) {
-        console.error("Error al crear cliente:", error);
       }
-    }
-    if (mode === "edit") {
-      console.log("Actualizar cliente con datos:", data);
-      try {
+      if (mode === "edit") {
         const result = await actualizarCliente(data.idCliente!, {
           correo: data.correo ?? "",
           nitCedula: data.nitCedula ?? "",
@@ -498,17 +500,18 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
           observacion: data.observacion ?? "",
           dirrecion:data.dirrecion??"sin dirrecion",
           tipoCliente: data.tipoCliente,
-          idRutDocumento: data.idRutDocumento ?? undefined,
+          idRutDocumento,
           ciudad: data.ciudad ?? "Cali",
           
         });
         if (!result.success) throw new Error(result.error || "Error al actualizar cliente");
-      } catch (error) {
-        console.error("Error al actualizar cliente:", error);
       }
+      toast.success(mode === "create" ? "Cliente creado correctamente." : "Cliente actualizado correctamente.");
+      return true;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar el cliente.");
+      return false;
     }
-
-    setIsModalOpen(false);
   };
 
   const handleToggleStatus = useCallback((id: number) => {

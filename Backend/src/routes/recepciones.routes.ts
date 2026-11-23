@@ -6,6 +6,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { AppError } from '../lib/errors.js';
 import { assertPermission } from '../lib/permissions.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
+import { siguienteVersionOT } from '../services/versionado-ot.service.js';
 import { evaluarTransicionesOT, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { cotizacionDesalineadaConRecepcion, normalizarServicioCotizado, retirarUnidadesDeCotizacion, sincronizarCotizacionDesdeRecepcion } from '../services/cotizacion-sync.service.js';
@@ -604,7 +605,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           if (otNueva || otCambio) {
             if (!otNueva) await tx.ordenes_trabajo.update({
               where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
-              data: { ...datosSitioOT(sitio), CODIGO_OT: await generarConsecutivo(tx, 'OT', ot.CODIGO_OT) },
+              data: { ...datosSitioOT(sitio), ...await siguienteVersionOT(tx, ot) },
             });
             documentosOT.add(ot.ID_ORDEN_TRABAJO);
           }
@@ -1119,13 +1120,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             generarOtDoc = true;
             const otActual = await tx.ordenes_trabajo.findUnique({
               where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
-              select: { CODIGO_OT: true },
+              select: { CODIGO_OT: true, VERSION: true },
             });
             if (otActual) {
-              const nuevoCodigoOT = await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT);
               await tx.ordenes_trabajo.update({
                 where: { ID_ORDEN_TRABAJO: actual.ID_ORDEN_TRABAJO_FK },
-                data: { CODIGO_OT: nuevoCodigoOT },
+                data: await siguienteVersionOT(tx, otActual),
               });
             }
           }
@@ -1337,14 +1337,14 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         if (rec.ID_ORDEN_TRABAJO_FK) {
           const otActual = await tx.ordenes_trabajo.findUnique({
             where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
-            select: { CODIGO_OT: true },
+            select: { CODIGO_OT: true, VERSION: true },
           });
           if (otActual) {
-            const nuevoCodigo = await generarConsecutivo(tx, 'OT', otActual.CODIGO_OT);
-            cambioCodigoOT = cambioDeCodigo(otActual.CODIGO_OT, nuevoCodigo);
+            const versionOT = await siguienteVersionOT(tx, otActual);
+            cambioCodigoOT = cambioDeCodigo(otActual.CODIGO_OT, versionOT.CODIGO_OT);
             await tx.ordenes_trabajo.update({
               where: { ID_ORDEN_TRABAJO: rec.ID_ORDEN_TRABAJO_FK },
-              data: { CODIGO_OT: nuevoCodigo },
+              data: versionOT,
             });
           }
         }

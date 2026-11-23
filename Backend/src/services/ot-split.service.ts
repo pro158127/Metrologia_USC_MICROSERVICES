@@ -7,6 +7,7 @@
 // Si solo hay un sitio (homogénea), produce una única OT, reutilizando la existente si aplica.
 import { Prisma } from '@prisma/client';
 import { generarConsecutivo } from './consecutivo.service.js';
+import { siguienteVersionOT } from './versionado-ot.service.js';
 
 export type SitioCalibracion = 'LABORATORIO' | 'CLIENTE' | 'INTERNO_USC';
 
@@ -107,11 +108,13 @@ export async function splitHeterogeneousOT(
     let codigoOT: string;
 
     if (otExistente) {
-      codigoOT = otExistente.CODIGO_OT;
+      const versionOT = await siguienteVersionOT(tx, otExistente);
+      codigoOT = versionOT.CODIGO_OT;
       ot = await tx.ordenes_trabajo.update({
         where: { ID_ORDEN_TRABAJO: otExistente.ID_ORDEN_TRABAJO },
         data: {
           ...options.datosOT,
+          ...versionOT,
           SITIO_CALIBRACION: sitio,
           ES_EN_SITIO: esSitio,
           ES_LAB_PERMANENTE: sitio === 'LABORATORIO',

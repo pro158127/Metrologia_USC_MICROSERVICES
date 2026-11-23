@@ -2,7 +2,7 @@
 
   // 1. Imports
   import React, { useState, useEffect } from "react";
-  import { Link, FileText, Unlink, Layers, AlertTriangle, Search, Filter } from "lucide-react";
+import { Link, FileText, Unlink, Layers, AlertTriangle, Filter } from "lucide-react";
   import { useDbStore } from "../../stores/dbstore"; 
   import { useDbLoading } from "@/app/componets/tables_recharge";
   import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
@@ -12,6 +12,7 @@ import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
 import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
+import type { OrdenTrabajoModel } from "@/tipos/entidades";
 
   // Interfaces y Tipos
   interface GeneratedOT {
@@ -31,6 +32,31 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     cliente: string;
     fechaRecepcion: string;
     equiposContados: number;
+    otsExistentes: OrdenTrabajoModel[];
+  }
+
+  interface FileUploadZoneProps {
+    tipoFlujo: "estandar" | "inverso";
+    file: File | null;
+    showForm: boolean;
+    onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+    onRemoveFile: () => void;
+    onExtract: () => void;
+    onStartManual: () => void;
+  }
+
+  interface OTFormSectionProps {
+    tipoFlujo: "estandar" | "inverso";
+    cotizacionExtraida: string;
+    otNumber: string;
+    date: string;
+    client: string;
+    cotizacionSeleccionada: string;
+    recepciones: RecepcionPorCotizacion[];
+    isProcessing: boolean;
+    plantillasCompletas: boolean;
+    onCotizacionChange: (codigo: string) => void;
+    onGenerateOT: () => void;
   }
 
   // 2. Componentes Hijos
@@ -60,7 +86,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     </div>
   );
 
-  const FileUploadZone: React.FC<any> = ({ tipoFlujo, file, showForm, onFileChange, onRemoveFile, onExtract, onStartManual }) => {
+  const FileUploadZone: React.FC<FileUploadZoneProps> = ({ tipoFlujo, file, showForm, onFileChange, onRemoveFile, onExtract, onStartManual }) => {
     if (!file) {
       return (
         <label htmlFor="file-upload" className="flex flex-col items-center justify-center w-full max-w-md border-2 border-dashed border-slate-200 rounded-2xl p-8 cursor-pointer bg-slate-50/50 hover:bg-slate-50 transition">
@@ -90,7 +116,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     return null;
   };
 
-  const OTFormSection: React.FC<any> = ({ tipoFlujo, cotizacionExtraida, otNumber, date, client, cotizacionSeleccionada, recepciones, isProcessing, plantillasCompletas, onCotizacionChange, onGenerateOT }) => (
+  const OTFormSection: React.FC<OTFormSectionProps> = ({ tipoFlujo, cotizacionExtraida, otNumber, date, client, cotizacionSeleccionada, recepciones, isProcessing, plantillasCompletas, onCotizacionChange, onGenerateOT }) => (
     <div className="mt-4 space-y-5 border-t border-slate-100 pt-4 animate-fadeIn">
       {tipoFlujo === "estandar" && cotizacionExtraida && (
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
@@ -120,7 +146,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
         </label>
         <select value={cotizacionSeleccionada} onChange={(e) => onCotizacionChange(e.target.value)} disabled={isProcessing} className="w-full max-w-xl px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white outline-none focus:border-blue-500 font-medium text-slate-700 font-mono">
           <option value="">{tipoFlujo === "estandar" ? "-- Creación aislada (Flujo anormal) --" : "-- Seleccionar cotización vigente --"}</option>
-          {recepciones.map((rec: any) => (
+          {recepciones.map((rec) => (
             <option key={rec.cotizacion} value={rec.cotizacion}>{rec.cotizacion} — {rec.cliente} ({rec.equiposContados} Equipos registrados)</option>
           ))}
         </select>
@@ -275,9 +301,10 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     const [isProcessing, setIsProcessing] = useState(false);
 
     useEffect(() => {
-      setIsMounted(true);
+      const frame = window.requestAnimationFrame(() => setIsMounted(true));
       loadTable('ordenes_trabajo');
       loadTable('cotizaciones');
+      return () => window.cancelAnimationFrame(frame);
     }, [loadTable]);
 
     useModuleSplashReady("importarOrden", isMounted && !loadingOTs && !loadingCotizaciones && !cargandoPlantillas);
@@ -294,15 +321,16 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     }
 
     const cotizacionesVinculables = (cotizaciones || [])
-      .filter((c: any) => c.estado === 'APROBADA' || c.estado === 'ENVIADA')
-      .map((c: any) => ({
+      .filter((c) => c.estado === 'APROBADA' || c.estado === 'ENVIADA')
+      .map((c): RecepcionPorCotizacion => ({
         cotizacion: c.codigo,
         cliente: c.cliente?.razonSocial || "Cliente no registrado",
         fechaRecepcion: c.createdAt ? String(c.createdAt).substring(0, 10) : "-",
-        equiposContados: c.detalles?.length || 0
+        equiposContados: c.detalles?.length || 0,
+        otsExistentes: (ordenes_trabajo || []).filter((ot) => ot.idCotizacion === c.idCotizacion),
       }));
 
-    const generatedOTs = (ordenes_trabajo || []).map((ot: any) => {
+    const generatedOTs = (ordenes_trabajo || []).map((ot) => {
       const isMaster = ot.sitioCalibracion == null;
       return {
         id: ot.idOrdenTrabajo,
@@ -319,7 +347,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
 
     const handleCotizacionChange = (cotiz: string) => {
       setCotizacionSeleccionada(cotiz);
-      const datosCotiz = cotizacionesVinculables.find((r: any) => r.cotizacion === cotiz);
+      const datosCotiz = cotizacionesVinculables.find((r) => r.cotizacion === cotiz);
       
       if (datosCotiz) {
         setClient(datosCotiz.cliente);
@@ -363,6 +391,11 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
         return setToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
       }
       if (!file) return setToast("⚠️ Por favor adjunta el archivo Excel primero.");
+      const cotizacionSeleccionadaInfo = cotizacionesVinculables.find((c) => c.cotizacion === cotizacionSeleccionada);
+      if (cotizacionSeleccionadaInfo?.otsExistentes.length) {
+        const codigosOT = cotizacionSeleccionadaInfo.otsExistentes.map((ot) => ot.codigo).join(", ");
+        if (!window.confirm(`Esta cotización ya tiene OT registradas (${codigosOT}). La importación reconciliará/versionará esa familia. ¿Deseas continuar?`)) return;
+      }
       
       setIsProcessing(true);
       setToast("⏳ Procesando documento y validando reglas de negocio...");
@@ -376,7 +409,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
         }
         s3KeyTemp = uploadRes.rutaUrl;
 
-        const cotizObj = cotizaciones.find((c: any) => c.codigo === cotizacionSeleccionada);
+        const cotizObj = cotizaciones.find((c) => c.codigo === cotizacionSeleccionada);
         const idCotizacionReal = cotizObj ? cotizObj.idCotizacion : undefined; 
 
         const actionRes = await procesarImportacionOTAction({ s3KeyTemp, tipoFlujo, idCotizacion: idCotizacionReal });
@@ -397,8 +430,8 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
             setIsProcessing(false);
           }
         }, 2500);
-      } catch (err: any) {
-        setToast(`❌ Error crítico: ${err.message}`);
+      } catch (err: unknown) {
+        setToast(`❌ Error crítico: ${err instanceof Error ? err.message : "Error inesperado."}`);
         setIsProcessing(false);
       }
     };

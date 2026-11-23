@@ -79,13 +79,13 @@ export async function actualizarSeguimiento(
   }
 }
 
-export async function eliminarSeguimiento(idSeguimiento: number): Promise<{ ok: boolean }> {
+export async function eliminarSeguimiento(idSeguimiento: number, motivo: string): Promise<{ ok: boolean }> {
   try {
     const session = await auth();
     await fastifyRequest<{ ok: boolean; message?: string }>(
       session,
       `/api/v1/seguimientos/${idSeguimiento}`,
-      { method: 'DELETE' }
+      { method: 'DELETE', body: { motivo } }
     );
     return { ok: true };
   } catch (error) {

@@ -1,6 +1,6 @@
 import type { Prisma, sitio_calibracion } from '@prisma/client';
 import { AppError } from '../lib/errors.js';
-import { generarConsecutivo } from './consecutivo.service.js';
+import { siguienteVersionOT } from './versionado-ot.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -99,7 +99,7 @@ export async function sincronizarOTMaestraDesdeRecepcion(tx: Tx, idMaestra: numb
   }
   if (cambio && !esNueva) await tx.ordenes_trabajo.update({
     where: { ID_ORDEN_TRABAJO: idMaestra },
-    data: { CODIGO_OT: await generarConsecutivo(tx, 'OT', maestra.CODIGO_OT) },
+    data: await siguienteVersionOT(tx, maestra),
   });
   return cambio;
 }

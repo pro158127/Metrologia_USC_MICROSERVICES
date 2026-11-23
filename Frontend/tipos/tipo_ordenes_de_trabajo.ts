@@ -320,6 +320,7 @@ export interface FieldProps {
   type?: string;
   list?: string;
   className?: string;
+  readOnly?: boolean;
 }
 
 export interface KanbanBoardViewProps {

@@ -6,6 +6,7 @@ import { normalizarServicioCotizado } from './cotizacion-sync.service.js';
 import { evaluarTransicionesOT } from './ot-fsm.service.js';
 import { calcularEstadoRecepcion } from './recepcion-entrega.service.js';
 import { datosSitioOT, sincronizarOTMaestraDesdeRecepcion, verificarGruposOperativos } from './recepcion-ot-sync.service.js';
+import { siguienteVersionOT } from './versionado-ot.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -335,7 +336,7 @@ export async function generarOrdenesTrabajoAprobacion(tx: Tx, cotizacion: Cotiza
       where: { ID_ORDEN_TRABAJO: orden.ID_ORDEN_TRABAJO },
       data: {
         ...enlace,
-        ...(cambiaDocumento ? { CODIGO_OT: await generarConsecutivo(tx, 'OT', orden.CODIGO_OT), VERSION: (orden.VERSION ?? 1) + 1 } : {}),
+        ...(cambiaDocumento ? await siguienteVersionOT(tx, orden) : {}),
       },
     }) : orden;
     ordenesPorSitio.set(sitio, guardada);

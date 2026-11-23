@@ -264,6 +264,10 @@ model SeguimientoComercial {
   resultado      String?    @map("RESULTADO")
   idUsuario      Int?       @map("ID_USUARIO_FK")
   createdAt      DateTime   @default(now()) @map("CREATED_AT")
+  origen         String     @default("MANUAL") @map("ORIGEN")
+  eliminadoAt    DateTime?  @map("ELIMINADO_AT")
+  eliminadoPor   Int?       @map("ELIMINADO_POR")
+  eliminacionMotivo String? @map("ELIMINACION_MOTIVO")
 
   cotizacion     Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
   usuario        Usuario?   @relation(fields: [idUsuario], references: [idUsuario])

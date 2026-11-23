@@ -21,6 +21,7 @@ import { Worker, Job, UnrecoverableError } from 'bullmq';
 import { getRedisConnection, IMPORTAR_QUEUE } from '../lib/queue/queue.js';
 import { registrarGeneracionPendiente, type SolicitudGeneracion } from '../services/generacion-pendiente.service.js';
 import { normalizarServicioCotizado } from '../services/cotizacion-sync.service.js';
+import { sincronizarOTMaestraDesdeRecepcion } from '../services/recepcion-ot-sync.service.js';
 import { randomUUID } from 'node:crypto';
 
 const prisma = new PrismaClient();
@@ -1095,6 +1096,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           throw new Error(`La cotización '${idCotizacionFinal}' no existe.`);
         }
 
+        if (!['APROBADA', 'ENVIADA'].includes(cotizacionExistente.ESTADO)) {
+          throw new UnrecoverableError(
+            `No se puede importar una OT para la cotización ${cotizacionExistente.CODIGO_COTIZACION} en estado ${cotizacionExistente.ESTADO}.`,
+          );
+        }
+
         if (cotizacionExistente.ESTADO === 'BORRADOR' || cotizacionExistente.ESTADO === 'ENVIADA') {
           const recepcionPendiente = await tx.recepciones_equipo.findFirst({
             where: { ID_COTIZACION_FK: idCotizacionFinal, ID_ORDEN_TRABAJO_FK: null, VIGENTE: true, activacion: true },
@@ -1389,6 +1396,13 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           solicitante,
         });
         resultado = { ots: split.ots, recepciones: split.recepciones };
+        if (idOtMaster != null && await sincronizarOTMaestraDesdeRecepcion(tx, idOtMaster)) {
+          const maestra = await tx.ordenes_trabajo.findUniqueOrThrow({
+            where: { ID_ORDEN_TRABAJO: idOtMaster },
+            select: { CODIGO_OT: true },
+          });
+          resultado.ots.push({ id: idOtMaster, codigo: maestra.CODIGO_OT, esNueva: false });
+        }
       }
 
       sinCambios = sinCambiosLocal;
@@ -1464,7 +1478,13 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         if (!idOtFinal) throw new Error('La importación no tiene una OT vinculada para archivar su archivo.');
         const documentos: Omit<SolicitudGeneracion, 'tipo_entry'>[] = [
           ...(isCotizacionNueva ? [{ tipo: 1, id_registro: idCotizacionFinal, action: 'cot_create' as const }] : []),
-          ...otsProcesadas.map((orden) => ({ tipo: 2, id_registro: orden.id, action: 'ot_update' as const })),
+          ...otsProcesadas.map((orden) => ({
+            tipo: 2,
+            id_registro: orden.id,
+            action: (esHeterogenea ? orden.id === idOtMaster : orden.id === otsProcesadas[0]?.id)
+              ? 'ot_update' as const
+              : undefined,
+          })),
           ...recepcionesProcesadas.map((recepcion) => ({
             tipo: 3, id_registro: recepcion.id, action: recepcion.esNueva ? 'rec_create' as const : 'rec_update' as const,
           })),

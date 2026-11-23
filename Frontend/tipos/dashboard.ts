@@ -85,6 +85,7 @@ export interface SystemAlertsSectionProps {
 
 export interface QuotesBarChartSectionProps {
   barData: BarChartPoint[];
+  loadState?: "loading" | "error" | "ready";
 }
 
 export interface ServiceDistributionPieChartSectionProps {

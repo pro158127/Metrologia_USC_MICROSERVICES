@@ -27,7 +27,7 @@ export const crearClienteBodySchema = z.object({
   observacion: z.string().nullish(),
   tipoCliente: tipoClienteEnum.optional(),
   ciudad: z.string().nullish(),
-  idRutDocumento: z.number().nullish(),
+  idRutDocumento: z.number().int().positive(),
   dirrecion: z.string().nullish(),
 });
 export type CrearClienteBody = z.infer<typeof crearClienteBodySchema>;
@@ -42,7 +42,7 @@ export const actualizarClienteBodySchema = z.object({
   tipoCliente: tipoClienteEnum.optional(),
   dirrecion: z.string().optional(),
   ciudad: z.string().nullish(),
-  idRutDocumento: z.number().nullish(),
+  idRutDocumento: z.number().int().positive().optional(),
 });
 export type ActualizarClienteBody = z.infer<typeof actualizarClienteBodySchema>;
 

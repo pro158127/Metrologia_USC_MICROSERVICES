@@ -56,6 +56,14 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       assertPermission(request, 'clientes', 'crear_editar');
       const body = request.body;
 
+      const rutDocumento = await fastify.prisma.documentos.findUnique({ where: { ID_DOCUMENTO: body.idRutDocumento } });
+      if (!rutDocumento) throw new AppError(400, 'El documento RUT no existe. Adjunta un RUT válido antes de crear el cliente.');
+      if (rutDocumento.ID_COTIZACION_FK || rutDocumento.ID_ORDEN_TRABAJO_FK || rutDocumento.ID_RECEPCION_FK || rutDocumento.ID_PLANTILLA_FK || !/^application\/pdf$|^image\/(png|jpeg)$/.test(rutDocumento.MIME_TYPE)) {
+        throw new AppError(400, 'El documento debe ser un PDF o imagen RUT sin asociación previa a otro módulo.');
+      }
+      const rutEnUso = await fastify.prisma.clientes.findFirst({ where: { ID_RUT_DOCUMENTO_FK: body.idRutDocumento } });
+      if (rutEnUso) throw new AppError(409, 'El documento RUT ya está vinculado a otro cliente.');
+
       const existeNit = await fastify.prisma.clientes.findUnique({
         where: { NIT: body.nitCedula },
       });
@@ -73,7 +81,7 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
           OBSERVACION: body.observacion ?? null,
           TIPO_CLIENTE: body.tipoCliente ?? 'NATURAL',
           ciudad: body.ciudad ?? 'Cali',
-          ID_RUT_DOCUMENTO_FK: body.idRutDocumento ?? null,
+          ID_RUT_DOCUMENTO_FK: body.idRutDocumento,
           dirrecion: body.dirrecion ?? "sin dirreciion",
         },
       });
@@ -156,6 +164,18 @@ export default async function clientesRoutes(fastify: FastifyInstance) {
       if (body.dirrecion !== undefined) data.dirrecion = body.dirrecion;
       if (body.ciudad !== undefined) data.ciudad = body.ciudad;
       if (body.idRutDocumento !== undefined) data.ID_RUT_DOCUMENTO_FK = body.idRutDocumento;
+
+      if (body.idRutDocumento !== undefined) {
+        const documento = await fastify.prisma.documentos.findUnique({ where: { ID_DOCUMENTO: body.idRutDocumento } });
+        if (!documento) throw new AppError(400, 'El documento RUT no existe.');
+        if (documento.ID_COTIZACION_FK || documento.ID_ORDEN_TRABAJO_FK || documento.ID_RECEPCION_FK || documento.ID_PLANTILLA_FK || !/^application\/pdf$|^image\/(png|jpeg)$/.test(documento.MIME_TYPE)) {
+          throw new AppError(400, 'El documento debe ser un PDF o imagen RUT sin asociación previa a otro módulo.');
+        }
+        const enUso = await fastify.prisma.clientes.findFirst({
+          where: { ID_RUT_DOCUMENTO_FK: body.idRutDocumento, ID_CLIENTE: { not: idCliente } },
+        });
+        if (enUso) throw new AppError(409, 'El documento RUT ya está vinculado a otro cliente.');
+      }
 
       const clienteActualizado = await fastify.prisma.clientes.update({
         where: { ID_CLIENTE: idCliente },

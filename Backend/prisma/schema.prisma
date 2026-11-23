@@ -583,6 +583,10 @@ model seguimientos_comerciales {
   RESULTADO        String?
   ID_USUARIO_FK    Int?
   CREATED_AT       DateTime     @default(now())
+  ORIGEN           String       @default("MANUAL")
+  ELIMINADO_AT     DateTime?
+  ELIMINADO_POR    Int?
+  ELIMINACION_MOTIVO String?
   cotizaciones     cotizaciones @relation(fields: [ID_COTIZACION_FK], references: [ID_COTIZACION], onDelete: Cascade)
   usuarios         usuarios?    @relation(fields: [ID_USUARIO_FK], references: [ID_USUARIO_AUTO_INCREMENT])
 

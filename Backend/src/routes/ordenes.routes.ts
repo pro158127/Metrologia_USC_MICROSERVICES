@@ -27,6 +27,7 @@ import {
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
+import { siguienteVersionOT } from '../services/versionado-ot.service.js';
 
 function parsearFechaHoraCalibracion(fecha?: string | null, hora?: string | null): Date | null {
   if (!fecha) return null;
@@ -62,6 +63,17 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { s3KeyTemp, tipoFlujo, idCotizacion } = request.body;
       const idUsuario = Number(request.user?.sub ?? 0);
+
+      if (idCotizacion !== undefined) {
+        const cotizacion = await fastify.prisma.cotizaciones.findUnique({
+          where: { ID_COTIZACION: idCotizacion },
+          select: { ID_COTIZACION: true, ESTADO: true },
+        });
+        if (!cotizacion) throw new AppError(404, 'La cotización seleccionada no existe.');
+        if (!['APROBADA', 'ENVIADA'].includes(cotizacion.ESTADO)) {
+          throw new AppError(409, `No se puede importar una OT para una cotización en estado ${cotizacion.ESTADO}.`);
+        }
+      }
 
       try {
         const plantilla = await resolverPlantillaOperativa(fastify.prisma, 2);
@@ -236,6 +248,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             where: { ID_ORDEN_TRABAJO_FK: id, OR: [{ activacion: true }, { activacion: null }] },
           });
           const activos = existentes.filter((detalle) => detalle.activacion !== false);
+          const requiereAnexoFinal = activos.length > 10 ? true : Boolean(otBase.REQUIERE_ANEXO);
           const mismoValor = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
           const sinEdicionInstrumentos = data.instrumentos.length === activos.length &&
             new Set(data.instrumentos.map((inst) => inst.idDetalle)).size === activos.length && data.instrumentos.every((inst) => {
@@ -262,24 +275,33 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           const fechaDiligenciamientoFinal = data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null;
           const fechaCalibracionFinal = parsearFechaHoraCalibracion(data.fechaCalibracion);
           const horaFinal = parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion);
-          const contactoSolicitante = data.contactoSolicitante === undefined
-            ? otBase.PERSONA_CONTACT_SOLCITANTE
-            : data.contactoSolicitante || null;
+          const textoOT = (value: string | null | undefined, actual: string | null) =>
+            value === undefined ? actual : value?.trim() || null;
+          const razonSocialCert = textoOT(data.razonSocialCert, otBase.Razon_social);
+          const nitCert = textoOT(data.nitCert, otBase.NIT);
+          const correoCertificados = textoOT(data.correoCertificados, otBase.CORREO_CERTIFICADO);
+          const direccionCert = textoOT(data.direccionCert, otBase.dirrecion);
+          const ciudadCert = textoOT(data.ciudadCert, otBase.ciudad);
+          const correoFactura = textoOT(data.correoFactura, otBase.CORREO_FACTURA);
           const fechaLimiteFacturacion = data.fechaLimiteFacturacion === undefined
             ? otBase.FECHA_LIMITE_FACTURACION
             : data.fechaLimiteFacturacion ? new Date(data.fechaLimiteFacturacion) : null;
           const texto = (value: unknown) => String(value ?? '').trim();
           const fechaMs = (value: Date | null | undefined) => value?.getTime() ?? null;
-          const cambioEscalar = texto(otBase.RESPONSABLE) !== texto(responsableFinal) ||
-            texto(otBase.PERSONA_CONTACT_SOLCITANTE) !== texto(contactoSolicitante) ||
+          const cambioEscalar = texto(otBase.Razon_social) !== texto(razonSocialCert) ||
+            texto(otBase.NIT) !== texto(nitCert) ||
+            texto(otBase.CORREO_CERTIFICADO) !== texto(correoCertificados) ||
+            texto(otBase.dirrecion) !== texto(direccionCert) ||
+            texto(otBase.ciudad) !== texto(ciudadCert) ||
+            texto(otBase.CORREO_FACTURA) !== texto(correoFactura) ||
+            texto(otBase.RESPONSABLE) !== texto(responsableFinal) ||
             fechaMs(otBase.FECHA_LIMITE_FACTURACION) !== fechaMs(fechaLimiteFacturacion) ||
             fechaMs(otBase.FECHA_CALIBRACION_DILIGENCIAMENTO) !== fechaMs(fechaDiligenciamientoFinal) ||
             fechaMs(otBase.FECHA_CALIBRACION) !== fechaMs(fechaCalibracionFinal) ||
             fechaMs(otBase.hora) !== fechaMs(horaFinal) ||
             texto(otBase.PERSONA_CONTACTO) !== texto(data.personaContactar?.trim() || null) ||
             texto(otBase.TELEFONO_CONTACTO) !== texto(data.telefonoCalibracion?.trim() || null) ||
-            Boolean(otBase.REQUIERE_ANEXO) !== (data.requiereAnexo === 'Si') ||
-            texto(otBase.OBSERVACIONES) !== texto(data.observacionesGenerales);
+            Boolean(otBase.REQUIERE_ANEXO) !== requiereAnexoFinal;
           const cambioAsignacion = data.instrumentos.some((inst) => {
             const actual = activos.find((detalle) => detalle.ID_DETALLE === inst.idDetalle);
             const asignado = Number(inst.asignado) > 0 ? Number(inst.asignado) : null;
@@ -294,17 +316,21 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           const otActualizada = await tx.ordenes_trabajo.update({
             where: { ID_ORDEN_TRABAJO: id },
             data: {
+              Razon_social: razonSocialCert,
+              NIT: nitCert,
+              CORREO_CERTIFICADO: correoCertificados,
+              dirrecion: direccionCert,
+              ciudad: ciudadCert,
+              CORREO_FACTURA: correoFactura,
               ...(data.responsableUsc?.trim() ? { RESPONSABLE: data.responsableUsc.trim() } : {}),
               FECHA_CALIBRACION_DILIGENCIAMENTO: data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null,
               FECHA_CALIBRACION: parsearFechaHoraCalibracion(data.fechaCalibracion),
               hora: parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion),
               HORA_CALIBRACION: parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion),
-              PERSONA_CONTACT_SOLCITANTE: contactoSolicitante,
               FECHA_LIMITE_FACTURACION: fechaLimiteFacturacion,
               PERSONA_CONTACTO: data.personaContactar?.trim() || null,
               TELEFONO_CONTACTO: data.telefonoCalibracion?.trim() || null,
-              REQUIERE_ANEXO: data.requiereAnexo === 'Si',
-              OBSERVACIONES: data.observacionesGenerales,
+              REQUIERE_ANEXO: requiereAnexoFinal,
             },
           });
 
@@ -328,10 +354,10 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
 
           // 2. Registrar el tracker de generación documental (dentro de la tx)
           if (huboCambioDocumento) {
-            const nuevoCodigo = await generarConsecutivo(tx, 'OT', otActualizada.CODIGO_OT);
+            const nuevaVersionOT = await siguienteVersionOT(tx, otActualizada);
             const versionada = await tx.ordenes_trabajo.update({
               where: { ID_ORDEN_TRABAJO: id },
-              data: { CODIGO_OT: nuevoCodigo },
+              data: nuevaVersionOT,
             });
             codigoOT = versionada.CODIGO_OT;
             await registrarBitacora(tx, {

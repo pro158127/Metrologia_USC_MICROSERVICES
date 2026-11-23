@@ -82,6 +82,8 @@ export const normalizarPayload = (tabla: string, rawData: Record<string, any>): 
           ? new Date(rawData.UPDATE_AT ?? rawData.updatedAt)
           : null,
         createdAt: rawData.CREATED_AT ?? rawData.createdAt,
+        origen: rawData.ORIGEN ?? rawData.origen ?? "MANUAL",
+        eliminadoAt: rawData.ELIMINADO_AT ?? rawData.eliminadoAt ?? null,
       };
 
     case "notificaciones":

@@ -26,7 +26,7 @@ export interface CrearClienteInput {
   tipoCliente?: tipocliente;
   dirrecion :string ;
   ciudad?: string;
-  idRutDocumento?: number;
+  idRutDocumento: number;
 }
 
 export type ActualizarClienteInput = Partial<CrearClienteInput>;
@@ -82,7 +82,7 @@ export interface ClientFormModalProps {
   isOpen: boolean;
   client: ClienteModel | null;
   onClose: () => void;
-  onSave: (data: ClienteFormSaveData, mode: "create" | "edit") => void;
+  onSave: (data: ClienteFormSaveData, mode: "create" | "edit") => Promise<boolean>;
 }
 
 export interface CustomerTableRowProps {

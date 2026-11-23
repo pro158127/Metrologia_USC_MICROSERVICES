@@ -63,6 +63,7 @@ export async function cerrarSeguimientoSiCompleto(
       DESCRIPCION: `Cierre de entrega completado para la cotización ${cotizacion.CODIGO_COTIZACION}.`,
       RESULTADO: 'ENTREGA_COMPLETA',
       ID_USUARIO_FK: idUsuario,
+      ORIGEN: 'SISTEMA',
     },
   });
   return true;

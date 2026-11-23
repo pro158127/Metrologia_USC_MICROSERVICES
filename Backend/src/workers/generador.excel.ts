@@ -195,7 +195,8 @@ export async function generarExcelPlantilla(job: Job<GeneracionExcelJob>) {
       emailDestino: ordenTrabajo.clientes?.CORREO, 
       nombreCliente: ordenTrabajo.clientes?.NOMBRE_CONTACTO || ordenTrabajo.clientes?.RAZON_SOCIAL,
       numeroOT: ordenTrabajo.CODIGO_OT,
-      numeroCotizacion: ordenTrabajo.cotizaciones?.CODIGO_COTIZACION ?? ordenTrabajo.no_cotizacion
+      numeroCotizacion: ordenTrabajo.cotizaciones?.CODIGO_COTIZACION ?? ordenTrabajo.no_cotizacion,
+      idOtPadre: ordenTrabajo.ID_OT_PADRE_FK,
     };
   }
 

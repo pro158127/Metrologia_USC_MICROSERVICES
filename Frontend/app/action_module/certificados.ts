@@ -69,7 +69,7 @@ export interface CertificadoRevisionItem {
 }
 
 /** Bandeja de revisión de certificados con contexto (instrumento, OT, cliente, técnico). */
-export async function obtenerCertificadosRevision(): Promise<CertificadoRevisionItem[]> {
+export async function obtenerCertificadosRevision(opciones?: { propagarError?: boolean }): Promise<CertificadoRevisionItem[]> {
   try {
     const session = await auth();
     return await fastifyRequest<CertificadoRevisionItem[]>(
@@ -78,6 +78,7 @@ export async function obtenerCertificadosRevision(): Promise<CertificadoRevision
     );
   } catch (error) {
     console.error('Error en obtenerCertificadosRevision:', error);
+    if (opciones?.propagarError) throw error;
     return [];
   }
 }

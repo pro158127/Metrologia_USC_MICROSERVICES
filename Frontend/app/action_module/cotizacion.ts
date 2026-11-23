@@ -283,7 +283,7 @@ export async function obtenerTodasLasCotizaciones(
   }
 }
 
-export async function obtenerMetricasCotizacionesDashboard(): Promise<{
+export async function obtenerMetricasCotizacionesDashboard(opciones?: { propagarError?: boolean }): Promise<{
   estado: string; emitidaAt: string | null; aprobadaAt: string | null;
 }[] | null> {
   try {
@@ -291,6 +291,7 @@ export async function obtenerMetricasCotizacionesDashboard(): Promise<{
     return await fastifyRequest(session, '/api/v1/cotizaciones/metricas-dashboard');
   } catch (error) {
     console.error('No se pudieron consultar las métricas de cotizaciones:', error);
+    if (opciones?.propagarError) throw error;
     return null;
   }
 }

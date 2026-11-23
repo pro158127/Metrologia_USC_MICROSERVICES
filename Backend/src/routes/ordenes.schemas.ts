@@ -573,7 +573,11 @@ export type DatosInicialesResponse = z.infer<typeof datosInicialesResponseSchema
 export const importarOtExcelBodySchema = z.object({
   s3KeyTemp: z.string().min(5, "La llave S3 es obligatoria"),
   tipoFlujo: z.enum(['estandar', 'inverso']),
-  idCotizacion: z.number().optional(), // Clave: Si no viene, el worker hace la magia del flujo anormal
+  idCotizacion: z.number().optional(),
+}).superRefine((value, ctx) => {
+  if (value.tipoFlujo === 'inverso' && value.idCotizacion === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['idCotizacion'], message: 'Selecciona la cotización para la importación inversa.' });
+  }
 });
 export type ImportarOtExcelBody = z.infer<typeof importarOtExcelBodySchema>;
 
@@ -616,15 +620,19 @@ export const estadoOtEnum = z.enum([
 ]);
 
 export const consolidarOtBodySchema = z.object({
+  // Datos diligenciados por el cliente, guardados como snapshot de la OT.
+  razonSocialCert: z.string().nullable().optional(),
+  nitCert: z.string().nullable().optional(),
+  correoCertificados: z.string().nullable().optional(),
+  direccionCert: z.string().nullable().optional(),
+  ciudadCert: z.string().nullable().optional(),
+  correoFactura: z.string().nullable().optional(),
   responsableUsc: z.string().nullable(),
   fechaDiligenciamiento: z.string().nullable(),
   fechaCalibracion: z.string().nullable().optional(),
   horaCalibracion: z.string().nullable().optional(),
-  requiereAnexo: z.string(),
-  observacionesGenerales: z.string().nullable(),
   lugarCalibracion: z.string(),
   personaContactar: z.string().nullable().optional(),
-  contactoSolicitante: z.string().trim().nullable().optional(),
   fechaLimiteFacturacion: z.iso.date().nullable().optional(),
   telefonoCalibracion: z.string().nullable().optional(),
   // El estado ya no se acepta como texto libre: la FSM lo calcula en backend.

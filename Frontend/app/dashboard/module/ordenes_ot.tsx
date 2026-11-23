@@ -925,31 +925,37 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   value={orderDraft.razonSocialSolicitante}
                   onChange={(v) => updateOrderDraft('razonSocialSolicitante', v)}
                   list="razonesSociales"
+                  readOnly
                 />
                 <Field
                   label="NIT"
                   value={orderDraft.nitSolicitante}
                   onChange={(v) => updateOrderDraft('nitSolicitante', v)}
+                  readOnly
                 />
                 <Field
                   label="Dirección"
                   value={orderDraft.direccionSolicitante}
                   onChange={(v) => updateOrderDraft('direccionSolicitante', v)}
+                  readOnly
                 />
                 <Field
                   label="Ciudad"
                   value={orderDraft.ciudadSolicitante}
                   onChange={(v) => updateOrderDraft('ciudadSolicitante', v)}
+                  readOnly
                 />
                 <Field
                   label="Contacto"
                   value={orderDraft.contactoSolicitante}
                   onChange={(v) => updateOrderDraft('contactoSolicitante', v)}
+                  readOnly
                 />
                 <Field
                   label="Teléfono"
                   value={orderDraft.telefonoSolicitante}
                   onChange={(v) => updateOrderDraft('telefonoSolicitante', v)}
+                  readOnly
                 />
               </div>
             </Section>
@@ -967,12 +973,14 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   value={orderDraft.noOrdenTrabajo}
                   onChange={(v) => updateOrderDraft('noOrdenTrabajo', v)}
                   className="font-mono font-bold text-blue-600"
+                  readOnly
                 />
                 <Field
                   label="No. Cotización"
                   value={orderDraft.noCotizacion}
                   onChange={(v) => updateOrderDraft('noCotizacion', v)}
                   className="font-mono"
+                  readOnly
                 />
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   Responsable
@@ -1005,11 +1013,10 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                 <label className="flex items-center gap-3 border border-amber-200 bg-amber-50/50 rounded-xl px-3 py-2.5 sm:col-span-2 text-xs font-bold text-slate-700">
                   <select
                     value={orderDraft.requiereAnexo}
-                    onChange={(e) => updateOrderDraft('requiereAnexo', e.target.value as EditableOrderFields["requiereAnexo"])}
                     className={`border p-1.5 rounded-lg text-xs font-black outline-none ${
                       excedioLimite ? 'border-red-400 bg-red-100 text-red-800' : 'border-amber-300 bg-amber-200 text-amber-950'
                     }`}
-                    disabled={excedioLimite} // Bloqueamos el cambio si se excedió
+                    disabled // El valor lo gobierna la cantidad de instrumentos en el backend.
                   >
                     <option value="No">No</option>
                     <option value="Si">Sí</option>
@@ -1033,9 +1040,10 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
             <div className="p-4">
               <textarea
                 value={orderDraft.observacionesGenerales}
-                onChange={(e) => updateOrderDraft('observacionesGenerales', e.target.value)}
+                readOnly
                 rows={3}
-                className="w-full border border-slate-200 rounded-xl p-3 text-xs outline-none focus:border-blue-500 font-medium resize-none bg-white"
+                aria-readonly="true"
+                className="w-full border border-slate-200 rounded-xl p-3 text-xs outline-none font-medium resize-none bg-slate-100 text-slate-500 cursor-not-allowed"
                 placeholder="Indique aquí los requerimientos adicionales para el servicio o anomalías observadas..."
               />
             </div>
@@ -1112,7 +1120,7 @@ const Section: React.FC<SectionProps> = ({
   </div>
 );
 
-const Field: React.FC<FieldProps> = ({ label, value, onChange, type = 'text', list, className = '' }) => (
+const Field: React.FC<FieldProps> = ({ label, value, onChange, type = 'text', list, className = '', readOnly = false }) => (
   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
     {label}
     <input
@@ -1120,7 +1128,9 @@ const Field: React.FC<FieldProps> = ({ label, value, onChange, type = 'text', li
       value={value}
       onChange={(e) => onChange(e.target.value)}
       list={list}
-      className={`w-full mt-1 border border-slate-200 rounded-xl p-2 text-xs outline-none focus:border-blue-500 bg-white ${className}`}
+      readOnly={readOnly}
+      aria-readonly={readOnly}
+      className={`w-full mt-1 border border-slate-200 rounded-xl p-2 text-xs outline-none ${readOnly ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'focus:border-blue-500 bg-white'} ${className}`}
     />
   </label>
 );
@@ -1689,10 +1699,14 @@ const saveOrderEdits = async () => {
 
       // 🟢 2. Estructuración del Payload
       const payload = {
+        razonSocialCert: orderDraft.razonSocialCert.trim() || null,
+        nitCert: orderDraft.nitCert.trim() || null,
+        correoCertificados: orderDraft.correoCertificados.trim() || null,
+        direccionCert: orderDraft.direccionCert.trim() || null,
+        ciudadCert: orderDraft.ciudadCert.trim() || null,
+        correoFactura: orderDraft.correoFactura.trim() || null,
         responsableUsc: orderDraft.responsableUsc || null,
         fechaDiligenciamiento: orderDraft.fechaDiligenciamiento,
-        contactoSolicitante: orderDraft.contactoSolicitante === selectedOT.contactoSolicitante
-          ? undefined : orderDraft.contactoSolicitante.trim() || null,
         fechaLimiteFacturacion: orderDraft.fechaLimiteFacturacion === selectedOT.fechaLimiteFacturacion
           ? undefined : orderDraft.fechaLimiteFacturacion || null,
         fechaCalibracion: orderDraft.lugarCalibracion === "En sitio" && orderDraft.fechaCalibracion
@@ -1703,8 +1717,6 @@ const saveOrderEdits = async () => {
           : null,
         personaContactar: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.personaContactar || null : null,
         telefonoCalibracion: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.telefonoCalibracion || null : null,
-        requiereAnexo: orderDraft.requiereAnexo,
-        observacionesGenerales: orderDraft.observacionesGenerales,
         lugarCalibracion: orderDraft.lugarCalibracion,
         estadoOrden: orderDraft.estadoOrden as EstadoOrden,
         instrumentos: instrumentDrafts.map((inst) => ({

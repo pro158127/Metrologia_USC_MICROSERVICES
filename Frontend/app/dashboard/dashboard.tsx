@@ -133,6 +133,7 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps & {
   subtitle?: string;
   navigateTo?: Parameters<PendingCertsTableProps["onNavigate"]>[0];
   actionLabel?: string;
+  loadState?: "loading" | "error" | "ready";
 }> = ({
   onNavigate,
   pendingCerts,
@@ -141,6 +142,7 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps & {
   subtitle = "Resumen de las órdenes con prioridad alta y próximas entregas.",
   navigateTo = "revision",
   actionLabel = "Revisar",
+  loadState = "ready",
 }) => {
   return (
     <section className={cardContainerStyle}>
@@ -153,7 +155,7 @@ const PendingCertificatesSection: React.FC<PendingCertsTableProps & {
         </div>
         <div className="inline-flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-100 px-3 py-1.5 text-xs font-bold text-rose-700">
           <span className="inline-flex h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
-          {pendingCount} pendientes
+          {loadState === "loading" ? "Cargando pendientes…" : loadState === "error" ? "No se pudieron cargar" : `${pendingCount} pendientes`}
         </div>
       </div>
 
@@ -243,7 +245,7 @@ const SystemAlertsSection: React.FC<SystemAlertsSectionProps> = ({ alerts, recen
   );
 };
 
-const QuotesBarChartSection: React.FC<QuotesBarChartSectionProps> = ({ barData }) => {
+const QuotesBarChartSection: React.FC<QuotesBarChartSectionProps> = ({ barData, loadState = "ready" }) => {
   return (
     <section className={cardContainerStyle}>
       <div className="flex items-center justify-between gap-4">
@@ -254,7 +256,11 @@ const QuotesBarChartSection: React.FC<QuotesBarChartSectionProps> = ({ barData }
           <p className="mt-1 text-xs text-slate-400 pl-4">Últimos 6 meses</p>
         </div>
       </div>
-      <div className="mt-6 h-72">
+      {loadState !== "ready" ? (
+        <div className="mt-6 h-72 flex items-center justify-center rounded-xl bg-slate-50 text-xs text-slate-500">
+          {loadState === "loading" ? "Cargando métricas de cotizaciones…" : "No se pudieron cargar las métricas."}
+        </div>
+      ) : <div className="mt-6 h-72">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={barData} barGap={8}>
             <XAxis dataKey="mes" tick={{ fill: "#94A3B8", fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -267,7 +273,7 @@ const QuotesBarChartSection: React.FC<QuotesBarChartSectionProps> = ({ barData }
             <Bar dataKey="aprobadas" name="Aprobadas" fill="#C7D2FE" radius={[8, 8, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </div>}
       <div className="mt-4 flex gap-4 text-xs font-bold text-slate-500 pl-4">
         <div className="inline-flex items-center gap-2">
           <span className="h-2.5 w-2.5 rounded-full bg-[#5680F9]" />
@@ -338,19 +344,32 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const puedeRevisar = puedeAcreditados || puedeNoAcreditados;
   const revisionCertificados = useRevisionTablas("certificados", "calibraciones", "orden_trabajo_detalles");
   const revisionCotizaciones = useRevisionTablas("cotizaciones", "historial_estado_cotizacion");
-  const [bandejaRevision, setBandejaRevision] = useState<CertificadoRevisionItem[]>([]);
-  const [metricasCotizaciones, setMetricasCotizaciones] = useState<Awaited<ReturnType<typeof obtenerMetricasCotizacionesDashboard>>>(null);
+  const [retryRequest, setRetryRequest] = useState(0);
+  const metricasRequestKey = `${revisionCotizaciones}:${retryRequest}`;
+  const bandejaRequestKey = `${revisionCertificados}:${retryRequest}`;
+  const [bandejaCargada, setBandejaCargada] = useState<{ revision: unknown; status: "error" | "ready"; data: CertificadoRevisionItem[] }>({ revision: null, status: "ready", data: [] });
+  const [metricasCargadas, setMetricasCargadas] = useState<{ revision: unknown; status: "error" | "ready"; data: Awaited<ReturnType<typeof obtenerMetricasCotizacionesDashboard>> }>({ revision: null, status: "ready", data: null });
+  const metricasVigentes = Object.is(metricasCargadas.revision, metricasRequestKey);
+  const metricasCotizaciones = metricasVigentes ? metricasCargadas.data : null;
+  const estadoMetricas = metricasVigentes ? metricasCargadas.status : "loading";
+  const bandejaVigente = puedeRevisar && Object.is(bandejaCargada.revision, bandejaRequestKey);
+  const bandejaRevision = useMemo(() => bandejaVigente ? bandejaCargada.data : [], [bandejaVigente, bandejaCargada.data]);
+  const estadoBandeja = !puedeRevisar ? "ready" : bandejaVigente ? bandejaCargada.status : "loading";
   useEffect(() => {
     let vigente = true;
-    obtenerMetricasCotizacionesDashboard().then((datos) => { if (vigente) setMetricasCotizaciones(datos); });
+    obtenerMetricasCotizacionesDashboard({ propagarError: true }).then((datos) => {
+      if (vigente) setMetricasCargadas({ revision: metricasRequestKey, status: "ready", data: datos });
+    }).catch(() => { if (vigente) setMetricasCargadas({ revision: metricasRequestKey, status: "error", data: null }); });
     return () => { vigente = false; };
-  }, [revisionCotizaciones]);
+  }, [metricasRequestKey]);
   useEffect(() => {
     if (!puedeRevisar) return;
     let vigente = true;
-    obtenerCertificadosRevision().then((datos) => { if (vigente) setBandejaRevision(datos); });
+    obtenerCertificadosRevision({ propagarError: true }).then((datos) => {
+      if (vigente) setBandejaCargada({ revision: bandejaRequestKey, status: "ready", data: datos });
+    }).catch(() => { if (vigente) setBandejaCargada({ revision: bandejaRequestKey, status: "error", data: [] }); });
     return () => { vigente = false; };
-  }, [puedeRevisar, revisionCertificados]);
+  }, [puedeRevisar, bandejaRequestKey]);
   const cotizaciones = useDbTable("cotizaciones");
   const ordenes = useDbTable("ordenes_trabajo");
   const certificados = useDbTable("certificados");
@@ -426,8 +445,8 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         icon: <FileText size={22} className="text-slate-900" />,
         label: "Cotizaciones pendientes",
         value: cotizacionesPendientes == null ? "—" : String(cotizacionesPendientes),
-        sub: metricasCotizaciones ? `de ${metricasCotizaciones.length} cotizaciones` : "Métricas no disponibles",
-        trend: porcentaje(cotizacionesPendientes ?? 0, metricasCotizaciones?.length ?? 0),
+        sub: metricasCotizaciones ? `de ${metricasCotizaciones.length} cotizaciones` : estadoMetricas === "loading" ? "Cargando métricas…" : "Métricas no disponibles",
+        trend: estadoMetricas === "ready" ? porcentaje(cotizacionesPendientes ?? 0, metricasCotizaciones?.length ?? 0) : "—",
         up: false,
         color: "#F59E0B",
         bg: "#FFFBEB",
@@ -453,7 +472,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         bg: "#F5F3FF",
       },
     ];
-  }, [ordenesActivas, operativasVigentes, cotizacionesPendientes, metricasCotizaciones, ingresosMes, facturasMes, facturas, certificados, certificadosEmitidos]);
+  }, [ordenesActivas, operativasVigentes, cotizacionesPendientes, metricasCotizaciones, estadoMetricas, ingresosMes, facturasMes, facturas, certificados, certificadosEmitidos]);
 
   const barData = useMemo<BarChartPoint[]>(() => {
     const [anio, mesActual] = mesBogota.format(new Date()).split("-").map(Number);
@@ -647,6 +666,12 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </div>
       ) : (
         <>
+          {(estadoMetricas === "error" || (puedeRevisar && estadoBandeja === "error")) && (
+            <div role="alert" className="mb-4 flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+              <span>No se pudieron cargar todos los datos del resumen.</span>
+              <button type="button" onClick={() => setRetryRequest((value) => value + 1)} className="rounded-lg bg-white px-3 py-1.5 font-bold text-rose-700 border border-rose-200">Reintentar</button>
+            </div>
+          )}
           <WelcomeHeaderSection systemStats={systemStats} userName={session?.user?.name} />
           <KpiGridSection kpiData={kpiData} />
           <div className="grid gap-4 lg:grid-cols-[2fr_1fr] xl:grid-cols-[2fr_1fr] mb-6">
@@ -654,6 +679,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               onNavigate={onNavigate}
               pendingCerts={pendingCerts.slice(0, 4)}
               pendingCount={pendingCerts.length}
+              loadState={estadoBandeja}
               title={pendingSection.title}
               subtitle={pendingSection.subtitle}
               navigateTo={pendingSection.navigateTo}
@@ -662,7 +688,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <SystemAlertsSection alerts={alerts} recentActivity={recentActivity} />
           </div>
           <div className="grid gap-4 xl:grid-cols-[3fr_2fr] mb-6">
-            <QuotesBarChartSection barData={barData} />
+            <QuotesBarChartSection barData={barData} loadState={estadoMetricas} />
             <ServiceDistributionPieChartSection pieData={pieData} />
           </div>
           <FooterSection />

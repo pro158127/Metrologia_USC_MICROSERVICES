@@ -371,7 +371,9 @@ export function resolverDatosRecepcionConCeldas(recepcion: any, mappingConfig: M
     solicitante: recepcion.SOLICITANTE,
     nombre_quien_entrega: recepcion.NOMBRE_ENTREGA,
     no_cotizacion: recepcion.cotizaciones?.CODIGO_COTIZACION || '',
-    no_orden_trabajo: recepcion.ordenes_trabajo?.CODIGO_OT ?? '',
+    // El formato de Recepción no debe mostrar el consecutivo OT. Se conserva
+    // la clave para limpiar una celda que aún esté mapeada en configuraciones antiguas.
+    no_orden_trabajo: '',
     sitio_laboratorio_permanente: recepcion.SITIO_CALIBRACION === 'LABORATORIO' ? 'X' : '',
     sitio_instalaciones_cliente: recepcion.SITIO_CALIBRACION === 'CLIENTE' ? 'X' : '',
     sitio_interno_usc: recepcion.SITIO_CALIBRACION === 'INTERNO_USC' ? 'X' : '',

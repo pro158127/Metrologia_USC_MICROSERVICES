@@ -224,6 +224,7 @@ async function procesarPagosVencidos(): Promise<number> {
               DESCRIPCION: `Pago vencido — OT ${ot.CODIGO_OT}`,
               RESULTADO: 'VENCIDA',
               ID_USUARIO_FK: null,
+              ORIGEN: 'SISTEMA',
             },
           });
         }

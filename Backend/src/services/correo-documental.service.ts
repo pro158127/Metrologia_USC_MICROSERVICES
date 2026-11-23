@@ -19,10 +19,15 @@ export function prepararCorreoDocumental(
   archivos: { excel?: string | null; url_pdf: string },
 ): EmailJobData | null {
   if (job.tipo_entry !== 'prod' || !contexto || !job.action) return null;
+  // Una OT hija es operativa para el laboratorio, pero el cliente recibe solo la maestra.
+  const esHijaOT = job.tipo === 2 && contexto.idOtPadre != null;
+  if (esHijaOT &&
+      (job.action === 'ot_create' || job.action === 'ot_update' || job.action === 'ot_actualizar')) return null;
   if (job.action === 'cot_create' && estado !== 'ENVIADA') return null;
   if (job.action === 'cot_update' && estado === 'BORRADOR') return null;
   if (!(job.action in correoPorAccion)) return null;
   const configuracion = correoPorAccion[job.action as keyof typeof correoPorAccion];
+  const { idOtPadre: _idOtPadre, ...contextoCorreo } = contexto;
   const esOt = configuracion.adjunto === 'excel';
   const adjunto = esOt ? archivos.excel : archivos.url_pdf;
   const codigo = esOt ? contexto.numeroOT : contexto.numeroCotizacion;
@@ -30,7 +35,7 @@ export function prepararCorreoDocumental(
     to: typeof contexto.emailDestino === 'string' ? contexto.emailDestino : '',
     subject: `${configuracion.asunto}: ${codigo ?? ''} - MetroSoft`,
     template_type: configuracion.tipo,
-    context_data: contexto,
+    context_data: contextoCorreo,
     minio_links: adjunto ? [adjunto] : [],
     id_registro: job.id_registro,
     id_cotizacion: esOt ? job.id_cotizacion : job.id_registro,

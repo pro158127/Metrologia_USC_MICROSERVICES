@@ -394,6 +394,8 @@ export interface SeguimientoComercialModel {
   resultado: string | null;
   idUsuario: number | null;
   createdAt: Date | string;
+  origen: "MANUAL" | "SISTEMA";
+  eliminadoAt?: Date | string | null;
   usuario?: { idUsuario: number; nombreCompleto: string; correo: string } | null;
 }
 

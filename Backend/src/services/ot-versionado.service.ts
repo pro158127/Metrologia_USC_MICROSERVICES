@@ -3,6 +3,7 @@ import { AppError } from '../lib/errors.js';
 import { generarConsecutivo } from './consecutivo.service.js';
 import { vincularUnidadRecepcion } from './ot-fsm.service.js';
 import { sincronizarOTMaestraDesdeRecepcion } from './recepcion-ot-sync.service.js';
+import { siguienteVersionOT } from './versionado-ot.service.js';
 import type { InstrumentoResuelto } from './ot-split.service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -111,9 +112,9 @@ export async function reimportarFamiliaOTVersionada(tx: Tx, input: {
 
     const cambiaCabecera = Object.entries(cabecera).some(([clave, valor]) => comparable(Reflect.get(ot, clave)) !== comparable(valor));
     if (cambioOT || cambiaCabecera) {
-      const codigo = await generarConsecutivo(tx, 'OT', ot.CODIGO_OT);
-      await tx.ordenes_trabajo.update({ where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO }, data: { ...cabecera, CODIGO_OT: codigo } });
-      ots.push({ id: ot.ID_ORDEN_TRABAJO, codigo, esNueva: false });
+      const version = await siguienteVersionOT(tx, ot);
+      await tx.ordenes_trabajo.update({ where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO }, data: { ...cabecera, ...version } });
+      ots.push({ id: ot.ID_ORDEN_TRABAJO, codigo: version.CODIGO_OT, esNueva: false });
       if (cambioOT && ot.ID_OT_PADRE_FK) maestras.add(ot.ID_OT_PADRE_FK);
     }
     if (cambioRecepcion && recepcion) {

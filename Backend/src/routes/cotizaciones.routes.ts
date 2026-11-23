@@ -18,6 +18,7 @@ import {
   respuestaListaCotizacionesSchema,
 } from './cotizaciones.schemas.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
+import { siguienteVersionOT } from '../services/versionado-ot.service.js';
 import { evaluarTransicionesOT } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import {
@@ -738,10 +739,10 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
           }
 
           if (otCambio) {
-            const consecutivo_ot = await generarConsecutivo(tx, 'OT', ot.CODIGO_OT);
+            const versionOT = await siguienteVersionOT(tx, ot);
             const update_ot = await tx.ordenes_trabajo.update({
               where: { ID_ORDEN_TRABAJO: ot.ID_ORDEN_TRABAJO },
-              data: { CODIGO_OT: consecutivo_ot },
+              data: versionOT,
             });
             otsParaRegenerar.push({ id: update_ot.ID_ORDEN_TRABAJO, codigo: update_ot.CODIGO_OT });
           }
@@ -1077,19 +1078,19 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
       if (actualizacionAprobada && regenerarCotizacionDoc) {
         const ordenesVigentes = await tx.ordenes_trabajo.findMany({
           where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true },
-          select: { ID_ORDEN_TRABAJO: true, ID_OT_PADRE_FK: true, CODIGO_OT: true, ID_CLIENTE_FK: true },
+          select: { ID_ORDEN_TRABAJO: true, ID_OT_PADRE_FK: true, CODIGO_OT: true, VERSION: true, ID_CLIENTE_FK: true },
         });
         const principal = ordenPrincipalVigente(ordenesVigentes);
         if (principal && principal.ID_CLIENTE_FK === cotizacionActualizada.ID_CLIENTE_FK) {
           idOTParaCorreo = principal.ID_ORDEN_TRABAJO;
           if (!otsParaRegenerar.some((orden) => orden.id === principal.ID_ORDEN_TRABAJO)) {
             // El formato de OT incluye la referencia al código de la nueva versión de la cotización.
-            const codigo = await generarConsecutivo(tx, 'OT', principal.CODIGO_OT);
+            const versionOT = await siguienteVersionOT(tx, principal);
             await tx.ordenes_trabajo.update({
               where: { ID_ORDEN_TRABAJO: principal.ID_ORDEN_TRABAJO },
-              data: { CODIGO_OT: codigo },
+              data: versionOT,
             });
-            otsParaRegenerar.push({ id: principal.ID_ORDEN_TRABAJO, codigo });
+            otsParaRegenerar.push({ id: principal.ID_ORDEN_TRABAJO, codigo: versionOT.CODIGO_OT });
           }
         } else {
           request.log.warn({ idCotizacion, idOT: principal?.ID_ORDEN_TRABAJO },
@@ -1249,6 +1250,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
               DESCRIPCION: `Cierre de entrega completado para la cotización ${cotizacionActualizada.CODIGO_COTIZACION}.`,
               RESULTADO: 'ENTREGA_COMPLETA',
               ID_USUARIO_FK: idUsuario || null,
+              ORIGEN: 'SISTEMA',
             },
           });
         }

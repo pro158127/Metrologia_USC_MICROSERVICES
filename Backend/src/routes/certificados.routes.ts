@@ -372,6 +372,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
                 DESCRIPCION: `Certificado ${cert.CODIGO_CERTIFICADO} rechazado: ${request.body.descripcion}`,
                 RESULTADO: 'RECHAZADO',
                 ID_USUARIO_FK: idUsuario || null,
+                ORIGEN: 'SISTEMA',
               },
             });
           }

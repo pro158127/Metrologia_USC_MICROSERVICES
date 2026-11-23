@@ -44,18 +44,7 @@ export async function obtenerDatosIniciales(): Promise<DatosInicialesOrdenes> {
   }
 }
 
-import {CotizacionVinculable,ImportarOTPayload,RespuestaWorkerJob,PollingJobStatus} from "@/tipos/importaciones"
-
-export async function obtenerCotizacionesVinculables(): Promise<CotizacionVinculable[]> {
-  try {
-    const session = await auth();
-    // Este endpoint debería retornar las cotizaciones aprobadas/enviadas que no tienen OT
-    return await fastifyRequest<CotizacionVinculable[]>(session, '/api/v1/cotizaciones/sin-ot');
-  } catch (error) {
-    console.error('Error cargando cotizaciones vinculables:', error);
-    return [];
-  }
-}
+import {ImportarOTPayload,RespuestaWorkerJob,PollingJobStatus} from "@/tipos/importaciones"
 
 // 2. Enviar la orden al Worker
 export async function procesarImportacionOTAction(payload: ImportarOTPayload): Promise<RespuestaWorkerJob> {
@@ -107,12 +96,19 @@ export interface InstrumentoConsolidar {
 }
 
 export interface ConsolidarOtPayload {
+  razonSocialCert: string | null;
+  nitCert: string | null;
+  correoCertificados: string | null;
+  direccionCert: string | null;
+  ciudadCert: string | null;
+  correoFactura: string | null;
   responsableUsc: string | null;
   fechaDiligenciamiento: string | null;
-  contactoSolicitante?: string | null;
   fechaLimiteFacturacion?: string | null;
-  requiereAnexo: string;
-  observacionesGenerales: string | null;
+  fechaCalibracion?: string | null;
+  horaCalibracion?: string | null;
+  personaContactar?: string | null;
+  telefonoCalibracion?: string | null;
   lugarCalibracion: string;
   estadoOrden: string;
   instrumentos: InstrumentoConsolidar[];

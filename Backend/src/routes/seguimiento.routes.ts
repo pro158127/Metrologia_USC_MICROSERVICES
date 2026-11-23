@@ -8,6 +8,7 @@ import { registrarBitacora } from '../services/bitacora.service.js';
 import {
   actualizarSeguimientoBodySchema,
   crearSeguimientoBodySchema,
+  eliminarSeguimientoBodySchema,
   idParamSchema,
   listarSeguimientosQuerySchema,
   respuestaListaSeguimientosSchema,
@@ -37,6 +38,7 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       const skip = (page - 1) * limit;
 
       const where: Prisma.seguimientos_comercialesWhereInput = {
+        ELIMINADO_AT: null,
         ...(idCotizacion && { ID_COTIZACION_FK: idCotizacion }),
       };
 
@@ -101,6 +103,7 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
             PROXIMA_GESTION: proximaGestion ?? null,
             RESULTADO: resultado ?? null,
             ID_USUARIO_FK: responsable ?? idUsuario,
+            ORIGEN: 'MANUAL',
           },
           include: {
             usuarios: {
@@ -150,6 +153,8 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
           where: { ID_SEGUIMIENTO: idSeguimiento },
         });
         if (!existente) throw new AppError(404, 'Seguimiento no encontrado');
+        if (existente.ELIMINADO_AT) throw new AppError(404, 'Seguimiento no encontrado');
+        if (existente.ORIGEN !== 'MANUAL') throw new AppError(409, 'Los eventos automáticos son de solo lectura.');
         const fechaGestionFinal = request.body.fechaGestion ?? existente.FECHA_GESTION;
         const proximaGestionFinal = request.body.proximaGestion === undefined
           ? existente.PROXIMA_GESTION
@@ -179,13 +184,33 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
           },
         });
 
-        await registrarBitacora(tx, {
-          action: 'UPDATE',
-          tableName: 'seguimientos_comerciales',
-          recordId: idSeguimiento,
-          userId: idUsuario,
-          ip: request.ip,
-          details: { idCotizacion: seguimiento.ID_COTIZACION_FK },
+        await tx.audit_logs.create({
+          data: {
+            action: 'UPDATE',
+            tableName: 'seguimientos_comerciales',
+            recordId: String(idSeguimiento),
+            USER_ID: idUsuario,
+            ip: request.ip,
+            details: {
+              idCotizacion: seguimiento.ID_COTIZACION_FK,
+              before: {
+                tipo: existente.TIPO,
+                descripcion: existente.DESCRIPCION,
+                fechaGestion: existente.FECHA_GESTION.toISOString(),
+                proximaGestion: existente.PROXIMA_GESTION?.toISOString() ?? null,
+                resultado: existente.RESULTADO,
+                idUsuario: existente.ID_USUARIO_FK,
+              },
+              after: {
+                tipo: seguimiento.TIPO,
+                descripcion: seguimiento.DESCRIPCION,
+                fechaGestion: seguimiento.FECHA_GESTION.toISOString(),
+                proximaGestion: seguimiento.PROXIMA_GESTION?.toISOString() ?? null,
+                resultado: seguimiento.RESULTADO,
+                idUsuario: seguimiento.ID_USUARIO_FK,
+              },
+            },
+          },
         });
 
         return seguimiento;
@@ -201,6 +226,7 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       preHandler: [fastify.authenticate],
       schema: {
         params: idParamSchema,
+        body: eliminarSeguimientoBodySchema,
         response: {
           200: z.object({ ok: z.literal(true), message: z.string() }),
         },
@@ -211,20 +237,36 @@ export default async function seguimientoRoutes(fastify: FastifyInstance) {
       const idUsuario = Number(request.user?.sub ?? 0);
       const idSeguimiento = request.params.id;
 
-      const existente = await fastify.prisma.seguimientos_comerciales.findUnique({
-        where: { ID_SEGUIMIENTO: idSeguimiento },
-      });
-      if (!existente) throw new AppError(404, 'Seguimiento no encontrado');
-
       await fastify.prisma.$transaction(async (tx) => {
-        await tx.seguimientos_comerciales.delete({ where: { ID_SEGUIMIENTO: idSeguimiento } });
-        await registrarBitacora(tx, {
-          action: 'DELETE',
-          tableName: 'seguimientos_comerciales',
-          recordId: idSeguimiento,
-          userId: idUsuario,
-          ip: request.ip,
-          details: { idCotizacion: existente.ID_COTIZACION_FK },
+        await tx.$queryRaw`SELECT "ID_SEGUIMIENTO" FROM seguimientos_comerciales WHERE "ID_SEGUIMIENTO" = ${idSeguimiento} FOR UPDATE`;
+        const existente = await tx.seguimientos_comerciales.findUnique({ where: { ID_SEGUIMIENTO: idSeguimiento } });
+        if (!existente || existente.ELIMINADO_AT) throw new AppError(404, 'Seguimiento no encontrado');
+        if (existente.ORIGEN !== 'MANUAL') throw new AppError(409, 'Los eventos automáticos no se pueden eliminar.');
+        await tx.seguimientos_comerciales.update({
+          where: { ID_SEGUIMIENTO: idSeguimiento },
+          data: { ELIMINADO_AT: new Date(), ELIMINADO_POR: idUsuario, ELIMINACION_MOTIVO: request.body.motivo },
+        });
+        await tx.audit_logs.create({
+          data: {
+            action: 'DELETE',
+            tableName: 'seguimientos_comerciales',
+            recordId: String(idSeguimiento),
+            USER_ID: idUsuario,
+            ip: request.ip,
+            details: {
+              idCotizacion: existente.ID_COTIZACION_FK,
+              motivo: request.body.motivo,
+              snapshot: {
+                tipo: existente.TIPO,
+                descripcion: existente.DESCRIPCION,
+                fechaGestion: existente.FECHA_GESTION.toISOString(),
+                proximaGestion: existente.PROXIMA_GESTION?.toISOString() ?? null,
+                resultado: existente.RESULTADO,
+                idUsuario: existente.ID_USUARIO_FK,
+                origen: existente.ORIGEN,
+              },
+            },
+          },
         });
       });
 
