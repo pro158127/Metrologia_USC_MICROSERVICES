@@ -13,6 +13,9 @@ import {
   obtenerDatosReporte,
   generarReportePdf,
   generarReporteExcel,
+  obtenerReporteAuditoriaFactura,
+  generarAuditoriaFacturaPdf,
+  generarAuditoriaFacturaExcel,
 } from '../services/reportes.service.js';
 import { uploadBuffer } from '../lib/minioClient.js';
 
@@ -21,7 +24,8 @@ const prisma = new PrismaClient();
 export const reportesWorker = new Worker<ReportesJobData>(
   REPORTES_QUEUE,
   async (job) => {
-    const { formato, filtros } = job.data;
+    const formato = job.data.tipo === 'trazabilidad_factura' ? 'auditoria' : job.data.formato;
+    const filtros = job.data.tipo === 'trazabilidad_factura' ? {} : job.data.filtros;
     const jobStartedAt = Date.now();
     let etapa = 'consultar_datos';
     const log = (evento: string, detalles: Record<string, unknown> = {}) => {
@@ -32,6 +36,64 @@ export const reportesWorker = new Worker<ReportesJobData>(
 
     try {
       log('iniciado');
+
+      if (job.data.tipo === 'trazabilidad_factura') {
+        etapa = 'consultar_factura';
+        const consultaAuditoriaStartedAt = Date.now();
+        const datosAuditoria = await obtenerReporteAuditoriaFactura(prisma, job.data.numeroFactura);
+        if (!datosAuditoria) throw new Error('No existe una factura con el número indicado.');
+        log('trazabilidad_lista', {
+          duracionMs: Date.now() - consultaAuditoriaStartedAt,
+          numeroFactura: datosAuditoria.numeroFactura,
+          unidades: datosAuditoria.filas.length,
+        });
+
+        etapa = 'generar_archivos_auditoria';
+        const generacionStartedAt = Date.now();
+        const [pdf, excel] = await Promise.all([
+          generarAuditoriaFacturaPdf(datosAuditoria),
+          generarAuditoriaFacturaExcel(datosAuditoria),
+        ]);
+        log('archivos_auditoria_generados', {
+          duracionMs: Date.now() - generacionStartedAt,
+          pdfBytes: pdf.byteLength,
+          excelBytes: excel.byteLength,
+        });
+
+        etapa = 'subir_archivos_auditoria';
+        const safeInvoice = datosAuditoria.numeroFactura.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const pdfFilename = 'trazabilidad_' + safeInvoice + '.pdf';
+        const excelFilename = 'trazabilidad_' + safeInvoice + '.xlsx';
+        const pdfKey = 'reportes/auditorias/' + job.id + '_' + pdfFilename;
+        const excelKey = 'reportes/auditorias/' + job.id + '_' + excelFilename;
+        await Promise.all([
+          uploadBuffer(pdfKey, pdf, 'application/pdf', { originalName: pdfFilename }),
+          uploadBuffer(excelKey, excel, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { originalName: excelFilename }),
+        ]);
+        log('auditoria_subida', {
+          numeroFactura: datosAuditoria.numeroFactura,
+          duracionTotalMs: Date.now() - jobStartedAt,
+          pdfBytes: pdf.byteLength,
+          excelBytes: excel.byteLength,
+        });
+        return {
+          tipo: 'trazabilidad_factura' as const,
+          numeroFactura: datosAuditoria.numeroFactura,
+          resumen: {
+            factura: datosAuditoria.numeroFactura,
+            cliente: datosAuditoria.cliente,
+            fecha: datosAuditoria.fecha,
+            valor: datosAuditoria.valor,
+            ots: Array.from(new Set(datosAuditoria.filas.map((fila) => fila.orden))).join(', ') || datosAuditoria.ordenFactura,
+            equipos: datosAuditoria.filas.length,
+            cert: Array.from(new Set(datosAuditoria.filas.map((fila) => fila.certificado).filter((codigo) => codigo !== '—'))).join(', ') || null,
+          },
+          archivos: {
+            pdf: { key: pdfKey, filename: pdfFilename, mime: 'application/pdf' },
+            excel: { key: excelKey, filename: excelFilename, mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+          },
+        };
+      }
 
       const consultaStartedAt = Date.now();
       const datos = await obtenerDatosReporte(prisma, filtros);
@@ -105,7 +167,7 @@ reportesWorker.on('failed', (job, err) => {
     servicio: 'reportes-worker',
     evento: 'job_cerrado_fallido',
     jobId: job?.id,
-    formato: job?.data.formato,
+    formato: job?.data.tipo === 'trazabilidad_factura' ? 'auditoria' : job?.data.formato,
     error: err.message,
   }));
 });

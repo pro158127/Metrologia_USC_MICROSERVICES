@@ -108,7 +108,26 @@ export async function exportarReporteExcel(
 export interface EstadoJobReporte {
   status: string;
   url: string | null;
+  archivos?: { pdf: string | null; excel: string | null };
+  resumen?: {
+    factura: string; cliente: string; fecha: string | null; valor: number;
+    ots: string; equipos: number; cert: string | null;
+  };
   error: string | null;
+}
+
+export async function encolarReporteAuditoriaFactura(numeroFactura: string): Promise<{ jobId: string | null; error: string | null }> {
+  try {
+    const session = await auth();
+    const res = await fastifyRequest<{ ok: boolean; data: { jobId: string } }>(
+      session,
+      '/api/v1/reportes/trazabilidad-factura',
+      { method: 'POST', body: { numeroFactura } },
+    );
+    return { jobId: res.data?.jobId ?? null, error: null };
+  } catch (error) {
+    return { jobId: null, error: error instanceof Error ? error.message : 'No se pudo generar el reporte de auditoría.' };
+  }
 }
 
 export async function consultarEstadoJobReporte(jobId: string): Promise<EstadoJobReporte | null> {

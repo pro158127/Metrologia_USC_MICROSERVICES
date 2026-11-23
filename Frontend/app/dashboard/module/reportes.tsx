@@ -22,6 +22,7 @@ import {
   exportarReportePdf,
   exportarReporteExcel,
   consultarEstadoJobReporte,
+  encolarReporteAuditoriaFactura,
   type DatosReporte,
   type FiltrosReporte,
 } from "@/app/action_module/reportes";
@@ -317,6 +318,10 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
   showTrazabilidad,
   onSearchChange,
   onGenerateReport,
+  generating = false,
+  downloads = null,
+  onDownloadPdf,
+  onDownloadExcel,
   filas,
 }) => {
   const { can } = usePermissions();
@@ -334,6 +339,7 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             value={facturaSearch}
+            disabled={generating}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Número de factura (ej: FAC-2026-045)..."
             className={`w-full pl-9 pr-4 ${inputBaseStyles}`}
@@ -342,9 +348,10 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
         {puedeGenerar && (
         <button
           onClick={onGenerateReport}
-          className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#5680F9] text-white hover:bg-blue-600 font-semibold text-xs transition-all cursor-pointer shadow-sm"
+          disabled={generating || !facturaSearch.trim()}
+          className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#5680F9] text-white hover:bg-blue-600 font-semibold text-xs transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Generar reporte auditoría
+          {generating ? "Generando PDF y Excel…" : "Generar reporte auditoría"}
         </button>
         )}
       </div>
@@ -356,10 +363,10 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
               Resultado: {facturaSearch}
             </span>
             <div className="flex gap-2">
-              <button className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all cursor-pointer">
+              <button onClick={onDownloadPdf} disabled={!downloads?.pdf} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
                 <Download size={12} /> PDF (auditor)
               </button>
-              <button className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#5680F9] hover:bg-blue-600 text-white text-xs font-semibold transition-all cursor-pointer">
+              <button onClick={onDownloadExcel} disabled={!downloads?.excel} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#5680F9] hover:bg-blue-600 text-white text-xs font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
                 <Download size={12} /> Excel (análisis)
               </button>
             </div>
@@ -395,6 +402,11 @@ const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
                     </td>
                   </tr>
                 ))}
+                {filas.length === 0 && (
+                  <tr><td colSpan={7} className="px-5 py-8 text-center text-xs text-slate-500">
+                    {generating ? "Consultando la factura y preparando los archivos…" : "Sin resultado disponible para esta factura."}
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -423,6 +435,11 @@ export function MainRendererreport() {
   const [verificando, setVerificando] = useState(false);
   const [facturaSearch, setFacturaSearch] = useState("");
   const [showTrazabilidad, setShowTrazabilidad] = useState(false);
+  const [generandoAuditoria, setGenerandoAuditoria] = useState(false);
+  const [archivosAuditoria, setArchivosAuditoria] = useState<{ pdf: string | null; excel: string | null } | null>(null);
+  const [resumenAuditoria, setResumenAuditoria] = useState<{
+    factura: string; cliente: string; fecha: string | null; valor: number; ots: string; equipos: number; cert: string | null;
+  } | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -490,19 +507,18 @@ export function MainRendererreport() {
   const tecnicos = useMemo(() => (datos?.tecnicos ?? []).map((t) => t.tecnico), [datos]);
   const clientesFiltro = useMemo(() => clientes.map((c) => c.razonSocial), [clientes]);
 
-  const filasAuditoria: AuditTraceabilityRow[] = useMemo(() => {
-    return (datos?.trazabilidad ?? [])
-      .filter((t) => t.factura.toLowerCase().includes(facturaSearch.toLowerCase()))
-      .map((t) => ({
-        factura: t.factura,
-        cliente: t.cliente,
-        fecha: t.fecha ? new Date(t.fecha).toLocaleDateString("es-CO") : "—",
-        valor: formatearMoneda(t.valor),
-        ots: t.ots,
-        equipos: t.equipos,
-        cert: t.cert ?? "—",
-      }));
-  }, [datos, facturaSearch]);
+  const filasAuditoriaMostradas: AuditTraceabilityRow[] = useMemo(() => {
+    if (!resumenAuditoria) return [];
+    return [{
+      factura: resumenAuditoria.factura,
+      cliente: resumenAuditoria.cliente,
+      fecha: resumenAuditoria.fecha ? new Date(resumenAuditoria.fecha).toLocaleDateString("es-CO") : "—",
+      valor: formatearMoneda(resumenAuditoria.valor),
+      ots: resumenAuditoria.ots,
+      equipos: resumenAuditoria.equipos,
+      cert: resumenAuditoria.cert ?? "—",
+    }];
+  }, [resumenAuditoria]);
 
   const verPdf = useCallback(
     async (rutaUrl: string | null, titulo: string) => {
@@ -573,10 +589,58 @@ export function MainRendererreport() {
     [filtros, showToast]
   );
 
-  const handleGenerateReport = useCallback(() => {
-    if (facturaSearch) {
-      setShowTrazabilidad(true);
+  const handleGenerateReport = useCallback(async () => {
+    const numeroFactura = facturaSearch.trim();
+    if (!numeroFactura || generandoAuditoria) return;
+    setShowTrazabilidad(true);
+    setGenerandoAuditoria(true);
+    setArchivosAuditoria(null);
+    setResumenAuditoria(null);
+    const creado = await encolarReporteAuditoriaFactura(numeroFactura);
+    if (!creado.jobId) {
+      showToast(creado.error ?? "No se pudo encolar el reporte de auditoría.");
+      setGenerandoAuditoria(false);
+      return;
     }
+
+    const inicio = Date.now();
+    const consultar = async (): Promise<void> => {
+      const estado = await consultarEstadoJobReporte(creado.jobId!);
+      if (estado?.status === "completed") {
+        setGenerandoAuditoria(false);
+        setArchivosAuditoria(estado.archivos ?? null);
+        setResumenAuditoria(estado.resumen ?? null);
+        if (!estado.archivos?.pdf || !estado.archivos?.excel) {
+          showToast(estado.error ?? "El reporte terminó sin los dos archivos esperados.");
+        } else if (Date.now() - inicio > 5000) {
+          showToast("Reporte listo. La generación superó los 5 segundos definidos en RF-46.");
+        }
+        return;
+      }
+      if (estado?.status === "failed") {
+        setGenerandoAuditoria(false);
+        showToast(estado.error ?? "Falló la generación del reporte de auditoría.");
+        return;
+      }
+      if (Date.now() - inicio > 2 * 60 * 1000) {
+        setGenerandoAuditoria(false);
+        showToast("La generación sigue pendiente. Revisa los logs del worker de reportes.");
+        return;
+      }
+      window.setTimeout(() => { void consultar(); }, 500);
+    };
+    void consultar();
+  }, [facturaSearch, generandoAuditoria, showToast]);
+
+  const descargarAuditoria = useCallback((url: string | null | undefined, extension: "pdf" | "xlsx") => {
+    if (!url) return;
+    const enlace = document.createElement("a");
+    enlace.href = url;
+    enlace.download = `trazabilidad_${facturaSearch.trim()}.${extension}`;
+    enlace.style.display = "none";
+    document.body.appendChild(enlace);
+    enlace.click();
+    enlace.remove();
   }, [facturaSearch]);
 
   return (
@@ -619,9 +683,18 @@ export function MainRendererreport() {
           <AuditTraceabilityReport
             facturaSearch={facturaSearch}
             showTrazabilidad={showTrazabilidad}
-            onSearchChange={setFacturaSearch}
+            onSearchChange={(value) => {
+              setFacturaSearch(value);
+              setArchivosAuditoria(null);
+              setResumenAuditoria(null);
+              setShowTrazabilidad(false);
+            }}
             onGenerateReport={handleGenerateReport}
-            filas={filasAuditoria}
+            generating={generandoAuditoria}
+            downloads={archivosAuditoria}
+            onDownloadPdf={() => descargarAuditoria(archivosAuditoria?.pdf, "pdf")}
+            onDownloadExcel={() => descargarAuditoria(archivosAuditoria?.excel, "xlsx")}
+            filas={filasAuditoriaMostradas}
           />
         </>
       )}

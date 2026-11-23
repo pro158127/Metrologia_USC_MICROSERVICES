@@ -7,7 +7,9 @@ import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { getObjectStream } from '../lib/minioClient.js';
 import {
   exportarReporteBodySchema,
+  reporteDescargaQuerySchema,
   reporteJobParamsSchema,
+  reporteTrazabilidadFacturaBodySchema,
   reportesQuerySchema,
   respuestaExportacionEncoladaSchema,
   respuestaReportesDataSchema,
@@ -52,6 +54,7 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       assertPermission(request, 'reportes_y_consolidados', 'exportar_base_de_datos');
       const queue = getReportesQueue();
       const job = await queue.add('exportar-reporte-pdf', {
+        tipo: 'consolidado',
         formato: 'pdf',
         filtros: request.body ?? {},
         usuarioId: Number(request.user?.sub ?? 0),
@@ -73,8 +76,38 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       assertPermission(request, 'reportes_y_consolidados', 'exportar_base_de_datos');
       const queue = getReportesQueue();
       const job = await queue.add('exportar-reporte-excel', {
+        tipo: 'consolidado',
         formato: 'excel',
         filtros: request.body ?? {},
+        usuarioId: Number(request.user?.sub ?? 0),
+      });
+      return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
+    }
+  );
+
+  app.post(
+    '/api/v1/reportes/trazabilidad-factura',
+    {
+      preHandler: [fastify.authenticate],
+      schema: {
+        body: reporteTrazabilidadFacturaBodySchema,
+        response: { 202: respuestaExportacionEncoladaSchema },
+      },
+    },
+    async (request, reply) => {
+      assertPermission(request, 'reportes_y_consolidados', 'generar_consolidado_ventas');
+      const usuario = await fastify.prisma.usuarios.findUnique({
+        where: { ID_USUARIO_AUTO_INCREMENT: Number(request.user?.sub ?? 0) },
+        select: { roles: { select: { NOMBRE_ROL: true } } },
+      });
+      if (!['Director Técnico', 'Coordinadora'].includes(usuario?.roles.NOMBRE_ROL ?? '')) {
+        throw new AppError(403, 'El reporte de auditoría está disponible solo para Director Técnico y Coordinadora.');
+      }
+      const queue = getReportesQueue();
+      const numeroFactura = request.body.numeroFactura.trim();
+      const job = await queue.add('reporte-trazabilidad-factura', {
+        tipo: 'trazabilidad_factura',
+        numeroFactura,
         usuarioId: Number(request.user?.sub ?? 0),
       });
       return reply.code(202).send({ ok: true as const, data: { jobId: String(job.id) } });
@@ -105,13 +138,28 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
       const state = await job.getState();
 
       if (state === 'completed') {
-        const rv = job.returnvalue as { key?: string } | undefined;
+        const rv = job.returnvalue as {
+          key?: string;
+          tipo?: string;
+          resumen?: { factura: string; cliente: string; fecha: string | null; valor: number; ots: string; equipos: number; cert: string | null };
+          archivos?: { pdf?: { key?: string }; excel?: { key?: string } };
+        } | undefined;
+        const baseUrl = `/api/reportes/${encodeURIComponent(request.params.jobId)}/download`;
         return {
           ok: true as const,
           data: {
             status: 'completed',
-            url: rv?.key ? `/api/reportes/${encodeURIComponent(request.params.jobId)}/download` : null,
-            error: rv?.key ? null : 'El reporte terminó sin registrar su archivo. Genérelo nuevamente.',
+            url: rv?.key ? baseUrl : null,
+            ...(rv?.tipo === 'trazabilidad_factura' ? {
+              archivos: {
+                pdf: rv.archivos?.pdf?.key ? `${baseUrl}?formato=pdf` : null,
+                excel: rv.archivos?.excel?.key ? `${baseUrl}?formato=excel` : null,
+              },
+              ...(rv.resumen ? { resumen: rv.resumen } : {}),
+            } : {}),
+            error: rv?.key || rv?.archivos?.pdf?.key || rv?.archivos?.excel?.key
+              ? null
+              : 'El reporte terminó sin registrar su archivo. Genérelo nuevamente.',
           },
         };
       }
@@ -138,7 +186,7 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
     '/api/v1/reportes/job/:jobId/download',
     {
       preHandler: [fastify.authenticate],
-      schema: { params: reporteJobParamsSchema },
+      schema: { params: reporteJobParamsSchema, querystring: reporteDescargaQuerySchema },
     },
     async (request, reply) => {
       assertAnyPermission(request, [
@@ -154,7 +202,13 @@ export default async function reportesRoutes(fastify: FastifyInstance) {
         throw new AppError(409, 'El reporte todavía no está listo para descargar.');
       }
 
-      const archivo = job.returnvalue as { key?: string; filename?: string; mime?: string } | undefined;
+      const resultado = job.returnvalue as {
+        key?: string; filename?: string; mime?: string;
+        archivos?: { pdf?: { key: string; filename: string; mime: string }; excel?: { key: string; filename: string; mime: string } };
+      } | undefined;
+      const archivo = resultado?.archivos
+        ? resultado.archivos[request.query.formato ?? 'pdf']
+        : resultado;
       if (!archivo?.key || !archivo.filename || !archivo.mime) {
         throw new AppError(404, 'El archivo del reporte no está disponible. Genérelo nuevamente.');
       }

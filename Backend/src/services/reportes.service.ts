@@ -4,6 +4,7 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import sharp from 'sharp';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -60,6 +61,35 @@ export interface DatosReporte {
   tecnicos: TecnicoReporte[];
   trazabilidad: TrazabilidadReporte[];
   filtrosAplicados: FiltrosReporte;
+}
+
+export interface FilaAuditoriaFactura {
+  orden: string;
+  estadoOt: string;
+  sitio: string;
+  recepcion: string;
+  fechaRecepcion: string | null;
+  instrumento: string;
+  marca: string;
+  modelo: string;
+  serie: string;
+  codigoInventario: string;
+  estampilla: string;
+  tecnico: string;
+  fechaCalibracion: string | null;
+  certificado: string;
+  estadoCertificado: string;
+}
+
+export interface ReporteAuditoriaFactura {
+  numeroFactura: string;
+  cliente: string;
+  nit: string;
+  fecha: string | null;
+  valor: number;
+  estado: string;
+  ordenFactura: string;
+  filas: FilaAuditoriaFactura[];
 }
 
 function enRangoFecha(fecha: Date | null | undefined, inicio?: string, fin?: string): boolean {
@@ -381,6 +411,94 @@ export async function obtenerDatosReporte(
   return { kpis, series, certificados: certs, tecnicos, trazabilidad, filtrosAplicados: filtros };
 }
 
+/** Consulta una sola factura y sigue sus OTs operativas, recepciones, unidades y certificados. */
+export async function obtenerReporteAuditoriaFactura(
+  prisma: PrismaClient,
+  numeroFactura: string,
+): Promise<ReporteAuditoriaFactura | null> {
+  const factura = await prisma.facturas.findUnique({
+    where: { NUMERO_FACTURA: numeroFactura.trim() },
+    include: {
+      clientes: true,
+      ordenes_trabajo: {
+        include: {
+          orden_trabajo_hijas: {
+            where: { VIGENTE: true },
+            include: {
+              orden_trabajo_detalles: true,
+              recepciones_equipo: {
+                where: { VIGENTE: true, activacion: true },
+                include: {
+                  recepcion_equipo_detalles: {
+                    where: { OR: [{ activacion: true }, { activacion: null }] },
+                    include: { calibraciones: { include: { usuarios: true, certificados: true } } },
+                  },
+                },
+              },
+            },
+          },
+          orden_trabajo_detalles: true,
+          recepciones_equipo: {
+            where: { VIGENTE: true, activacion: true },
+            include: {
+              recepcion_equipo_detalles: {
+                where: { OR: [{ activacion: true }, { activacion: null }] },
+                include: { calibraciones: { include: { usuarios: true, certificados: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!factura) return null;
+
+  const ordenRaiz = factura.ordenes_trabajo;
+  const ordenes = ordenRaiz?.orden_trabajo_hijas?.length
+    ? ordenRaiz.orden_trabajo_hijas
+    : ordenRaiz
+      ? [ordenRaiz]
+      : [];
+  const filas: FilaAuditoriaFactura[] = [];
+  for (const orden of ordenes) {
+    const sitio = orden.SITIO_CALIBRACION ?? (orden.ES_INTERNO_USC ? 'INTERNO_USC' : orden.ES_EN_SITIO ? 'CLIENTE' : 'LABORATORIO');
+    for (const recepcion of orden.recepciones_equipo ?? []) {
+      for (const detalle of recepcion.recepcion_equipo_detalles ?? []) {
+        const calibracion = detalle.calibraciones;
+        const certificado = calibracion?.certificados;
+        filas.push({
+          orden: orden.CODIGO_OT,
+          estadoOt: String(orden.estado ?? '—'),
+          sitio: String(sitio),
+          recepcion: recepcion.CODIGO_RECEPCION,
+          fechaRecepcion: recepcion.FECHA_RECEPCION?.toISOString() ?? null,
+          instrumento: detalle.INSTRUMENTO,
+          marca: detalle.MARCA ?? '—',
+          modelo: detalle.MODELO ?? '—',
+          serie: detalle.SERIE ?? '—',
+          codigoInventario: detalle.CODIGO_INVENTARIO ?? '—',
+          estampilla: detalle.ESTAMPILLA ?? '—',
+          tecnico: calibracion?.usuarios?.NOMBRE_COMPLETO ?? '—',
+          fechaCalibracion: calibracion?.CREATED_AT?.toISOString() ?? null,
+          certificado: certificado?.CODIGO_CERTIFICADO ?? '—',
+          estadoCertificado: certificado?.ESTADO_REVISION ?? 'SIN_CERTIFICADO',
+        });
+      }
+    }
+  }
+
+  return {
+    numeroFactura: factura.NUMERO_FACTURA,
+    cliente: factura.clientes?.RAZON_SOCIAL ?? ordenRaiz?.Razon_social ?? '—',
+    nit: factura.clientes?.NIT ?? ordenRaiz?.NIT ?? '—',
+    fecha: factura.FECHA?.toISOString() ?? null,
+    valor: Number(factura.VALOR),
+    estado: factura.ESTADO,
+    ordenFactura: ordenRaiz?.CODIGO_OT ?? '—',
+    filas,
+  };
+}
+
 async function cargarLogoReporte(): Promise<Buffer | null> {
   const candidatos = [
     process.env.REPORT_LOGO_PATH,
@@ -411,6 +529,52 @@ const filtrosComoTexto = (filtros: FiltrosReporte): string => {
   ].filter(Boolean);
   return activos.length ? activos.join(' · ') : 'Sin filtros; se incluyen todos los registros disponibles.';
 };
+
+const escaparSvg = (valor: string): string => valor.replace(/[&<>"']/g, (caracter) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
+}[caracter] ?? caracter));
+
+function crearGraficasSvg(datos: DatosReporte): [string, string] {
+  const ancho = 1000;
+  const alto = 360;
+  const izquierda = 72;
+  const derecha = 32;
+  const arriba = 62;
+  const abajo = 62;
+  const anchoPlot = ancho - izquierda - derecha;
+  const altoPlot = alto - arriba - abajo;
+  const serie = datos.series.slice(-12);
+  const maximo = Math.max(1, ...serie.map((punto) => punto.interno + punto.externo));
+  const xCentro = (i: number) => izquierda + anchoPlot * (i + 0.5) / Math.max(1, serie.length);
+  const barras = serie.map((punto, i) => {
+    const barW = Math.min(54, anchoPlot / Math.max(1, serie.length) * 0.55);
+    const totalH = altoPlot * (punto.interno + punto.externo) / maximo;
+    const internoH = altoPlot * punto.interno / maximo;
+    const x = xCentro(i) - barW / 2;
+    const yBase = arriba + altoPlot;
+    return `<rect x="${x}" y="${yBase - totalH}" width="${barW}" height="${totalH - internoH}" rx="3" fill="#5680F9"/><rect x="${x}" y="${yBase - internoH}" width="${barW}" height="${internoH}" rx="3" fill="#AFC4FD"/><text x="${xCentro(i)}" y="${alto - 26}" text-anchor="middle" font-size="13" fill="#475569">${escaparSvg(punto.mes)}</text>`;
+  }).join('');
+  const lineasGuia = [0, 0.5, 1].map((p) => {
+    const y = arriba + altoPlot * p;
+    return `<line x1="${izquierda}" y1="${y}" x2="${ancho - derecha}" y2="${y}" stroke="#E2E8F0"/><text x="${izquierda - 14}" y="${y + 4}" text-anchor="end" font-size="12" fill="#64748B">${Math.round(maximo * (1 - p))}</text>`;
+  }).join('');
+  const svgBase = (titulo: string, contenido: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="${ancho}" height="${alto}" viewBox="0 0 ${ancho} ${alto}"><rect width="100%" height="100%" fill="#FFFFFF"/><text x="${izquierda}" y="32" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#17356B">${titulo}</text>${contenido}</svg>`;
+  const barrasSvg = svgBase('OT operativas vigentes por mes', `${lineasGuia}${barras}<rect x="${izquierda}" y="${alto - 10}" width="13" height="13" fill="#5680F9"/><text x="${izquierda + 20}" y="${alto}" font-size="12" fill="#475569">Externo</text><rect x="${izquierda + 110}" y="${alto - 10}" width="13" height="13" fill="#AFC4FD"/><text x="${izquierda + 130}" y="${alto}" font-size="12" fill="#475569">Interno USC</text>`);
+
+  const puntos = serie.map((punto, i) => ({ x: xCentro(i), y: arriba + altoPlot * (1 - Math.max(0, Math.min(100, punto.tasa)) / 100), tasa: punto.tasa, mes: punto.mes }));
+  const conversionGuias = [0, 25, 50, 75, 100].map((valor) => {
+    const y = arriba + altoPlot * (1 - valor / 100);
+    return `<line x1="${izquierda}" y1="${y}" x2="${ancho - derecha}" y2="${y}" stroke="#E2E8F0"/><text x="${izquierda - 14}" y="${y + 4}" text-anchor="end" font-size="12" fill="#64748B">${valor}%</text>`;
+  }).join('');
+  const d = puntos.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  const lineaSvg = svgBase('Tasa de conversión mensual', `${conversionGuias}<path d="${d}" fill="none" stroke="#22C55E" stroke-width="4"/>${puntos.map((p) => `<circle cx="${p.x}" cy="${p.y}" r="5" fill="#22C55E"/><text x="${p.x}" y="${p.y - 12}" text-anchor="middle" font-size="12" fill="#166534">${p.tasa}%</text><text x="${p.x}" y="${alto - 26}" text-anchor="middle" font-size="13" fill="#475569">${escaparSvg(p.mes)}</text>`).join('')}`);
+  return [barrasSvg, lineaSvg];
+}
+
+async function cargarGraficasPng(datos: DatosReporte): Promise<[Buffer, Buffer]> {
+  const svgs = crearGraficasSvg(datos);
+  return Promise.all(svgs.map((svg) => sharp(Buffer.from(svg)).png().toBuffer())) as Promise<[Buffer, Buffer]>;
+}
 
 type ExportColumn = { name: string; width: number; numFmt?: string };
 
@@ -484,7 +648,7 @@ export async function generarReporteExcel(datos: DatosReporte): Promise<Buffer> 
   const logo = await cargarLogoReporte();
   const logoId = logo ? wb.addImage({ base64: logo.toString('base64'), extension: 'png' }) : null;
 
-  prepararHojaExcel(wb, 'Indicadores', 'TablaIndicadores', [
+  const hojaIndicadores = prepararHojaExcel(wb, 'Indicadores', 'TablaIndicadores', [
     { name: 'Indicador', width: 34 },
     { name: 'Valor', width: 20 },
   ], [
@@ -493,6 +657,11 @@ export async function generarReporteExcel(datos: DatosReporte): Promise<Buffer> 
     ['Ingresos facturados (COP)', datos.kpis.ingresos],
     ['Órdenes internas USC', datos.kpis.ordenesInternas],
   ], datos.filtrosAplicados, logoId, 'Indicadores generales del sistema.');
+  const [chartOts, chartConversion] = await cargarGraficasPng(datos);
+  const chartOtsId = wb.addImage({ base64: 'data:image/png;base64,' + chartOts.toString('base64'), extension: 'png' });
+  const chartConversionId = wb.addImage({ base64: 'data:image/png;base64,' + chartConversion.toString('base64'), extension: 'png' });
+  hojaIndicadores.addImage(chartOtsId, { tl: { col: 0, row: 13 }, ext: { width: 760, height: 274 } });
+  hojaIndicadores.addImage(chartConversionId, { tl: { col: 0, row: 29 }, ext: { width: 760, height: 274 } });
 
   const hojaTecnicos = prepararHojaExcel(wb, 'Resumen por técnico', 'TablaTecnicos', [
     { name: 'Técnico', width: 34 },
@@ -666,6 +835,15 @@ export async function generarReportePdf(datos: DatosReporte): Promise<Buffer> {
   };
 
   createPage();
+  const [chartOts, chartConversion] = await cargarGraficasPng(datos);
+  const pdfChartOts = await doc.embedPng(chartOts);
+  const pdfChartConversion = await doc.embedPng(chartConversion);
+  const chartW = (contentW - 14) / 2;
+  const chartH = chartW * altoGraficaPdfRatio();
+  const paginaGraficas = pages[pages.length - 1];
+  paginaGraficas.drawImage(pdfChartOts, { x: margin, y: pageH - 112 - chartH, width: chartW, height: chartH });
+  paginaGraficas.drawImage(pdfChartConversion, { x: margin + chartW + 14, y: pageH - 112 - chartH, width: chartW, height: chartH });
+  y = pageH - 130 - chartH;
   drawTable('Indicadores generales', [
     { title: 'Indicador', width: 3 }, { title: 'Valor', width: 1 },
   ], [
@@ -707,3 +885,98 @@ export async function generarReportePdf(datos: DatosReporte): Promise<Buffer> {
 
   return Buffer.from(await doc.save());
 }
+
+export async function generarAuditoriaFacturaExcel(datos: ReporteAuditoriaFactura): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'MetroSoft USC';
+  wb.subject = 'Trazabilidad de auditoría ' + datos.numeroFactura;
+  wb.created = new Date();
+  const resumen = wb.addWorksheet('Factura');
+  resumen.columns = [{ header: 'Dato', key: 'dato', width: 28 }, { header: 'Valor', key: 'valor', width: 45 }];
+  resumen.addRows([
+    { dato: 'Número de factura', valor: datos.numeroFactura },
+    { dato: 'Cliente', valor: datos.cliente },
+    { dato: 'NIT', valor: datos.nit },
+    { dato: 'Fecha', valor: fechaReporte(datos.fecha) },
+    { dato: 'Valor COP', valor: datos.valor },
+    { dato: 'Estado de factura', valor: datos.estado },
+    { dato: 'OT asociada a factura', valor: datos.ordenFactura },
+    { dato: 'Unidades trazadas', valor: datos.filas.length },
+    { dato: 'Generado', valor: new Date().toLocaleString('es-CO') },
+  ]);
+  resumen.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  resumen.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF17356B' } };
+
+  const detalle = wb.addWorksheet('Trazabilidad por equipo', { views: [{ state: 'frozen', ySplit: 1, xSplit: 3 }] });
+  const columns = [
+    'Orden de trabajo', 'Estado OT', 'Sitio', 'Recepción', 'Fecha recepción', 'Instrumento',
+    'Marca', 'Modelo', 'Serie', 'Código inventario', 'Estampilla', 'Técnico',
+    'Fecha calibración', 'Certificado', 'Estado certificado',
+  ];
+  detalle.addTable({
+    name: 'TrazabilidadFactura', ref: 'A1', headerRow: true, totalsRow: false,
+    style: { theme: 'TableStyleMedium2', showRowStripes: true, showColumnStripes: false },
+    columns: columns.map((name) => ({ name, filterButton: true })),
+    rows: datos.filas.map((fila) => [
+      fila.orden, fila.estadoOt, fila.sitio, fila.recepcion, fechaReporte(fila.fechaRecepcion),
+      fila.instrumento, fila.marca, fila.modelo, fila.serie, fila.codigoInventario,
+      fila.estampilla, fila.tecnico, fechaReporte(fila.fechaCalibracion), fila.certificado,
+      fila.estadoCertificado,
+    ]),
+  });
+  [22, 24, 20, 22, 20, 32, 20, 20, 20, 22, 18, 30, 20, 24, 24].forEach((width, index) => {
+    detalle.getColumn(index + 1).width = width;
+  });
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export async function generarAuditoriaFacturaPdf(datos: ReporteAuditoriaFactura): Promise<Buffer> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const width = 842;
+  const height = 595;
+  const margin = 34;
+  const navy = rgb(0.08, 0.14, 0.29);
+  const blue = rgb(0.15, 0.34, 0.72);
+  const ink = rgb(0.14, 0.19, 0.27);
+  const light = rgb(0.94, 0.96, 0.99);
+  const safe = (value: string) => value.replace(/[^\u0000-\u00FF]/g, ' ');
+  let page = doc.addPage([width, height]);
+  let y = height - 119;
+  const encabezado = () => {
+    page.drawRectangle({ x: 0, y: height - 91, width, height: 91, color: navy });
+    page.drawText('REPORTE DE TRAZABILIDAD PARA AUDITORÍA', { x: margin, y: height - 42, size: 16, font: bold, color: rgb(1, 1, 1) });
+    page.drawText('Factura ' + safe(datos.numeroFactura) + ' · ' + safe(datos.cliente) + ' · NIT ' + safe(datos.nit), { x: margin, y: height - 64, size: 10, font, color: rgb(0.88, 0.91, 0.97) });
+    page.drawText('Fecha: ' + fechaReporte(datos.fecha) + '   Valor: ' + new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(datos.valor) + '   Estado: ' + safe(datos.estado) + '   OT: ' + safe(datos.ordenFactura), { x: margin, y: height - 81, size: 8, font, color: rgb(0.88, 0.91, 0.97) });
+    y = height - 119;
+    page.drawRectangle({ x: margin, y: y - 22, width: width - margin * 2, height: 22, color: blue });
+    page.drawText('OT / Recepción / Instrumento / Identificación / Calibración / Certificado', { x: margin + 8, y: y - 15, size: 8, font: bold, color: rgb(1, 1, 1) });
+    y -= 24;
+  };
+  encabezado();
+  for (const [index, fila] of datos.filas.entries()) {
+    if (y < 70) {
+      page = doc.addPage([width, height]);
+      encabezado();
+    }
+    page.drawRectangle({ x: margin, y: y - 43, width: width - margin * 2, height: 43, color: index % 2 === 0 ? rgb(1, 1, 1) : light, borderColor: rgb(0.78, 0.82, 0.88), borderWidth: 0.4 });
+    const lineas = [
+      fila.orden + ' (' + fila.estadoOt + ', ' + fila.sitio + ') · ' + fila.recepcion + ' (' + fechaReporte(fila.fechaRecepcion) + ') · ' + fila.instrumento,
+      'Marca/modelo/serie: ' + fila.marca + ' / ' + fila.modelo + ' / ' + fila.serie + ' · Inventario: ' + fila.codigoInventario + ' · Estampilla: ' + fila.estampilla,
+      'Técnico: ' + fila.tecnico + ' (' + fechaReporte(fila.fechaCalibracion) + ') · Certificado: ' + fila.certificado + ' · Revisión: ' + fila.estadoCertificado,
+    ];
+    lineas.forEach((texto, i) => page.drawText(safe(texto).slice(0, 170), { x: margin + 8, y: y - 12 - i * 13, size: i === 0 ? 8 : 7.5, font: i === 0 ? bold : font, color: ink }));
+    y -= 45;
+  }
+  if (datos.filas.length === 0) {
+    page.drawText('No se encontraron unidades vinculadas a las OT y recepciones vigentes de esta factura.', { x: margin, y: y - 18, size: 9, font, color: ink });
+  }
+  for (const [index, pdfPage] of doc.getPages().entries()) {
+    pdfPage.drawLine({ start: { x: margin, y: 26 }, end: { x: width - margin, y: 26 }, thickness: 0.6, color: rgb(0.78, 0.82, 0.88) });
+    pdfPage.drawText('Generado ' + new Date().toLocaleString('es-CO') + ' · Página ' + (index + 1) + ' de ' + doc.getPageCount(), { x: margin, y: 13, size: 7, font, color: rgb(0.38, 0.43, 0.52) });
+  }
+  return Buffer.from(await doc.save());
+}
+
+function altoGraficaPdfRatio(): number { return 360 / 1000; }

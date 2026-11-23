@@ -132,7 +132,8 @@ export function getCertificatePdfQueue(): Queue {
   return certificatePdfQueue;
 }
 
-export interface ReportesJobData {
+export type ReportesJobData = {
+  tipo?: 'consolidado';
   formato: 'pdf' | 'excel';
   usuarioId: number;
   filtros: {
@@ -142,7 +143,11 @@ export interface ReportesJobData {
     cliente?: string;
     tecnico?: string;
   };
-}
+} | {
+  tipo: 'trazabilidad_factura';
+  numeroFactura: string;
+  usuarioId: number;
+};
 
 export function getReportesQueue(): Queue {
   if (!reportesQueue) {

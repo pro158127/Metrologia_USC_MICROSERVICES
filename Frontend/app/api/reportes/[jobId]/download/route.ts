@@ -5,7 +5,7 @@ import { generarTokenBackend } from '@/app/lib/auth-token';
 export const runtime = 'nodejs';
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ jobId: string }> },
 ) {
   const session = await auth();
@@ -29,8 +29,11 @@ export async function GET(
   });
 
   const { jobId } = await context.params;
+  const query = new URL(request.url).searchParams;
+  const formato = query.get('formato');
+  const suffix = formato === 'pdf' || formato === 'excel' ? '?formato=' + formato : '';
   const response = await fetch(
-    `${BASE_URL}/api/v1/reportes/job/${encodeURIComponent(jobId)}/download`,
+    `${BASE_URL}/api/v1/reportes/job/${encodeURIComponent(jobId)}/download${suffix}`,
     { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' },
   );
 

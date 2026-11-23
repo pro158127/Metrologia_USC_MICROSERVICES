@@ -54,5 +54,9 @@ export interface AuditTraceabilityReportProps {
   showTrazabilidad: boolean;
   onSearchChange: (value: string) => void;
   onGenerateReport: () => void;
+  generating?: boolean;
+  downloads?: { pdf: string | null; excel: string | null } | null;
+  onDownloadPdf?: () => void;
+  onDownloadExcel?: () => void;
   filas: AuditTraceabilityRow[];
 }
