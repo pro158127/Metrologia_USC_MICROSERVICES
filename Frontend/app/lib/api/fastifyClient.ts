@@ -29,11 +29,12 @@ export class FastifyHttpError extends Error {
   }
 }
 
-export async function fastifyRequest<T = unknown>(
+export async function fastifyFetch(
   session: SessionLike | null,
   path: string,
-  opts: FastifyRequestOptions = {}
-): Promise<T> {
+  opts: FastifyRequestOptions = {},
+  cache?: RequestCache,
+): Promise<Response> {
   if (!session?.user) {
     throw new FastifyHttpError(401, 'No autenticado');
   }
@@ -64,7 +65,8 @@ export async function fastifyRequest<T = unknown>(
     headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  return fetch(`${BASE_URL}${path}`, {
+    cache,
     method: opts.method ?? 'GET',
     headers,
     ...(opts.body !== undefined
@@ -72,6 +74,14 @@ export async function fastifyRequest<T = unknown>(
       : {}),
   });
 
+}
+
+export async function fastifyRequest<T = unknown>(
+  session: SessionLike | null,
+  path: string,
+  opts: FastifyRequestOptions = {},
+): Promise<T> {
+  const res = await fastifyFetch(session, path, opts);
   let data: unknown;
   try {
     data = await res.json();

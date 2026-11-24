@@ -1,4 +1,4 @@
-import { despacharGeneracionesPendientes, type GeneracionExcelJob } from '../services/generacion-pendiente.service.js';
+import { despacharGeneracionesPendientes, type GeneracionDocumentoJob, type GeneracionExcelJob } from '../services/generacion-pendiente.service.js';
 // workers/plantillas.worker.ts
 import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
@@ -10,6 +10,7 @@ import { s3Client, BUCKET_NAME } from '../lib/s3Client.js';
 import { getRedisConnection, TarifasJobData, TARIFAS_QUEUE,GENERATION_EXCEL } from '../lib/queue/queue.js';
 import { procesarPlantillaJob } from './plantillasWorker.js';
 import { PrismaClient } from '@prisma/client';
+import { publicarPdfFactura } from '../services/factura-pdf.service.js';
 import { pipeline } from 'stream/promises';
 import { generarExcelPlantilla } from './generador.excel.js'; 
 import { despacharCorreosPendientes } from '../services/email-delivery.service.js';
@@ -125,8 +126,9 @@ worker.on('error', (err) => {
 console.log('🚀 [plantillas-worker] Worker de consolidación de tarifas escuchando en Redis...');
 
 
-const generador_excel= new Worker<GeneracionExcelJob>(GENERATION_EXCEL, async(job)=>{
-  return generarExcelPlantilla(job);
+const generador_excel= new Worker<GeneracionDocumentoJob>(GENERATION_EXCEL, async(job)=>{
+  if ('documento' in job.data) return publicarPdfFactura(prisma, job.data);
+  return generarExcelPlantilla(job as Job<GeneracionExcelJob>);
 },
  {
     connection: getRedisConnection(),

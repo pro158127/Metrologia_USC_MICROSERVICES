@@ -35,11 +35,6 @@ export type ActualizarClienteInput = Partial<CrearClienteInput>;
 // DTOs DE VISTA
 // ============================================================
 
-/** Cliente normalizado para la UI (mismo `estado` que `status` en BD). */
-export type ClienteVista = ClienteModel & {
-  estado: statuscliente;
-};
-
 export type ClienteFormData = {
   nitCedula: string;
   razonSocial: string;
@@ -86,18 +81,20 @@ export interface ClientFormModalProps {
 }
 
 export interface CustomerTableRowProps {
-  c: ClienteVista;
+  c: ClienteModel;
   permisos?: PermisosUsuario;
-  handleEdit: (cliente: ClienteVista) => void;
-  handleToggleStatus: (id: number) => void;
+  handleEdit: (cliente: ClienteModel) => void;
+  handleToggleStatus: (cliente: ClienteModel) => void;
   onSelectCliente: (id: number) => void;
 }
+
+export type FiltroEstadoCliente = "Todos" | statuscliente;
 
 export interface ClientControlsProps {
   search: string;
   setSearch: (v: string) => void;
-  filter: string;
-  setFilter: (v: string) => void;
+  filter: FiltroEstadoCliente;
+  setFilter: (v: FiltroEstadoCliente) => void;
   onNewClient: () => void;
   permisos?: PermisosUsuario;
 }

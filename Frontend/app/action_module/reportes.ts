@@ -19,6 +19,7 @@ export interface CertificadoReporte {
   nit: string;
   tecnico: string;
   ot: string;
+  cotizacion?: string | null;
   fecha: string | null;
   rutaUrl: string | null;
   tipoServicio: string | null;
@@ -116,17 +117,28 @@ export interface EstadoJobReporte {
   error: string | null;
 }
 
-export async function encolarReporteAuditoriaFactura(numeroFactura: string): Promise<{ jobId: string | null; error: string | null }> {
+export type FiltrosFacturas = { numero: string; cotizacion: string; orden: string; cliente: string };
+export type FacturaArchivada = {
+  estadoPdf: 'disponible' | 'pendiente' | 'fallido' | 'sin_pdf';
+  numero: string;
+  fecha: string;
+  cliente: string | null;
+  nit: string | null;
+  cotizacion: string | null;
+  ordenes: string[];
+  valor: number;
+};
+
+export async function buscarFacturasArchivadas(filtros: FiltrosFacturas): Promise<{ data?: FacturaArchivada[]; error?: string }> {
   try {
     const session = await auth();
-    const res = await fastifyRequest<{ ok: boolean; data: { jobId: string } }>(
-      session,
-      '/api/v1/reportes/trazabilidad-factura',
-      { method: 'POST', body: { numeroFactura } },
+    const query = new URLSearchParams(Object.entries(filtros).filter(([, valor]) => valor.trim()));
+    const res = await fastifyRequest<{ ok: boolean; data: FacturaArchivada[] }>(
+      session, `/api/v1/reportes/facturas?${query}`,
     );
-    return { jobId: res.data?.jobId ?? null, error: null };
+    return { data: res.data };
   } catch (error) {
-    return { jobId: null, error: error instanceof Error ? error.message : 'No se pudo generar el reporte de auditoría.' };
+    return { error: error instanceof Error ? error.message : 'No se pudieron buscar las facturas.' };
   }
 }
 

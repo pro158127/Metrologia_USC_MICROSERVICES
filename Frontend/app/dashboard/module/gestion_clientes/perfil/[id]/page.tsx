@@ -620,11 +620,13 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
   const [is_open_documento, setIsOpenDocumento] = useState(false);
   const [searchCodigo, setSearchCodigo] = useState("");
   const [filterEstado, setFilterEstado] = useState<string>("TODOS");
-  const [trazabilidad, setTrazabilidad] = useState<TrazabilidadCliente | null>(null);
+  const [perfil, setPerfil] = useState<TrazabilidadCliente | null>(null);
+  const [errorPerfil, setErrorPerfil] = useState<string | null>(null);
+  const trazabilidad = perfil?.idCliente === id_cliente ? perfil : null;
   const [cargandoTrazabilidad, setCargandoTrazabilidad] = useState(true);
   useModuleSplashReady("perfil_cliente", (id_cliente === null || id_cliente === undefined) || !cargandoTrazabilidad);
   const [config, setConfig] = useState<DocumentConfig>(initialDocumentConfig);
-  const revisionCotizaciones = useRevisionTablas("cotizaciones", "documentos", "version_documentos");
+  const revisionCotizaciones = useRevisionTablas("clientes", "cotizaciones", "documentos", "version_documentos");
 
   useEffect(() => {
     if (id_cliente === null || id_cliente === undefined) {
@@ -632,20 +634,24 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
     }
 
     let activo = true;
-    const timer = window.setTimeout(async () => {
-      if (activo) setCargandoTrazabilidad(true);
+    const cargarPerfil = async () => {
+      setCargandoTrazabilidad(true);
+      setErrorPerfil(null);
       try {
         const resultado = await obtenerTrazabilidadCliente(id_cliente);
-        if (activo && resultado?.data) setTrazabilidad(resultado.data);
+        if (!resultado.success || !resultado.data) {
+          throw new Error(resultado.error || "No se encontró la información del cliente.");
+        }
+        if (activo) setPerfil(resultado.data);
       } catch (error) {
-        console.error("No se pudo cargar la trazabilidad del cliente:", error);
+        if (activo) setErrorPerfil(error instanceof Error ? error.message : "No se pudo cargar el perfil del cliente.");
       } finally {
         if (activo) setCargandoTrazabilidad(false);
       }
-    }, 150);
+    };
+    void cargarPerfil();
     return () => {
       activo = false;
-      window.clearTimeout(timer);
     };
   }, [id_cliente, revisionCotizaciones]);
 
@@ -696,15 +702,22 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
         >
           <ArrowLeft size={14} /> Volver a la lista
         </button>
-        <button
-          onClick={() => handleViewRut(trazabilidad)}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white text-slate-700 hover:bg-slate-100 transition-all text-xs font-semibold border border-slate-200 shadow-sm"
-        >
-          <Eye size={14} className="text-blue-600" />
-          Ver RUT del Cliente
-        </button>
+        {trazabilidad?.rutDocumento && (
+          <button
+            type="button"
+            onClick={() => handleViewRut(trazabilidad)}
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white text-slate-700 hover:bg-slate-100 transition-all text-xs font-semibold border border-slate-200 shadow-sm"
+          >
+            <Eye size={14} className="text-blue-600" />
+            Ver RUT del Cliente
+          </button>
+        )}
       </div>
 
+      {errorPerfil && <p role="alert" className="text-sm text-rose-700">{errorPerfil}</p>}
+      {!trazabilidad && cargandoTrazabilidad && <p role="status" className="text-sm text-slate-500">Cargando perfil del cliente…</p>}
+      {trazabilidad && (
+        <>
       {/* Hero Header */}
 <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-sm flex flex-col gap-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -712,7 +725,7 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <Building2 size={18} className="text-blue-600 shrink-0" />
               <h1 className="text-xl font-bold text-slate-900">
-                {trazabilidad?.razonSocial || "Cargando..."}
+                {trazabilidad.razonSocial}
               </h1>
               {trazabilidad?.status && (
                 <span
@@ -750,8 +763,9 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
                 </span>
               )}
               <span className="flex items-center gap-1">
-                <MapPin size={13} className="text-slate-400" /> {trazabilidad?.ciudad || "Cali"}
+                <MapPin size={13} className="text-slate-400" /> {trazabilidad.ciudad || "Sin ciudad"}
               </span>
+              {trazabilidad.dirrecion && <span>{trazabilidad.dirrecion}</span>}
             </div>
           </div>
         </div>
@@ -825,6 +839,9 @@ export default function ClienteDetailPage({ onVolver, id_cliente }: ClienteDetai
           </div>
         )}
       </div>
+
+        </>
+      )}
 
       {/* visor del documento*/}
 {is_open_documento && (

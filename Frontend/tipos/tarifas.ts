@@ -33,6 +33,7 @@ export interface CatalogHeaderControlsProps {
   magnitudesDisponibles: string[];
   tiposServicioDisponibles: string[];
   onOpenCreate: () => void;
+  onTarifasImportadas: () => Promise<boolean>;
 
 }
 

@@ -455,6 +455,7 @@ export const ordenTrabajoRawToDtoSchema = z
     TELEFONO_CONTACTO: z.string().nullish(),
     FECHA_CALIBRACION: z.coerce.date().nullish(),
     hora: z.coerce.date().nullish(),
+    HORA_CALIBRACION: z.coerce.date().nullish(),
     Razon_social: z.string().nullish(),
     dirrecion_solcitante: z.string().nullish(),
     PERSONA_CONTACT_SOLCITANTE: z.string().nullish(),
@@ -522,7 +523,7 @@ export const ordenTrabajoRawToDtoSchema = z
     personaContacto: raw.PERSONA_CONTACTO ?? null,
     telefonoContacto: raw.TELEFONO_CONTACTO ?? null,
     fechaCalibracion: raw.FECHA_CALIBRACION ?? null,
-    hora: raw.hora ?? null,
+    hora: raw.HORA_CALIBRACION ?? (raw.FECHA_CALIBRACION ? raw.hora : null) ?? null,
     Razon_social: raw.Razon_social ?? 'sin razon_social',
     dirrecion_solcitante: raw.dirrecion_solcitante ?? 'sin dirreccion',
     personaContacto_solicitante: raw.PERSONA_CONTACT_SOLCITANTE ?? null,
@@ -620,6 +621,8 @@ export const estadoOtEnum = z.enum([
 ]);
 
 export const consolidarOtBodySchema = z.object({
+  codigoActual: z.string().optional(),
+  observaciones: z.string().trim().nullable().optional(),
   // Datos diligenciados por el cliente, guardados como snapshot de la OT.
   razonSocialCert: z.string().nullable().optional(),
   nitCert: z.string().nullable().optional(),
@@ -629,8 +632,8 @@ export const consolidarOtBodySchema = z.object({
   correoFactura: z.string().nullable().optional(),
   responsableUsc: z.string().nullable(),
   fechaDiligenciamiento: z.string().nullable(),
-  fechaCalibracion: z.string().nullable().optional(),
-  horaCalibracion: z.string().nullable().optional(),
+  fechaCalibracion: z.iso.date().nullable().optional(),
+  horaCalibracion: z.iso.time({ precision: -1 }).nullable().optional(),
   lugarCalibracion: z.string(),
   personaContactar: z.string().nullable().optional(),
   fechaLimiteFacturacion: z.iso.date().nullable().optional(),

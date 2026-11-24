@@ -10,6 +10,16 @@ export type GeneracionExcelJob = GenerarExcelBody & {
   mapeoPlantilla?: Prisma.JsonValue;
 };
 
+export type FacturaPdfJob = {
+  documento: 'factura';
+  tipo: 4;
+  tipo_entry: 'prod';
+  id_registro: number;
+  id_job: string;
+};
+
+export type GeneracionDocumentoJob = GeneracionExcelJob | FacturaPdfJob;
+
 type Tx = Prisma.TransactionClient;
 export type SolicitudGeneracion = Omit<GenerarExcelBody, 'id_job' | 'codigo_actual'> & { codigo_actual?: string | null };
 
@@ -44,7 +54,7 @@ export async function despacharGeneracionesPendientes(tx: Tx): Promise<void> {
   if (!trabajos.length) return;
   const cola = getGenerationExcelQueue();
   for (const trabajo of trabajos) {
-    const { generacion } = (trabajo.data ?? {}) as { generacion?: { nombre: string; payload: GeneracionExcelJob } };
+    const { generacion } = (trabajo.data ?? {}) as { generacion?: { nombre: string; payload: Omit<FacturaPdfJob, 'id_job'> | GeneracionExcelJob } };
     if (!generacion) continue;
     const jobId = `doc-${trabajo.id}`;
     // BullMQ descarta el segundo add con el mismo ID, incluso desde otro proceso.

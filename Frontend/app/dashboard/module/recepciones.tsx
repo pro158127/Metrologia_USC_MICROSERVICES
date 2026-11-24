@@ -8,6 +8,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { FiltrosClienteCotizacion, useFiltrosClienteCotizacion } from "@/app/dashboard/components/FiltrosClienteCotizacion";
 import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   Package,
@@ -113,20 +114,27 @@ const HeaderSection = ({
   );
 };
 
+function referenciaComercialRecepcion({ raw, solicitante, codigoCotizacion }: RecepcionConInfo) {
+  return {
+    idCliente: raw.cotizacion?.idCliente ?? raw.ordenTrabajo?.idCliente,
+    nombreCliente: raw.cotizacion?.cliente?.razonSocial ?? raw.ordenTrabajo?.cliente?.razonSocial ?? solicitante,
+    idCotizacion: raw.idCotizacion ?? raw.ordenTrabajo?.idCotizacion,
+    codigoCotizacion: codigoCotizacion || raw.ordenTrabajo?.cotizacion?.codigo,
+  };
+}
+
 // 3.3 FilterBar
 const FilterBar = ({
-  filtroSolicitante,
+  filtrosComerciales,
   filtroAnio,
   filtroMes,
   filtroDia,
-  solicitantesUnicos,
   aniosDisponibles,
-  onSolicitanteChange,
   onAnioChange,
   onMesChange,
   onDiaChange,
   onAgregarRecepcion,
-}: FilterBarProps) => {
+}: FilterBarProps & { filtrosComerciales: React.ComponentProps<typeof FiltrosClienteCotizacion> }) => {
   const { can } = usePermissions();
   const puedeRegistrar = can("recepcion_de_equipos", "registrar");
   const MESES = [
@@ -153,29 +161,7 @@ const FilterBar = ({
           <span>Filtrar por:</span>
         </div>
 
-        <div className="relative">
-          <input
-            type="text"
-            list="solicitantes-datalist"
-            value={filtroSolicitante}
-            onChange={(e) => onSolicitanteChange(e.target.value)}
-            placeholder="Buscar por solicitante..."
-            className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-3 py-1.5 outline-none font-medium text-slate-700 w-48 placeholder:text-slate-400"
-          />
-          <datalist id="solicitantes-datalist">
-            {solicitantesUnicos.map((solicitante) => (
-              <option key={solicitante} value={solicitante} />
-            ))}
-          </datalist>
-          {filtroSolicitante && (
-            <button
-              onClick={() => onSolicitanteChange("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[10px] font-bold border-none bg-transparent cursor-pointer"
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <FiltrosClienteCotizacion {...filtrosComerciales} />
 
         <select
           value={filtroAnio}
@@ -318,21 +304,12 @@ const DatosGeneralesSection = ({
               ))}
             </select>
           ) : (
-            <>
-              <input
-                id="solicitante-recepcion"
-                list="solicitantes-recepcion"
-                value={solicitante}
-                onChange={(e) => onUpdateGeneral("solicitante", e.target.value)}
-                className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-                placeholder="Razón social o persona solicitante"
-              />
-              <datalist id="solicitantes-recepcion">
-                {[...new Set(solicitantes.map((cliente) => cliente.razonSocial))].map((nombre) => (
-                  <option key={nombre} value={nombre} />
-                ))}
-              </datalist>
-            </>
+            <input
+              id="solicitante-recepcion"
+              value={solicitante}
+              readOnly
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-100 text-xs"
+            />
           )}
         </div>
         <div>
@@ -449,6 +426,9 @@ const DatosGeneralesSection = ({
             }`}
           />
         </div>
+          <p className="col-span-full -mt-3 text-[10px] text-slate-500">
+            Se registra la cuenta que guarda la primera recepción con instrumentos.
+          </p>
         <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Nombre quién empaca
@@ -970,7 +950,6 @@ export function MainRenderers() {
   });
 
   // Filtros
-  const [filtroSolicitante, setFiltroSolicitante] = useState<string>("");
   const [filtroMes, setFiltroMes] = useState<string>("all");
   const [filtroAnio, setFiltroAnio] = useState<string>(new Date().getFullYear().toString());
   const [filtroDia, setFiltroDia] = useState<string>("");
@@ -1060,14 +1039,8 @@ export function MainRenderers() {
     return Array.from(set).sort((a, b) => Number(b) - Number(a));
   }, [recepcionesEnriquecidas]);
 
-  // Solicitantes persistidos para filtro y búsqueda.
-  const solicitantesUnicos = useMemo(() => {
-    const set = new Set<string>();
-    recepcionesEnriquecidas.forEach((r) => {
-      if (r.solicitante) set.add(r.solicitante);
-    });
-    return Array.from(set);
-  }, [recepcionesEnriquecidas]);
+  const { filtrados: recepcionesPorClienteYCotizacion, controles: filtrosComerciales } =
+    useFiltrosClienteCotizacion(recepcionesEnriquecidas, referenciaComercialRecepcion);
 
   // Tarifas disponibles para autocomplete
   const tarifasDisponibles = tarifasStore || [];
@@ -1079,10 +1052,7 @@ export function MainRenderers() {
 
   // --- Filtrado de recepciones ---
   const recepcionesFiltradas = useMemo(() => {
-    return recepcionesEnriquecidas.filter((r) => {
-      if (filtroSolicitante && !(r.solicitante ?? "").toLowerCase().includes(filtroSolicitante.toLowerCase())) {
-        return false;
-      }
+    return recepcionesPorClienteYCotizacion.filter((r) => {
       if (filtroDia) {
         return r.fecha === filtroDia;
       }
@@ -1091,7 +1061,7 @@ export function MainRenderers() {
       const coincideMes = filtroMes === "all" || mes === filtroMes;
       return coincideAnio && coincideMes;
     });
-  }, [recepcionesEnriquecidas, filtroSolicitante, filtroDia, filtroAnio, filtroMes]);
+  }, [recepcionesPorClienteYCotizacion, filtroDia, filtroAnio, filtroMes]);
 
   // --- Funciones del formulario ---
   const handleUpdateGeneral = useCallback((field: string, value: string | boolean) => {
@@ -1359,7 +1329,7 @@ const handleGenerarActa = useCallback(async () => {
     }
     // 🟢 1. EVALUACIÓN NO BLOQUEANTE (Soft Validation)
     // Verificamos si la cabecera tiene lo mínimo
-    const cabeceraLista = !!(formulario.nombreQuienEntrega && formulario.fechaRecepcion);
+    const cabeceraLista = Boolean(formulario.fechaRecepcion);
 
     // Verificamos si TODOS los instrumentos cumplen las reglas
     const instrumentosValidos = formulario.instrumentos.length > 0 && formulario.instrumentos.every((inst) => {
@@ -1409,7 +1379,7 @@ const handleGenerarActa = useCallback(async () => {
         sitioCalibracion: formulario.sitioCalibracion,
         fechaRecepcion: formulario.fechaRecepcion,
         fechaSalida: formulario.fechaSalida || undefined,
-        nombreRecibe: nombreUsuarioSesion || formulario.nombreQuienRecibe || undefined,
+        nombreRecibe: formulario.nombreQuienRecibe || nombreUsuarioSesion || undefined,
         nombreEmpaca: formulario.nombreQuienEmpaca || undefined,
         accesorios: formulario.accesorios || undefined,
         pruebasCompletas: formulario.pruebasCompletas,
@@ -1598,13 +1568,11 @@ const handleGenerarActa = useCallback(async () => {
         // --- VISTA DE LISTA ---
         <div className="flex flex-col gap-5">
           <FilterBar
-            filtroSolicitante={filtroSolicitante}
+            filtrosComerciales={filtrosComerciales}
             filtroAnio={filtroAnio}
             filtroMes={filtroMes}
             filtroDia={filtroDia}
-            solicitantesUnicos={solicitantesUnicos}
             aniosDisponibles={aniosDisponibles}
-            onSolicitanteChange={setFiltroSolicitante}
             onAnioChange={(anio) => {
               setFiltroAnio(anio);
               setFiltroDia("");
@@ -1689,7 +1657,7 @@ const handleGenerarActa = useCallback(async () => {
             sitioCalibracion={formulario.sitioCalibracion}
             fechaRecepcion={formulario.fechaRecepcion}
             fechaSalida={formulario.fechaSalida}
-            nombreQuienRecibe={nombreUsuarioSesion || formulario.nombreQuienRecibe}
+            nombreQuienRecibe={formulario.nombreQuienRecibe || nombreUsuarioSesion}
             nombreQuienEmpaca={formulario.nombreQuienEmpaca}
             solicitantes={solicitantes}
             cargandoSolicitantes={cargandoSolicitantes}

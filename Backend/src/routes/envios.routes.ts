@@ -1,4 +1,4 @@
-import { registrarFacturaPago } from '../services/factura-pago.service.js';
+import { programarPdfFactura, registrarFacturaPago } from '../services/factura-pago.service.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT, Prisma } from '@prisma/client';
@@ -30,6 +30,35 @@ function assertPermisoEntrega(
   if (!permisos?.[accion]) {
     throw new AppError(403, `Sin permisos para ${accion} (entrega y envío).`);
   }
+}
+
+async function resolverFacturaParaEnvio(
+  tx: Prisma.TransactionClient,
+  cotizacion: { ID_COTIZACION: number; CODIGO_COTIZACION: string; ID_CLIENTE_FK: number | null; MONTO_TOTAL: Prisma.Decimal | null } | null,
+  idOrdenTrabajo: number,
+): Promise<string | null> {
+  const factura = cotizacion ? await registrarFacturaPago(tx, {
+    idCotizacion: cotizacion.ID_COTIZACION,
+    codigoCotizacion: cotizacion.CODIGO_COTIZACION,
+    idOrdenTrabajo,
+    idCliente: cotizacion.ID_CLIENTE_FK,
+    valor: Number(cotizacion.MONTO_TOTAL ?? 0),
+  }) : await tx.facturas.findFirst({
+    where: { ID_ORDEN_TRABAJO_FK: idOrdenTrabajo },
+    orderBy: { ID_FACTURA: 'asc' },
+  });
+  if (!factura) throw new AppError(409, 'La OT no tiene una factura vinculada. Registra la factura antes de enviar.');
+  if (!factura.ID_DOCUMENTO_FK) {
+    if (!cotizacion) await programarPdfFactura(tx, factura.ID_FACTURA);
+    return null;
+  }
+  const pdf = await tx.documentos.findUnique({
+    where: { ID_DOCUMENTO: factura.ID_DOCUMENTO_FK }, select: { RUTA_URL: true, MIME_TYPE: true },
+  });
+  if (!pdf?.RUTA_URL || pdf.MIME_TYPE !== 'application/pdf') {
+    throw new AppError(409, 'El documento vinculado a la factura debe ser un PDF para adjuntarlo al envío.');
+  }
+  return pdf.RUTA_URL;
 }
 
 const respuestaDocumentosEnvioSchema = z.object({
@@ -531,7 +560,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idOT = request.params.id;
-      const { destino, jobId } = await fastify.prisma.$transaction(async (tx) => {
+      const envio = await fastify.prisma.$transaction(async (tx) => {
         const referencia = await tx.ordenes_trabajo.findUnique({
           where: { ID_ORDEN_TRABAJO: idOT }, select: { ID_COTIZACION_FK: true },
         });
@@ -560,9 +589,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           throw new AppError(409, 'Ingrese un correo válido para los certificados de la OT.');
         }
 
+        const rutaFactura = await resolverFacturaParaEnvio(tx, ot.cotizaciones, idOT);
+        if (!rutaFactura) return { facturaPendiente: true } as const;
+
         const links = [
           ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
           ...comprobantes.map((c) => c.RUTA_URL),
+          rutaFactura,
         ];
 
         const emailData = {
@@ -589,6 +622,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           tabla_origen: 'ordenes_trabajo',
           tipo_entry: 'prod',
         } as const;
+
         await transicionarOT(tx, idOT, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
         await registrarBitacora(tx, {
             action: 'ENVIAR_CERTIFICADOS', tableName: 'ordenes_trabajo', recordId: idOT,
@@ -604,6 +638,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         }
         return { destino, jobId };
       }, { timeout: 180_000 });
+
+      if ('facturaPendiente' in envio) {
+        throw new AppError(409, 'El PDF de la factura aún no está disponible. Consulta su estado en Reportes e intenta el envío cuando esté archivado.');
+      }
+      const { destino, jobId } = envio;
 
       return {
         ok: true as const,
@@ -781,7 +820,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
     async (request) => {
       assertPermisoEntrega(request, 'enviar_certificados_lotes');
       const idCotizacion = request.params.id;
-      const { destino, jobId } = await fastify.prisma.$transaction(async (tx) => {
+      const envio = await fastify.prisma.$transaction(async (tx) => {
         await bloquearCotizacionParaEntrega(tx, idCotizacion);
         const { hijas, master, cotizacion, certificados, comprobantes, todosAprobados, selladoPendiente } =
           await cargarContextoCotizacion(tx, idCotizacion);
@@ -809,9 +848,13 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           throw new AppError(409, 'Ingrese un correo válido para los certificados de la cotización.');
         }
 
+        const rutaFactura = await resolverFacturaParaEnvio(tx, cotizacion, master?.ID_ORDEN_TRABAJO ?? hijas[0].ID_ORDEN_TRABAJO);
+        if (!rutaFactura) return { facturaPendiente: true } as const;
+
         const links = [
           ...certificados.map((c) => c.rutaUrl).filter((v): v is string => !!v),
           ...comprobantes.map((c) => c.RUTA_URL),
+          rutaFactura,
         ];
 
         const emailData = {
@@ -839,6 +882,7 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
           tabla_origen: 'cotizaciones',
           tipo_entry: 'prod',
         } as const;
+
         for (const hija of hijas) {
           await transicionarOT(tx, hija.ID_ORDEN_TRABAJO, EstadoOT.Certificado_enviado, { permitirRetroceso: true });
         }
@@ -857,6 +901,11 @@ export default async function enviosRoutes(fastify: FastifyInstance) {
         await cerrarSeguimientoSiCompleto(tx, idCotizacion, Number(request.user?.sub ?? 0) || null);
         return { destino, jobId };
       }, { timeout: 180_000 });
+
+      if ('facturaPendiente' in envio) {
+        throw new AppError(409, 'El PDF de la factura aún no está disponible. Consulta su estado en Reportes e intenta el envío cuando esté archivado.');
+      }
+      const { destino, jobId } = envio;
 
       return {
         ok: true as const,

@@ -282,7 +282,7 @@ export interface MapeoConfigTarifas {
   columnas: {
     magnitud: string;
     instrumento: string;
-    norma: string;
+    norma?: string;
     tipoServicio: string;
   };
   columnasPrecios?: string[];

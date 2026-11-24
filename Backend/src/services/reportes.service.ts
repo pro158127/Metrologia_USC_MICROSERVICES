@@ -24,6 +24,7 @@ export interface CertificadoReporte {
   nit: string;
   tecnico: string;
   ot: string;
+  cotizacion?: string | null;
   fecha: string | null;
   rutaUrl: string | null;
   tipoServicio: string | null;
@@ -119,7 +120,8 @@ export async function obtenerDatosReporte(
             include: {
               recepciones_equipo: {
                 include: {
-                  ordenes_trabajo: { include: { clientes: true, orden_trabajo_detalles: true } },
+                  cotizaciones: { select: { CODIGO_COTIZACION: true } },
+                  ordenes_trabajo: { include: { clientes: true, orden_trabajo_detalles: true, cotizaciones: { select: { CODIGO_COTIZACION: true } } } },
                 },
               },
             },
@@ -148,6 +150,7 @@ export async function obtenerDatosReporte(
         nit: ot?.clientes?.NIT ?? '—',
         tecnico: cal?.usuarios?.NOMBRE_COMPLETO ?? '—',
         ot: ot?.CODIGO_OT ?? '—',
+        cotizacion: ot?.cotizaciones?.CODIGO_COTIZACION ?? det?.recepciones_equipo?.cotizaciones?.CODIGO_COTIZACION ?? null,
         fecha: cal?.CREATED_AT ? cal.CREATED_AT.toISOString() : null,
         rutaUrl: cert.documentos?.RUTA_URL ?? null,
         tipoServicio: otDetalle?.TIPO_SERVICIO ?? null,

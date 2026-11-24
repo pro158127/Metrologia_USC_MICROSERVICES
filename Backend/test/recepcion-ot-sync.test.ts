@@ -1,3 +1,5 @@
+import { calcularEstadoRecepcion } from '../src/services/recepcion-entrega.service.js';
+import { cabeceraRecepcionLista } from '../src/services/ot-fsm.service.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Prisma } from '@prisma/client';

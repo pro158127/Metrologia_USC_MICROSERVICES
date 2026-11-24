@@ -500,7 +500,16 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
         (request.body.idCliente !== undefined && request.body.idCliente !== existente.ID_CLIENTE_FK) ||
         (reqViaticos !== undefined && !new Prisma.Decimal(reqViaticos).eq(existente.viaticos ?? 0)) ||
         (reqDescuento !== undefined && reqDescuento !== Number(existente.descuento ?? 0));
-      regenerarCotizacionDoc = detallesCambiaron || Boolean(cambiosEscalares);
+      const ultimaRevisionRecepcion = cambios && detalles ? await tx.historial_cambios.findFirst({
+        where: { id_cotizacion: idCotizacion, OR: [
+          { descripcion: { startsWith: 'Revisión pendiente desde Recepción · ' } },
+          { descripcion: { startsWith: 'Revisión de Recepción consolidada · ' } },
+        ] },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        select: { descripcion: true },
+      }) : null;
+      const confirmarRevisionRecepcion = ultimaRevisionRecepcion?.descripcion.startsWith('Revisión pendiente desde Recepción · ') ?? false;
+      regenerarCotizacionDoc = detallesCambiaron || Boolean(cambiosEscalares) || confirmarRevisionRecepcion;
 
       let subtotal = new Prisma.Decimal(0);
       
@@ -1061,7 +1070,7 @@ export default async function cotizacionesRoutes(fastify: FastifyInstance) {
             id: crypto.randomUUID(),
             numero_version: `V${siguienteNum}`,
             fecha_cambio: new Date(),
-            descripcion: cambios.descripcion,
+            descripcion: confirmarRevisionRecepcion ? `Revisión de Recepción consolidada · ${cambios.descripcion}` : cambios.descripcion,
             observaciones: cambios.observaciones,
             aprobo: cambios.aprobo,
             id_cotizacion: idCotizacion,

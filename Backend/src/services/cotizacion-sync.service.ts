@@ -1,3 +1,4 @@
+import { filtroPrecioVigente } from './vigencia-tarifa.service.js';
 import { Prisma } from '@prisma/client';
 import { AppError } from '../lib/errors.js';
 import { calcularMontoTotalCotizacion, calcularValorDetalle } from './cotizacion-money.service.js';
@@ -84,7 +85,7 @@ export async function sincronizarCotizacionDesdeRecepcion(
     where: { ESTADO: 'ACTIVO' },
     include: {
       historial_tarifas: {
-        where: { FECHA_FIN: null },
+        where: filtroPrecioVigente(),
         orderBy: { FECHA_INICIO: 'desc' },
         take: 1,
       },

@@ -78,13 +78,10 @@ export interface RecepcionConInfo {
 }
 
 export interface FilterBarProps {
-  filtroSolicitante: string;
   filtroAnio: string;
   filtroMes: string;
   filtroDia: string;
-  solicitantesUnicos: string[];
   aniosDisponibles: string[];
-  onSolicitanteChange: (val: string) => void;
   onAnioChange: (val: string) => void;
   onMesChange: (val: string) => void;
   onDiaChange: (val: string) => void;

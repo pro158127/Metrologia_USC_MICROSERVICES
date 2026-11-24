@@ -24,24 +24,15 @@ import { verificarPlantillasOperativas } from '../services/plantillas-readiness.
 import {
   evaluarTransicionesOT,
   validarAsignacionPermitida,
+  vincularUnidadRecepcion,
 } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
 import { generarConsecutivo } from '../services/consecutivo.service.js';
+import { sincronizarOTMaestraDesdeRecepcion } from '../services/recepcion-ot-sync.service.js';
 import { siguienteVersionOT } from '../services/versionado-ot.service.js';
 import { cotizacionAdmiteImportacionVinculada } from '../services/importacion-cotizacion.service.js';
 import { validarClienteActivoParaOperacion } from '../services/cliente-operacion.service.js';
-
-function parsearFechaHoraCalibracion(fecha?: string | null, hora?: string | null): Date | null {
-  if (!fecha) return null;
-  const match = fecha.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return null;
-  const [, anio, mes, dia] = match;
-  const resultado = new Date(Number(anio), Number(mes) - 1, Number(dia));
-  const horaMatch = hora?.match(/^(\d{2}):(\d{2})$/);
-  if (horaMatch) resultado.setHours(Number(horaMatch[1]), Number(horaMatch[2]), 0, 0);
-  return resultado;
-}
 
 export default async function ordenesRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
@@ -290,6 +281,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
       try {
         let quoteJobId: string | undefined;
         let codigoOT: string | undefined;
+        let responsableOT: string | null = null;
         let estadoFinal: string | undefined;
         let huboCambioDocumento = false;
 
@@ -303,37 +295,62 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           const otBase = await tx.ordenes_trabajo.findUnique({ where: { ID_ORDEN_TRABAJO: id } });
           if (!otBase) throw new AppError(404, 'Orden de trabajo no encontrada.');
           if (!otBase.VIGENTE) throw new AppError(409, 'Solo se puede modificar la versión vigente de la orden.');
+          if (data.codigoActual && data.codigoActual !== otBase.CODIGO_OT) {
+            throw new AppError(409, 'La orden cambió mientras la editabas. Vuelve a abrirla.');
+          }
           const existentes = await tx.orden_trabajo_detalles.findMany({
             where: { ID_ORDEN_TRABAJO_FK: id, OR: [{ activacion: true }, { activacion: null }] },
           });
           const activos = existentes.filter((detalle) => detalle.activacion !== false);
           const requiereAnexoFinal = activos.length > 10 ? true : Boolean(otBase.REQUIERE_ANEXO);
-          const mismoValor = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-          const sinEdicionInstrumentos = data.instrumentos.length === activos.length &&
-            new Set(data.instrumentos.map((inst) => inst.idDetalle)).size === activos.length && data.instrumentos.every((inst) => {
-            if (inst.idDetalle == null) return false;
-            const actual = activos.find((detalle) => detalle.ID_DETALLE === inst.idDetalle);
-            if (!actual) return false;
-            return actual.ITEM === inst.item && actual.TIPO_SERVICIO === inst.tipoServicio &&
-              actual.INSTRUMENTO === inst.instrumento && actual.FABRICANTE === inst.fabricante &&
-              actual.MODELO === inst.modelo && actual.SERIE === inst.serie &&
-              actual.CODIGO_INVENTARIO === inst.codigoInventario && actual.UBICACION === inst.ubicacion &&
-              mismoValor(actual.PUNTOS_CALIBRAR, inst.puntosCalibrar ?? []) &&
-              actual.UNIDAD === (inst.unidad ?? null) && actual.INTERVALO_RANGO === (inst.intervaloRango ?? null) &&
-              actual.RESOLUCION === (inst.resolucion ?? null) &&
-              actual.DECLARACION_CONFORMIDAD === inst.declaracionConformidad &&
-              actual.LIMITE_CONTROL_EMC === (inst.limiteControlEMC ?? null) &&
-              actual.DOC_ESPECIFICACION === (inst.docEspecificacion ?? null) &&
-              actual.REGLA_DECISION === (inst.reglaDecision ?? null);
+          const porId = new Map(activos.map((detalle) => [detalle.ID_DETALLE, detalle]));
+          const cambiosInstrumentos = data.instrumentos.map((inst) => {
+            const actual = inst.idDetalle == null ? undefined : porId.get(inst.idDetalle);
+            if (!actual || actual.ITEM !== inst.item || actual.TIPO_SERVICIO !== inst.tipoServicio ||
+                actual.INSTRUMENTO !== inst.instrumento) {
+              throw new AppError(409, 'El ítem, el tipo de servicio y el instrumento se administran desde Cotizaciones y Recepciones.');
+            }
+            const texto = (valor?: string | null) => valor?.trim() || null;
+            const campos = {
+              FABRICANTE: texto(inst.fabricante),
+              MODELO: texto(inst.modelo),
+              SERIE: texto(inst.serie),
+              CODIGO_INVENTARIO: texto(inst.codigoInventario),
+              UBICACION: texto(inst.ubicacion),
+              PUNTOS_CALIBRAR: inst.puntosCalibrar ?? actual.PUNTOS_CALIBRAR,
+              UNIDAD: texto(inst.unidad),
+              INTERVALO_RANGO: texto(inst.intervaloRango),
+              RESOLUCION: texto(inst.resolucion),
+              DECLARACION_CONFORMIDAD: inst.declaracionConformidad,
+              LIMITE_CONTROL_EMC: texto(inst.limiteControlEMC),
+              DOC_ESPECIFICACION: texto(inst.docEspecificacion),
+              REGLA_DECISION: texto(inst.reglaDecision),
+            };
+            const cambio = Object.entries(campos).some(([clave, valor]) => {
+              const anterior = actual[clave as keyof typeof campos];
+              return typeof valor === 'string' || valor === null
+                ? texto(typeof anterior === 'string' ? anterior : null) !== valor
+                : JSON.stringify(anterior) !== JSON.stringify(valor);
+            });
+            const asignado = Number(inst.asignado) > 0 ? Number(inst.asignado) : null;
+            return { actual, campos, cambio, asignado };
           });
-          if (!sinEdicionInstrumentos) {
-            throw new AppError(409, 'Los instrumentos se administran desde Cotizaciones y Recepciones; no se pueden crear, eliminar ni editar desde OT.');
+          if (cambiosInstrumentos.length !== activos.length ||
+              new Set(cambiosInstrumentos.map(({ actual }) => actual.ID_DETALLE)).size !== activos.length) {
+            throw new AppError(409, 'Desde OT no se pueden agregar, duplicar ni retirar instrumentos.');
           }
 
           const responsableFinal = data.responsableUsc?.trim() ? data.responsableUsc.trim() : otBase.RESPONSABLE;
           const fechaDiligenciamientoFinal = data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null;
-          const fechaCalibracionFinal = parsearFechaHoraCalibracion(data.fechaCalibracion);
-          const horaFinal = parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion);
+          const fechaCalibracionFinal = data.fechaCalibracion === undefined
+            ? otBase.FECHA_CALIBRACION : data.fechaCalibracion ? new Date(data.fechaCalibracion) : null;
+          const horaAnterior = otBase.HORA_CALIBRACION ?? (otBase.FECHA_CALIBRACION ? otBase.hora : null);
+          const hora = data.horaCalibracion === undefined
+            ? horaAnterior?.toISOString().slice(11, 16) : data.horaCalibracion;
+          // La hora del formulario es una hora de calendario y se almacena con componentes UTC.
+          const diaHora = fechaCalibracionFinal?.toISOString().slice(0, 10) ?? '1970-01-01';
+          const horaFinal = data.horaCalibracion === undefined && data.fechaCalibracion === undefined
+            ? horaAnterior : hora ? new Date(`${diaHora}T${hora}:00Z`) : null;
           const textoOT = (value: string | null | undefined, actual: string | null) =>
             value === undefined ? actual : value?.trim() || null;
           const razonSocialCert = textoOT(data.razonSocialCert, otBase.Razon_social);
@@ -342,6 +359,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           const direccionCert = textoOT(data.direccionCert, otBase.dirrecion);
           const ciudadCert = textoOT(data.ciudadCert, otBase.ciudad);
           const correoFactura = textoOT(data.correoFactura, otBase.CORREO_FACTURA);
+          const observaciones = textoOT(data.observaciones, otBase.OBSERVACIONES);
           const fechaLimiteFacturacion = data.fechaLimiteFacturacion === undefined
             ? otBase.FECHA_LIMITE_FACTURACION
             : data.fechaLimiteFacturacion ? new Date(data.fechaLimiteFacturacion) : null;
@@ -353,23 +371,91 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
             texto(otBase.dirrecion) !== texto(direccionCert) ||
             texto(otBase.ciudad) !== texto(ciudadCert) ||
             texto(otBase.CORREO_FACTURA) !== texto(correoFactura) ||
+            texto(otBase.OBSERVACIONES) !== texto(observaciones) ||
             texto(otBase.RESPONSABLE) !== texto(responsableFinal) ||
             fechaMs(otBase.FECHA_LIMITE_FACTURACION) !== fechaMs(fechaLimiteFacturacion) ||
             fechaMs(otBase.FECHA_CALIBRACION_DILIGENCIAMENTO) !== fechaMs(fechaDiligenciamientoFinal) ||
             fechaMs(otBase.FECHA_CALIBRACION) !== fechaMs(fechaCalibracionFinal) ||
-            fechaMs(otBase.hora) !== fechaMs(horaFinal) ||
+            fechaMs(horaAnterior) !== fechaMs(horaFinal) ||
             texto(otBase.PERSONA_CONTACTO) !== texto(data.personaContactar?.trim() || null) ||
             texto(otBase.TELEFONO_CONTACTO) !== texto(data.telefonoCalibracion?.trim() || null) ||
             Boolean(otBase.REQUIERE_ANEXO) !== requiereAnexoFinal;
-          const cambioAsignacion = data.instrumentos.some((inst) => {
-            const actual = activos.find((detalle) => detalle.ID_DETALLE === inst.idDetalle);
-            const asignado = Number(inst.asignado) > 0 ? Number(inst.asignado) : null;
-            return actual != null && asignado !== actual.asignado;
-          });
-          if (cambioEscalar) assertPermission(request, 'ordenes_de_trabajo', 'crear_editar');
+          const cambioAsignacion = cambiosInstrumentos.some(({ actual, asignado }) => asignado !== actual.asignado);
+          const cambioInstrumentos = cambiosInstrumentos.some(({ cambio }) => cambio);
+          if (cambioEscalar || cambioInstrumentos) assertPermission(request, 'ordenes_de_trabajo', 'crear_editar');
           if (cambioAsignacion) assertPermission(request, 'ordenes_de_trabajo', 'asignar_tecnico');
-          huboCambioDocumento = cambioEscalar || cambioAsignacion;
-          
+          huboCambioDocumento = cambioEscalar || cambioAsignacion || cambioInstrumentos;
+
+          const recepcionesCambiadas = new Map<number, string>();
+          const recepciones = cambioInstrumentos ? await tx.recepciones_equipo.findMany({
+            where: { ID_ORDEN_TRABAJO_FK: id, VIGENTE: true, activacion: true },
+            include: { recepcion_equipo_detalles: {
+              where: { OR: [{ activacion: true }, { activacion: null }] },
+              include: { calibraciones: { select: { ID_CALIBRACION: true } } },
+            } },
+          }) : [];
+          if (cambioInstrumentos && await tx.ordenes_trabajo.count({
+            where: { ID_OT_PADRE_FK: id, VIGENTE: true },
+          })) {
+            throw new AppError(409, 'Edita los instrumentos desde la OT del sitio correspondiente.');
+          }
+          for (const { actual, campos, cambio, asignado } of cambiosInstrumentos) {
+            const reasignado = asignado !== actual.asignado;
+            if (reasignado) await validarAsignacionPermitida(tx, id, actual.ID_DETALLE);
+            if (cambio) {
+              if (otBase.estado === 'Certificado_enviado') {
+                throw new AppError(409, 'La OT ya tiene certificados enviados.');
+              }
+              const vinculadas = recepciones.flatMap((recepcion) => {
+                const detalle = vincularUnidadRecepcion(actual, recepcion.recepcion_equipo_detalles);
+                return detalle ? [{ recepcion, detalle }] : [];
+              });
+              if (vinculadas.length > 1) {
+                throw new AppError(409, 'La unidad coincide con más de una recepción. Revisa su vinculación.');
+              }
+              const vinculada = vinculadas[0];
+              if (vinculada) {
+                const { recepcion, detalle } = vinculada;
+                if (detalle.calibraciones) {
+                  throw new AppError(409, `"${actual.INSTRUMENTO}" ya inició calibración. No se pueden cambiar sus datos técnicos.`);
+                }
+                const compartidos = {
+                  ...(campos.FABRICANTE !== actual.FABRICANTE && campos.FABRICANTE !== detalle.MARCA && { MARCA: campos.FABRICANTE }),
+                  ...(campos.MODELO !== actual.MODELO && campos.MODELO !== detalle.MODELO && { MODELO: campos.MODELO }),
+                  ...(campos.SERIE !== actual.SERIE && campos.SERIE !== detalle.SERIE && { SERIE: campos.SERIE }),
+                  ...(campos.CODIGO_INVENTARIO !== actual.CODIGO_INVENTARIO && campos.CODIGO_INVENTARIO !== detalle.CODIGO_INVENTARIO && { CODIGO_INVENTARIO: campos.CODIGO_INVENTARIO }),
+                  ...(campos.RESOLUCION !== actual.RESOLUCION && campos.RESOLUCION !== detalle.RESOLUCION && { RESOLUCION: campos.RESOLUCION }),
+                };
+                if (Object.keys(compartidos).length) {
+                  await tx.recepcion_equipo_detalles.update({
+                    where: { ID_INSTRUMENTO: detalle.ID_INSTRUMENTO }, data: compartidos,
+                  });
+                  recepcionesCambiadas.set(recepcion.ID_RECEPCION, recepcion.CODIGO_RECEPCION);
+                }
+              }
+            }
+            if (cambio || reasignado) await tx.orden_trabajo_detalles.update({
+              where: { ID_DETALLE: actual.ID_DETALLE },
+              data: { ...(cambio ? campos : {}), ...(reasignado ? { asignado } : {}) },
+            });
+          }
+
+          for (const [idRecepcion, anterior] of recepcionesCambiadas) {
+            const codigo = await generarConsecutivo(tx, 'REC', anterior);
+            await tx.recepciones_equipo.update({
+              where: { ID_RECEPCION: idRecepcion }, data: { CODIGO_RECEPCION: codigo, VERSION: { increment: 1 } },
+            });
+            await registrarGeneracionPendiente(tx, 'actualizacion_recepcion', {
+              tipo: 3, id_registro: idRecepcion, codigo_actual: codigo, tipo_entry: 'prod', id_usuario: idUsuario,
+            });
+          }
+          if (cambioInstrumentos && otBase.ID_OT_PADRE_FK &&
+              await sincronizarOTMaestraDesdeRecepcion(tx, otBase.ID_OT_PADRE_FK)) {
+            await registrarGeneracionPendiente(tx, 'generar_ot_consolidada', {
+              tipo: 2, id_registro: otBase.ID_OT_PADRE_FK, tipo_entry: 'prod', id_usuario: idUsuario,
+            });
+          }
+
           // A. Actualizar cabecera de la OT
           // NOTA: `estado` ya NO se escribe desde el cliente; lo gobierna la FSM.
           const otActualizada = await tx.ordenes_trabajo.update({
@@ -381,11 +467,13 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
               dirrecion: direccionCert,
               ciudad: ciudadCert,
               CORREO_FACTURA: correoFactura,
-              ...(data.responsableUsc?.trim() ? { RESPONSABLE: data.responsableUsc.trim() } : {}),
+              OBSERVACIONES: observaciones,
+              RESPONSABLE: responsableFinal,
               FECHA_CALIBRACION_DILIGENCIAMENTO: data.fechaDiligenciamiento ? new Date(data.fechaDiligenciamiento) : null,
-              FECHA_CALIBRACION: parsearFechaHoraCalibracion(data.fechaCalibracion),
-              hora: parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion),
-              HORA_CALIBRACION: parsearFechaHoraCalibracion(data.fechaCalibracion, data.horaCalibracion),
+              ...(data.fechaCalibracion !== undefined && { FECHA_CALIBRACION: fechaCalibracionFinal }),
+              ...((data.horaCalibracion !== undefined || data.fechaCalibracion !== undefined) && {
+                hora: horaFinal, HORA_CALIBRACION: horaFinal,
+              }),
               FECHA_LIMITE_FACTURACION: fechaLimiteFacturacion,
               PERSONA_CONTACTO: data.personaContactar?.trim() || null,
               TELEFONO_CONTACTO: data.telefonoCalibracion?.trim() || null,
@@ -394,18 +482,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           });
 
           codigoOT = otActualizada.CODIGO_OT;
-
-          for (const inst of data.instrumentos) {
-            const anterior = activos.find((detalle) => detalle.ID_DETALLE === inst.idDetalle);
-            if (!anterior) throw new AppError(409, 'El instrumento ya no pertenece a esta OT.');
-            const asignado = Number(inst.asignado) > 0 ? Number(inst.asignado) : null;
-            if (asignado === anterior.asignado) continue;
-            await validarAsignacionPermitida(tx, id, anterior.ID_DETALLE);
-            await tx.orden_trabajo_detalles.update({
-              where: { ID_DETALLE: anterior.ID_DETALLE },
-              data: { asignado },
-            });
-          }
+          responsableOT = otActualizada.RESPONSABLE ?? null;
 
           // E. Recalcular el estado automático de la OT (FSM) tras aplicar los cambios.
           const fsm = await evaluarTransicionesOT(tx, id);
@@ -430,6 +507,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
                 codigo: versionada.CODIGO_OT,
                 estadoAnterior: otActualizada.estado,
                 estadoNuevo: estadoFinal,
+                recepcionesVersionadas: [...recepcionesCambiadas.keys()],
               },
             });
             const quoteJob = await registrarGeneracionPendiente(tx, 'generar_ot_consolidada', {
@@ -440,7 +518,7 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
         });
 
         if (!huboCambioDocumento || !quoteJobId) {
-          return reply.code(200).send({ ok: true, message: 'No había cambios documentales; no se generó una nueva versión.', estado: estadoFinal });
+          return reply.code(200).send({ ok: true, message: 'No había cambios documentales; no se generó una nueva versión.', estado: estadoFinal, codigo: codigoOT, responsable: responsableOT });
         }
 
 
@@ -449,6 +527,8 @@ export default async function ordenesRoutes(fastify: FastifyInstance) {
           message: 'Orden consolidada y encolada para generación documental',
           id_job: quoteJobId,
           estado: estadoFinal,
+          codigo: codigoOT,
+          responsable: responsableOT,
         });
 
       } catch (error) {

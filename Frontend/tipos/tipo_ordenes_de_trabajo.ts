@@ -280,7 +280,6 @@ export interface InstrumentosTableProps {
     value: Instrument[K]
   ) => void;
   excedioLimite: boolean;
-  tarifas: TarifaOptionBase[];
   readOnly?: boolean;
 }
 

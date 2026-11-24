@@ -117,6 +117,8 @@ export interface InstrumentoConsolidar {
 }
 
 export interface ConsolidarOtPayload {
+  codigoActual?: string;
+  observaciones?: string | null;
   razonSocialCert: string | null;
   nitCert: string | null;
   correoCertificados: string | null;
@@ -139,11 +141,11 @@ export interface ConsolidarOtPayload {
 export async function consolidarOrdenTrabajoAction(
   idOt: string | number,
   payload: ConsolidarOtPayload
-): Promise<RespuestaWorkerJob> {
+): Promise<RespuestaWorkerJob & { codigo?: string; responsable?: string | null }> {
   try {
     const session = await auth();
     // Enviamos el PUT al endpoint de Fastify que creamos anteriormente
-    return await fastifyRequest<RespuestaWorkerJob>(
+    return await fastifyRequest<RespuestaWorkerJob & { codigo?: string; responsable?: string | null }>(
       session,
       `/api/v1/ordenes/${idOt}/consolidar`,
       {

@@ -1,3 +1,4 @@
+import { filtroPrecioVigente } from '../services/vigencia-tarifa.service.js';
 import { PrismaClient } from '@prisma/client';
 import exceljs from 'exceljs';
 import fs from 'fs';
@@ -23,7 +24,7 @@ import { registrarGeneracionPendiente, type SolicitudGeneracion } from '../servi
 import { normalizarServicioCotizado } from '../services/cotizacion-sync.service.js';
 import { sincronizarOTMaestraDesdeRecepcion } from '../services/recepcion-ot-sync.service.js';
 import { randomUUID } from 'node:crypto';
-import { cotizacionAdmiteImportacionVinculada } from '../services/importacion-cotizacion.service.js';
+import { buscarNombresImportados, cotizacionAdmiteImportacionVinculada, normalizarNombreImportado as normalizar } from '../services/importacion-cotizacion.service.js';
 import { validarClienteActivoParaOperacion } from '../services/cliente-operacion.service.js';
 
 const prisma = new PrismaClient();
@@ -63,6 +64,7 @@ interface ExtractedInstrument {
   tipo_servicio_real?: string | null;
   valor_estimado?: number;
   sitio?: string | null;
+  norma_tarifa?: string | null;
   instrumento_tarifa?: string | null; // nombre oficial de la tarifa resuelta
 }
 
@@ -363,7 +365,7 @@ function decimalOrZero(value: unknown): number {
 
 /**
  * true  = un instrumento sin tarifa / sin precio / ambiguo detiene el import (comportamiento anterior).
- * false = se importa igual: queda con la tarifa más probable (o sin tarifa y valor 0) y una advertencia.
+ * false = las filas sin tarifa o precio quedan con valor 0 y una advertencia.
  */
 const ESTRICTO_TARIFAS = false;
 
@@ -378,14 +380,8 @@ const BLOQUEAR_DISCREPANCIA_COTIZACION = true;
 // NORMALIZACIÓN Y RESOLUCIÓN DE TARIFAS (sin tocar la BD)
 // ============================================================================
 
-/** Minúsculas, sin tildes, espacios/saltos de línea/\xa0 colapsados a uno solo. */
-const normalizar = (s?: string | null): string =>
-  (s ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\s\u00a0]+/g, ' ')
-    .trim()
-    .toLowerCase();
+const normalizarServicioImportado = (servicio: string): string =>
+  normalizarServicioCotizado(normalizar(servicio)).replace(/^calibracion +/, '');
 
 type CriterioFamilia = 'presion' | 'masa' | 'digital_analogico';
 
@@ -638,21 +634,24 @@ function elegirDigitalAnalogico<T extends { Instrumento: string }>(
  * 1) nombre exacto normalizado  2) alias de la OT / prefijo  3) si hay varias filas, criterio de la familia.
  * `tarifas` debe venir ordenado por ID_TARIFA asc.
  */
-function buscarTarifa<T extends { Instrumento: string }>(
+function buscarTarifa<T extends { Instrumento: string; TIPO_SERVICIO: string }>(
   tarifas: T[],
-  item: ItemParaTarifa,
+  item: ItemParaTarifa & { tipo_servicio?: string | null },
 ): ResultadoTarifa<T> {
   const n = normalizar(item.instrumento);
-
-  const exacta = tarifas.find((t) => normalizar(t.Instrumento) === n);
-  if (exacta) return { tarifa: exacta };
-
-  const fam = FAMILIAS_N.find((f) => f.alias.includes(n));
-  const candidatas = fam
-    ? tarifas.filter((t) => fam.prefijos.some((p) => normalizar(t.Instrumento).startsWith(p)))
+  if (!n) return { tarifa: null, motivo: 'El instrumento no tiene un nombre válido' };
+  const equivalentes = buscarNombresImportados(n, tarifas, (tarifa) => tarifa.Instrumento);
+  const familia = FAMILIAS_N.find((f) => f.alias.includes(n));
+  const porNombre = equivalentes.length > 0 ? equivalentes : familia
+    ? tarifas.filter((t) => familia.prefijos.some((p) => normalizar(t.Instrumento).startsWith(p)))
     : tarifas.filter((t) => normalizar(t.Instrumento).startsWith(n));
+  const servicio = item.tipo_servicio?.trim();
+  const candidatas = servicio ? porNombre.filter((tarifa) =>
+    normalizarServicioImportado(tarifa.TIPO_SERVICIO) === normalizarServicioImportado(servicio)) : porNombre;
+  const fam = equivalentes.length === 0 ? familia : undefined;
 
-  if (candidatas.length === 0) return { tarifa: null, motivo: 'No existe en la matriz de tarifas' };
+  if (candidatas.length === 0) return { tarifa: null, motivo: porNombre.length > 0
+    ? `No existe tarifa para el tipo de servicio ${servicio}` : 'No existe en la matriz de tarifas' };
   if (candidatas.length === 1) return { tarifa: candidatas[0] };
 
   if (fam?.criterio === 'presion') {
@@ -677,9 +676,7 @@ function buscarTarifa<T extends { Instrumento: string }>(
 
   // Varias coincidencias y sin criterio (texto libre del cliente).
   const motivo = `Ambiguo: coincide con ${candidatas.length} tarifas (${nombresCortos(candidatas)})`;
-  return ESTRICTO_TARIFAS
-    ? { tarifa: null, motivo }
-    : { tarifa: candidatas[0], advertencia: `${motivo}; se asignó la primera, revisar` };
+  return { tarifa: null, motivo };
 }
 
 interface PublicacionImportada {
@@ -897,7 +894,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         where: { ESTADO: 'ACTIVO' },
         include: {
           historial_tarifas: {
-            where: { FECHA_FIN: null },
+            where: filtroPrecioVigente(),
             orderBy: { FECHA_INICIO: 'desc' },
             take: 1,
           },
@@ -934,6 +931,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         item.tarifa_id = tarifa.ID_TARIFA;
         item.instrumento_tarifa = tarifa.Instrumento;
         item.magnitud_real = tarifa.MAGNITUD;
+        item.norma_tarifa = tarifa.Norma;
         item.tipo_servicio_real = tarifa.TIPO_SERVICIO;
         item.tipo_servicio = item.tipo_servicio_real;
 
@@ -1005,7 +1003,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           item.idUnidad = randomUUID();
           // Agrupa por tarifa resuelta (filas distintas de una familia = líneas distintas);
           // los instrumentos sin tarifa se agrupan por su propio nombre.
-          const clave = [item.tarifa_id ?? `sin:${normalizar(item.instrumento)}`, sitio].join('|');
+          const clave = JSON.stringify([item.tarifa_id ?? normalizar(item.instrumento).replace(/ /g, ''),
+            normalizarServicioCotizado(item.tipo_servicio_real || item.tipo_servicio || 'NO ACREDITADO'), sitio]);
 
           const existente = itemsAgrupados.get(clave);
 
@@ -1015,8 +1014,9 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           } else {
             itemsAgrupados.set(clave, {
               instrumento: item.instrumento_tarifa ?? item.instrumento,
-              tipo_servicio: item.tipo_servicio_real || 'NO ACREDITADO',
+              tipo_servicio: item.tipo_servicio_real || item.tipo_servicio || 'NO ACREDITADO',
               magnitud: item.magnitud_real || 'N/A',
+              norma_tecnica: item.norma_tarifa ?? null,
               sitio,
               cantidad: 1,
               idsUnidades: [item.idUnidad],
@@ -1043,6 +1043,7 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
               EQUIPO_DESCRIPCION: item.instrumento,
               TIPO_SERVICIO: item.tipo_servicio,
               MAGNITUD: item.magnitud,
+              NORMA_TECNICA: item.norma_tecnica,
               CANTIDAD: cantidad,
               ID_UNIDADES: item.idsUnidades,
               VALOR_UNITARIO: valorUnitario,
@@ -1147,7 +1148,8 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
         for (const item of datosExtraidos.tablas) {
           const nombre = normalizar(item.instrumento);
 
-          const candidatos = lineasPorNombre.get(nombre);
+          const candidatos = lineasPorNombre.get(nombre) ?? buscarNombresImportados(nombre, [...lineasPorNombre.keys()],
+            (nombreCotizado) => nombreCotizado).flatMap((nombreCotizado) => lineasPorNombre.get(nombreCotizado) ?? []);
           if (!candidatos || candidatos.length === 0) {
             throw new Error(
               `Validación fallida: el instrumento '${item.instrumento}' no existe en la cotización '${cotizacionExistente.CODIGO_COTIZACION}'.`,
@@ -1155,12 +1157,12 @@ export async function importarOrdenTrabajoExcel(payload: ImportarOTEPayload) {
           }
 
           const sitioExcel = item.sitio ? normalizarSitio(item.sitio) : null;
-          const tipoExcel = item.tipo_servicio?.trim() ? normalizarServicioCotizado(item.tipo_servicio) : '';
+          const tipoExcel = item.tipo_servicio?.trim() ? normalizarServicioImportado(item.tipo_servicio) : '';
 
           const compatibles = candidatos.filter((c) =>
             c.asignados < c.esperado &&
             (!sitioExcel || normalizarSitio(c.linea.sitio) === sitioExcel) &&
-            (!tipoExcel || normalizarServicioCotizado(c.linea.TIPO_SERVICIO) === tipoExcel));
+            (!tipoExcel || normalizarServicioImportado(c.linea.TIPO_SERVICIO) === tipoExcel));
           if (compatibles.length !== 1) {
             throw new Error(`Fila ${item.item ?? '?'} (${item.instrumento}): indica un sitio y servicio que coincidan con una sola línea de la cotización.`);
           }

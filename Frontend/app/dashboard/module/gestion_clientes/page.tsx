@@ -11,9 +11,9 @@ ClientControlsProps,
 ClienteFormData,
 ClienteFormSaveData,
 ClientesModuloProps,
-ClienteVista,
 ClientFormModalProps,
 CustomerTableRowProps,
+FiltroEstadoCliente,
 ModalHeaderProps,
 PermisosUsuario,
 RutFileInputProps,
@@ -23,6 +23,12 @@ import { CheckCircle,CircleSlash,Edit,Eye,FileText,Plus,RefreshCw,Search,Upload,
 import { useSession } from "next-auth/react";
 import React,{ useCallback,useEffect,useMemo,useState } from "react";
 import { toast } from "sonner";
+
+const FILTROS_ESTADO = [
+  { value: "Todos", label: "Todos" },
+  { value: "ACTIVO", label: "Activos" },
+  { value: "INACTIVO", label: "Inactivos" },
+] as const;
 
 const CIUDADES_COLOMBIA = [
   "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena",
@@ -74,7 +80,7 @@ const RutFileInput = ({
         accept=".pdf,png,.jpg,.jpeg"
         onChange={onFileChange}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        required={!idRutDocumento && !selectedFile}
+        required={!isEditMode && !selectedFile}
       />
       {selectedFile ? (
         <div className="flex items-center gap-2 text-emerald-400 font-medium">
@@ -146,6 +152,7 @@ export const ClientFormModal = ({
     const saved = await onSave(
       {
         ...formData,
+        idCliente: client?.idCliente,
         idRutDocumento: formData.idRutDocumento ?? null,
         rutFile: selectedFile,
       },
@@ -218,6 +225,9 @@ export const ClientFormModal = ({
                 required
               >
                 <option value="" disabled>Selecciona una ciudad</option>
+                {formData.ciudad && !CIUDADES_COLOMBIA.some((ciudad) => ciudad === formData.ciudad) && (
+                  <option value={formData.ciudad}>{formData.ciudad}</option>
+                )}
                 {CIUDADES_COLOMBIA.map((ciudad) => (
                   <option key={ciudad} value={ciudad}>{ciudad}</option>
                 ))}
@@ -326,12 +336,12 @@ const CustomerTableRow = ({
       <td className="px-4 py-3.5">
         <span
           className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${
-            c.status||c.estado === "ACTIVO"
+            c.status === "ACTIVO"
               ? "bg-emerald-50 text-emerald-700 border-emerald-100"
               : "bg-rose-50 text-rose-700 border-rose-100"
           }`}
         >
-          {c.status||c.estado}
+          {c.status}
         </span>
       </td>
       <td className="px-4 py-3.5">
@@ -339,10 +349,7 @@ const CustomerTableRow = ({
           {permisos?.clientes?.ver_historial === true && (
             <button
               type="button"
-              onClick={() => {
-                console.log(c.idCliente);
-                onSelectCliente(c.idCliente);
-              }}
+              onClick={() => onSelectCliente(c.idCliente)}
               className="p-1.5 rounded-lg bg-blue-50 text-[#5680F9] hover:bg-blue-100 transition-colors"
               title="Ver Perfil"
             >
@@ -364,11 +371,11 @@ const CustomerTableRow = ({
           {permisos?.clientes?.desactivar === true && (
             <button
               type="button"
-              onClick={() => handleToggleStatus(c.idCliente)}
+              onClick={() => handleToggleStatus(c)}
               className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
-              title="Cambiar estado"
+              title={c.status === "ACTIVO" ? "Desactivar cliente" : "Activar cliente"}
             >
-              {c.estado === "ACTIVO" ? <CircleSlash size={14} /> : <CheckCircle size={14} />}
+              {c.status === "ACTIVO" ? <CircleSlash size={14} /> : <CheckCircle size={14} />}
             </button>
           )}
         </div>
@@ -399,18 +406,18 @@ const ClientControls = ({
       />
     </div>
     <div className="flex gap-1">
-      {["Todos", "Activos", "Inactivos"].map((f) => (
+      {FILTROS_ESTADO.map(({ value, label }) => (
         <button
-          key={f}
+          key={value}
           type="button"
-          onClick={() => setFilter(f)}
+          onClick={() => setFilter(value)}
           className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
-            filter === f
+            filter === value
               ? "bg-[#5680F9] border-[#5680F9] text-white"
               : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
           }`}
         >
-          {f}
+          {label}
         </button>
       ))}
     </div>
@@ -428,18 +435,18 @@ const ClientControls = ({
 
 // 3. COMPONENTE PADRE (MainRenderer)
 export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
-  const clientes = useDbTable("clientes") as unknown as ClienteVista[];
-  const {loadTable}=useDbActions()
+  const clientes = useDbTable("clientes");
+  const { loadTable } = useDbActions();
   const loadingClientes = useDbLoading("clientes");
   useModuleSplashReady("clientes", !loadingClientes);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("Todos");
+  const [filter, setFilter] = useState<FiltroEstadoCliente>("Todos");
   const { data: session } = useSession();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<ClienteModel | null>(null);
 
-  const handleEdit = useCallback((client: ClienteVista) => {
+  const handleEdit = useCallback((client: ClienteModel) => {
     setSelectedClient(client);
     setIsModalOpen(true);
   }, []);
@@ -451,7 +458,11 @@ export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
 
   const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit"): Promise<boolean> => {
     try {
-      let idRutDocumento = data.idRutDocumento ?? undefined;
+      if (mode === "edit" && !data.idCliente) {
+        throw new Error("Selecciona un cliente para guardar los cambios.");
+      }
+
+      let idRutDocumento: number | undefined;
       if (mode === "create" || data.rutFile) {
         if (!data.rutFile) {
           toast.error("Adjunta el documento RUT para continuar.");
@@ -490,8 +501,8 @@ export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
         });
         if (!result.success) throw new Error(result.error || "Error al crear cliente");
       }
-      if (mode === "edit") {
-        const result = await actualizarCliente(data.idCliente!, {
+      if (mode === "edit" && data.idCliente) {
+        const result = await actualizarCliente(data.idCliente, {
           correo: data.correo ?? "",
           nitCedula: data.nitCedula ?? "",
           razonSocial: data.razonSocial ?? "",
@@ -506,7 +517,12 @@ export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
         });
         if (!result.success) throw new Error(result.error || "Error al actualizar cliente");
       }
-      toast.success(mode === "create" ? "Cliente creado correctamente." : "Cliente actualizado correctamente.");
+      const recargado = await loadTable("clientes", true);
+      if (recargado) {
+        toast.success(mode === "create" ? "Cliente creado correctamente." : "Cliente actualizado correctamente.");
+      } else {
+        toast.warning("Cliente guardado. No se pudo recargar la lista.");
+      }
       return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo guardar el cliente.");
@@ -514,36 +530,29 @@ export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
     }
   };
 
-  const handleToggleStatus = useCallback((id: number) => {
+  const handleToggleStatus = useCallback(async (cliente: ClienteModel) => {
+    const status = cliente.status === "ACTIVO" ? "INACTIVO" : "ACTIVO";
     try {
-      cambiarEstadoCliente(
-        id,
-        clientes.find((c) => c.idCliente === id)?.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO"
-      )
-        .then((result) => {
-          if (!result.success) throw new Error(result.error || "Error al cambiar estado del cliente");
-          console.log("Estado del cliente cambiado con éxito:", result);
-        })
-        .catch((error) => {
-          console.error("Error al cambiar estado del cliente:", error);
-        });
+      const result = await cambiarEstadoCliente(cliente.idCliente, status);
+      if (!result.success) throw new Error(result.error || "No se pudo cambiar el estado del cliente.");
+      const recargado = await loadTable("clientes", true);
+      if (recargado) {
+        toast.success(status === "ACTIVO" ? "Cliente activado." : "Cliente desactivado.");
+      } else {
+        toast.warning("Estado guardado. No se pudo recargar la lista.");
+      }
     } catch (error) {
-      console.error("Error al cambiar estado del cliente:", error);
+      toast.error(error instanceof Error ? error.message : "No se pudo cambiar el estado del cliente.");
     }
-  }, [clientes]);
+  }, [loadTable]);
 
   const filtered = useMemo(() => {
-    console.log(clientes)
-    console.log("recarga  despues de hace cambio o nincial ")
+    const termino = search.toLowerCase();
     return clientes.filter((c) => {
-      const matchSearch =
-        c.razonSocial.toLowerCase().includes(search.toLowerCase()) ||
-        c.nitCedula.includes(search);
-      return matchSearch && (filter === "Todos" || c.estado === (filter === "ACTIVO" ? "ACTIVO" : "INACTIVO"));
+      const matchSearch = c.razonSocial.toLowerCase().includes(termino) || c.nitCedula.includes(termino);
+      return matchSearch && (filter === "Todos" || c.status === filter);
     });
-
   }, [clientes, search, filter]);
-
 
   const permisos = useMemo<PermisosUsuario | undefined>(
     () => session?.user?.permissions?.permisos,
@@ -551,11 +560,8 @@ export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
   );
 
   useEffect(() => {
-    loadTable("clientes")
-
-
-
-}, [loadTable]);
+    void loadTable("clientes");
+  }, [loadTable]);
 
   return (
     <div className="w-full bg-transparent p-4">
@@ -604,12 +610,14 @@ export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
         </table>
       </div>
 
-      <ClientFormModal
-        isOpen={isModalOpen}
-        client={selectedClient}
-        onClose={() => setIsModalOpen(false)}
-        onSave={handleSave}
-      />
+      {isModalOpen && (
+        <ClientFormModal
+          isOpen
+          client={selectedClient}
+          onClose={() => setIsModalOpen(false)}
+          onSave={handleSave}
+        />
+      )}
     </div>
   );
 }

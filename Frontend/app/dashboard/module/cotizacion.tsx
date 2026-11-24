@@ -1,7 +1,8 @@
 'use client';
 
+import { obtenerPrecioVigente } from "@/app/lib/vigencia-tarifa";
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { Plus, Search, Eye } from "lucide-react";
+import { AlertTriangle, Plus, Search, Eye } from "lucide-react";
 import CatalogTableView from "./componentes/compoenete_cotizacion/tartifas";
 import { AiAgentWidget } from "./componentes/AI_MODULE/AiAgentWidget";
 import { ItemsTable, VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
@@ -45,6 +46,15 @@ import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash"
 // ==========================================
 
 // Mapeo de colores para todos los estados del enum
+function tieneRevisionRecepcion(cotizacion: CotizacionVista): boolean {
+  const revision = cotizacion.historial_cambio.reduce<CotizacionVista["historial_cambio"][number] | undefined>((ultima, cambio) => {
+    if (!cambio.descripcion.startsWith("Revisión pendiente desde Recepción · ") &&
+        !cambio.descripcion.startsWith("Revisión de Recepción consolidada · ")) return ultima;
+    return !ultima || Number(cambio.numeroVersion.slice(1)) > Number(ultima.numeroVersion.slice(1)) ? cambio : ultima;
+  }, undefined);
+  return revision?.descripcion.startsWith("Revisión pendiente desde Recepción · ") ?? false;
+}
+
 const estadoStyle: Record<string, { bg: string; color: string; border: string }> = {
   BORRADOR:       { bg: "#FFFBEB", color: "#D97706", border: "#FDE68A" },
   ENVIADA:        { bg: "#EFF6FF", color: "#2563EB", border: "#BFDBFE" },
@@ -265,7 +275,20 @@ const QuotationListTable = ({
             );
             return (
               <tr key={c.idCotizacion} className="border-b border-slate-200 hover:bg-slate-50 transition-colors group">
-                <td className="py-3 px-4 font-mono font-bold text-slate-700">{c.codigo}</td>
+                <td className="py-3 px-4 font-mono font-bold text-slate-700">
+                  {c.codigo}
+                  {tieneRevisionRecepcion(c) && (
+                    <button
+                      type="button"
+                      className="ml-2 inline-flex rounded p-1 text-amber-700 hover:bg-amber-100"
+                      onClick={() => setSelectedQuotation(c)}
+                      title="Revisar cambios de Recepción"
+                      aria-label="Revisar cambios de Recepción"
+                    >
+                      <AlertTriangle size={14} aria-hidden="true" />
+                    </button>
+                  )}
+                </td>
                 <td className="py-3 px-4 text-slate-600 font-medium">{c.cliente?.razonSocial || "N/A"}</td>
                 <td className="py-3 px-4 font-mono font-bold text-slate-700">{formatCurrency(c.montoTotal)}</td>
                 <td className="py-3 px-4">
@@ -365,6 +388,20 @@ const QuotationDetailView = ({
           </button>
         </div>
       </div>
+
+      {tieneRevisionRecepcion(selectedQuotation) && (
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <AlertTriangle size={16} className="shrink-0" aria-hidden="true" />
+          <div>
+            <p>Recepción cambió los instrumentos. Revisa las cantidades y confirma el sitio de calibración de cada línea antes de consolidar.</p>
+            {puedeVersionar && (
+              <button type="button" onClick={openVersionModal} className="mt-2 font-bold underline">
+                Revisar y generar versión
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {selectedQuotation.estado === "APROBADA" && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
@@ -841,17 +878,17 @@ export default function Cotizaciones() {
 
   // Tarifas derivadas del store (sin estado local ni fallback mock)
   const tarifasOptions: TarifaOption[] = useMemo(() => {
-    return (tarifasStore ?? []).map((t) => {
-      const historial = t.historial || [];
-      const activo = historial.find((h) => !h.fechaFin) || historial[0];
-      const precio = activo ? Number(activo.precioU) : 0;
-      return {
+    return (tarifasStore ?? []).flatMap((t) => {
+      if (t.estado !== "ACTIVO") return [];
+      const activo = obtenerPrecioVigente(t.historial ?? []);
+      if (!activo) return [];
+      return [{
         tipoServicio: t.tipoServicio || "ACREDITADO",
         magnitud: t.magnitud || "",
         instrumento: t.Instrumento || "Genérico",
         norma: t.Norma || "N/A",
-        precio,
-      };
+        precio: Number(activo.precioU),
+      }];
     });
   }, [tarifasStore]);
 

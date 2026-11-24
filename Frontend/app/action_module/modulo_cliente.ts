@@ -4,26 +4,8 @@
 import { auth } from "@/app/Login/types/auth"; // <-- Importas la función auth directa de la v5
 import { fastifyRequest, FastifyHttpError } from "@/app/lib/api/fastifyClient";
 import type { CrearClienteInput, ActualizarClienteInput, TrazabilidadCliente } from "@/tipos/clientes";
-import type { ProveedorAlmacenamiento } from "@/tipos/enums";
-
-type statuscliente = 'ACTIVO' | 'INACTIVO';
-
-interface ClienteDTO {
-  idCliente: number;
-  nitCedula: string;
-  razonSocial: string;
-  correo: string;
-  nombreContacto: string | null;
-  telefono: string | null;
-  observacion: string | null;
-  idRutDocumento: number | null;
-  status: string;
-  createat: string | Date;
-  dirrecion: string;
-  updatedAt: string | Date;
-  ciudad: string | null;
-  tipoCliente: string;
-}
+import type { ClienteModel } from "@/tipos/entidades";
+import type { ProveedorAlmacenamiento, statuscliente } from "@/tipos/enums";
 
 interface DocumentoDTO {
   idDocumento: number;
@@ -56,12 +38,10 @@ export async function obtenerClientes() {
     }
 
     // 3. Consulta delegada al backend Fastify (centraliza Prisma)
-    const res = await fastifyRequest<{ success: boolean; data: ClienteDTO[] }>(
+    const res = await fastifyRequest<{ success: boolean; data: ClienteModel[] }>(
       session,
       '/api/v1/clientes'
     );
-
-    console.log(res,"aqui esta FGDFG")
 
     return { success: true, data: res.data };
   } catch (error) {
@@ -119,7 +99,7 @@ export async function crearCliente(input: CrearClienteInput) {
     if (!perm.autorizado) return { success: false, error: perm.error };
 
     const session = await auth();
-    const res = await fastifyRequest<{ success: boolean; data: ClienteDTO }>(
+    const res = await fastifyRequest<{ success: boolean; data: ClienteModel }>(
       session,
       '/api/v1/clientes',
       {
@@ -154,7 +134,7 @@ export async function actualizarCliente(idCliente: number, input: ActualizarClie
     if (!perm.autorizado) return { success: false, error: perm.error };
 
     const session = await auth();
-    const res = await fastifyRequest<{ success: boolean; data: ClienteDTO }>(
+    const res = await fastifyRequest<{ success: boolean; data: ClienteModel }>(
       session,
       `/api/v1/clientes/${idCliente}`,
       {
@@ -189,7 +169,7 @@ export async function cambiarEstadoCliente(idCliente: number, status: statusclie
     if (!perm.autorizado) return { success: false, error: perm.error };
 
     const session = await auth();
-    const res = await fastifyRequest<{ success: boolean; data: ClienteDTO }>(
+    const res = await fastifyRequest<{ success: boolean; data: ClienteModel }>(
       session,
       `/api/v1/clientes/${idCliente}/estado`,
       {

@@ -521,38 +521,37 @@ app.post(
         throw new AppError(400, 'Debe mapearse al menos una columna de precios.'); 
       }
 
-      await fastify.prisma.version_plantillas.update({
-        where: { ID_VERSION_PLANTILLA: versionId },
+      const jobId = randomUUID();
+      const reserva = await fastify.prisma.version_plantillas.updateMany({
+        where: {
+          ID_VERSION_PLANTILLA: versionId,
+          ESTADO: version.ESTADO,
+          JOB_ID: version.JOB_ID,
+          OR: [{ ESTADO: { not: 'PROCESANDO' } }, { JOB_ID: null }],
+        },
         data: {
-          MAPEO_CONFIG: mapeoConfig as any,
+          MAPEO_CONFIG: mapeoConfig as Prisma.InputJsonValue,
           ESTADO: 'PROCESANDO',
+          JOB_ID: jobId,
           ERROR_LOG: null,
           PROCESADO_EN: null,
         },
       });
 
-      const queue = getTarifasQueue();
-      let job;
+      if (!reserva.count) {
+        throw new AppError(409, 'La versión ya se está procesando o su estado cambió. Consulta el estado antes de reintentar.');
+      }
+
       try {
-        job = await queue.add('consolidar-tarifas', {
+        await getTarifasQueue().add('consolidar-tarifas', {
           versionId,
           rutaUrl: version.documentos.RUTA_URL,
           fileName: version.documentos.NOMBRE,
           mapeoConfig,
-        });
-console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la versión ${versionId}`);
-   return reply.code(202).send({
-          success: true,
-          data: {
-            estado: 'PROCESANDO',
-            jobId: job.id ?? null
-          }
-        });
-        
-
+        }, { jobId });
       } catch (error) {
-        await fastify.prisma.version_plantillas.update({
-          where: { ID_VERSION_PLANTILLA: versionId },
+        await fastify.prisma.version_plantillas.updateMany({
+          where: { ID_VERSION_PLANTILLA: versionId, ESTADO: 'PROCESANDO', JOB_ID: jobId },
           data: {
             ESTADO: 'ERROR',
             ERROR_LOG: 'No se pudo encolar el job de consolidación de tarifas.',
@@ -562,7 +561,10 @@ console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la
         throw new AppError(500, 'No se pudo encolar el job de consolidación de tarifas.');
       }
 
-
+      return reply.code(202).send({
+        success: true,
+        data: { estado: 'PROCESANDO', jobId },
+      });
     }
   );
 
@@ -581,9 +583,9 @@ console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la
         throw new AppError(400, 'versionId inválido.');
       }
 
-      const version = await fastify.prisma.version_plantillas.findUnique({
+      let version = await fastify.prisma.version_plantillas.findUnique({
         where: { ID_VERSION_PLANTILLA: versionId },
-        select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true },
+        select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true, JOB_ID: true },
       });
 
       if (!version) {
@@ -591,29 +593,22 @@ console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la
       }
 
       if (version.ESTADO === 'PROCESANDO') {
-        const queue = getTarifasQueue();
-        const activos = await queue.getJobs(['waiting', 'active', 'delayed']);
-        const tieneJob = activos.some(
-          (job) => (job.data as any)?.versionId === versionId && (job.data as any)?.mapeoConfig
-        );
-        if (!tieneJob) {
-          const stale = await fastify.prisma.version_plantillas.update({
-            where: { ID_VERSION_PLANTILLA: versionId },
+        const job = version.JOB_ID ? await getTarifasQueue().getJob(version.JOB_ID) : undefined;
+        const estadoJob = await job?.getState();
+        if (!version.JOB_ID || estadoJob === 'failed' || estadoJob === 'completed') {
+          await fastify.prisma.version_plantillas.updateMany({
+            where: { ID_VERSION_PLANTILLA: versionId, ESTADO: 'PROCESANDO', JOB_ID: version.JOB_ID },
             data: {
               ESTADO: 'ERROR',
-              ERROR_LOG: 'Job huérfano: no hay un proceso activo en la cola de tarifas.',
+              ERROR_LOG: job?.failedReason || 'No hay un trabajo activo para esta importación.',
             },
-            select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true },
           });
-          return {
-            success: true as const,
-            data: {
-              estado: stale.ESTADO,
-              errorLog: stale.ERROR_LOG ?? null,
-              procesadoEn: stale.PROCESADO_EN ?? null,
-            },
-          };
         }
+
+        version = await fastify.prisma.version_plantillas.findUniqueOrThrow({
+          where: { ID_VERSION_PLANTILLA: versionId },
+          select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true, JOB_ID: true },
+        });
       }
 
       return {

@@ -1,4 +1,5 @@
 // 1. IMPORTS
+import { FiltrosClienteCotizacion, useFiltrosClienteCotizacion } from "@/app/dashboard/components/FiltrosClienteCotizacion";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   AlertTriangle,
@@ -42,27 +43,10 @@ import { consolidarOrdenTrabajoAction } from "@/app/action_module/ordenes";
 // ==========================================
 // (tipos e interfaces en @/tipos/tipo_ordenes_de_trabajo.ts)
 
-const TIPOS_SERVICIO = ["Acreditado", "No_acreditado"];
-
 const UNIDADES = [
   "psi", "bar", "mbar", "kPa", "MPa", "Pa", "mmHg", "inHg",
   "kgf/cm²", "cmH2O", "kg", "g", "mg", "lb", "°C", "°F", "%HR",
 ];
-
-// Normaliza el TIPO_SERVICIO almacenado en BD ("ACREDITADO"/"NO ACREDITADO"/etc.)
-// a la etiqueta canónica que usa el desplegable del formulario.
-const normalizarTipoServicio = (v?: string | null): string => {
-  const s = (v ?? "").trim().toUpperCase();
-  if (!s) return "";
-  if (s.includes("NO") && s.includes("ACREDIT")) return "No_acreditado";
-  return "Acreditado";
-};
-
-// Convierte la etiqueta del formulario de vuelta al valor canónico de BD.
-const tipoServicioADB = (v?: string | null): string => {
-  const s = (v ?? "").trim().toUpperCase();
-  return s.includes("NO") ? "NO ACREDITADO" : "ACREDITADO";
-};
 
 // La fecha límite es inclusiva durante todo el día indicado.
 const estaVencidaLaFechaLimite = (valor?: string | Date | null): boolean => {
@@ -104,8 +88,11 @@ const normalizarLugarCalibracion = (
   ot: OrdenTrabajoModel,
 ): "Interno USC" | "En sitio" | "Laboratorio permanente" => {
   const sitio = (ot.sitioCalibracion ?? "").trim().toUpperCase();
-  if (ot.esInternoUSC || sitio.includes("INTERNO_USC") || sitio === "INTERNO USC") return "Interno USC";
-  if (ot.esEnSitio || sitio === "CLIENTE" || sitio === "EN SITIO") return "En sitio";
+  if (sitio === "CLIENTE" || sitio === "EN SITIO") return "En sitio";
+  if (sitio === "INTERNO_USC" || sitio === "INTERNO USC") return "Interno USC";
+  if (sitio === "LABORATORIO") return "Laboratorio permanente";
+  if (ot.esInternoUSC) return "Interno USC";
+  if (ot.esEnSitio) return "En sitio";
   return "Laboratorio permanente";
 };
 
@@ -455,16 +442,8 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
   instrumentDrafts,
   updateInstrumentDraft,
   excedioLimite,
-  tarifas,
   readOnly = false,
 }) => {
-  const itemOptions = Array.from({ length: instrumentDrafts.length }, (_, i) => i + 1);
-
-  const instrumentosList = useMemo(() => {
-    const nombres = tarifas.map((t) => t.Instrumento).filter(Boolean);
-    return Array.from(new Set(nombres)).sort();
-  }, [tarifas]);
-
   // Manejo de puntos de calibración (arreglo del schema)
   const handlePuntoChange = (id: string, puntoIndex: number, value: string) => {
     const instrument = instrumentDrafts.find((i) => i.id === id);
@@ -500,7 +479,7 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
    
       </div>
 
-      <fieldset disabled={readOnly} className="contents" aria-label="Instrumentos de la orden de trabajo en solo lectura">
+      <fieldset disabled={readOnly} className="contents" aria-label="Instrumentos de la orden de trabajo">
       <div className="overflow-x-auto max-w-full shadow-inner">
         <table className="w-full text-left border-collapse text-sm">
           <thead>
@@ -531,46 +510,9 @@ export const InstrumentosTable: React.FC<InstrumentosTableProps> = ({
               const puntos = getPuntosArray(inst);
               return (
                 <tr key={inst.id} className="hover:bg-slate-50/50">
-                  {/* Item */}
-                  <td className="p-2 border-r border-slate-200 text-center">
-                    <select
-                      value={inst.item}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "item", Number(e.target.value))}
-                      className="w-full text-center bg-white border-b border-slate-300 outline-none font-bold text-slate-700 cursor-pointer py-1 text-sm"
-                    >
-                      {itemOptions.map((num) => (
-                        <option key={num} value={num}>
-                          {num}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-
-                  {/* Tipo de Servicio: lista fija */}
-                  <td className="p-2 border-r border-slate-200">
-                    <select
-                      value={inst.tipoServicio}
-                      onChange={(e) => updateInstrumentDraft(inst.id, "tipoServicio", e.target.value)}
-                      className="w-full bg-white border-b border-slate-300 outline-none focus:border-blue-500 py-1 text-sm cursor-pointer"
-                    >
-                      <option value="">Seleccionar...</option>
-                      {TIPOS_SERVICIO.map((tipo) => (
-                        <option key={tipo} value={tipo}>
-                          {tipo}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-
-                  {/* Instrumento: Combobox editable */}
-                  <td className="p-2 border-r border-slate-200 font-bold text-slate-900">
-                    <ComboboxInstrumento
-                      value={inst.instrumento}
-                      options={instrumentosList}
-                      onChange={(value) => updateInstrumentDraft(inst.id, "instrumento", value)}
-                      placeholder="Buscar instrumento"
-                    />
-                  </td>
+                  <td className="p-2 border-r border-slate-200 text-center">{inst.item}</td>
+                  <td className="p-2 border-r border-slate-200">{inst.tipoServicio}</td>
+                  <td className="p-2 border-r border-slate-200 font-bold text-slate-900">{inst.instrumento}</td>
 
                   <td className="p-2 border-r border-slate-200">
                     <input
@@ -834,8 +776,7 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
   instrumentDrafts={instrumentDrafts}
   updateInstrumentDraft={updateInstrumentDraft}
   excedioLimite={instrumentDrafts.length > 10}
-  tarifas={tarifas}
-  readOnly
+  readOnly={!puedeEditar}
 />
             
           </Section>
@@ -883,25 +824,15 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                 <Field
                   label="Fecha"
                   type="date"
-                  value={
-                        orderDraft.fechaCalibracion
-                          ? new Date(orderDraft.fechaCalibracion).toISOString().split('T')[0]
-                          : ''
-                      }
-                  onChange={(v) => updateOrderDraft('fechaCalibracion', v.toString())}
+                  value={orderDraft.fechaCalibracion}
+                  onChange={(v) => updateOrderDraft('fechaCalibracion', v)}
+                  readOnly={!puedeEditar}
                 />
                 <Field
                   label="Hora"
                   type="time"
-                  value={
-                  orderDraft.horaCalibracion
-                    ? new Date(orderDraft.horaCalibracion).toLocaleTimeString('es-CO', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false,
-                      })
-                    : ''
-                }
+                  value={orderDraft.horaCalibracion}
+                  readOnly={!puedeEditar}
                   onChange={(v) => updateOrderDraft('horaCalibracion', v)}
                 />
               </div>
@@ -986,11 +917,16 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
                   Responsable
                   <select
                     value={orderDraft.responsableUsc}
+                    disabled={!puedeEditar}
                     onChange={(e) => updateOrderDraft('responsableUsc', e.target.value)}
                     className="w-full mt-1 border border-slate-200 rounded-xl p-2 text-xs bg-white outline-none focus:border-blue-500"
                   >
+                    <option value="" disabled>Seleccione un responsable</option>
+                    {orderDraft.responsableUsc && !technicians.some((t) => t.nombreCompleto === orderDraft.responsableUsc) && (
+                      <option value={orderDraft.responsableUsc}>{orderDraft.responsableUsc}</option>
+                    )}
                     {technicians.map((t) => (
-                      <option key={t.idUsuario}>{t.nombreCompleto}</option>
+                      <option key={t.idUsuario} value={t.nombreCompleto}>{t.nombreCompleto}</option>
                     ))}
                   </select>
                 </label>
@@ -1040,10 +976,12 @@ export const OrderFormRCM05: React.FC<OrderFormRCM05Props> = ({
             <div className="p-4">
               <textarea
                 value={orderDraft.observacionesGenerales}
-                readOnly
+                onChange={(e) => updateOrderDraft("observacionesGenerales", e.target.value)}
+                readOnly={!puedeEditar}
                 rows={3}
-                aria-readonly="true"
-                className="w-full border border-slate-200 rounded-xl p-3 text-xs outline-none font-medium resize-none bg-slate-100 text-slate-500 cursor-not-allowed"
+                aria-label="Observaciones generales"
+                aria-readonly={!puedeEditar}
+                className="w-full rounded-xl border border-slate-200 p-3 text-xs font-medium read-only:bg-slate-100"
                 placeholder="Indique aquí los requerimientos adicionales para el servicio o anomalías observadas..."
               />
             </div>
@@ -1456,9 +1394,22 @@ import { obtenerTecnicosOrdenes } from "@/app/action_module/ordenes";
 import { useDbTable, useDbActions, useDbLoading, useRevisionTablas, OrdenTrabajoModel } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
+function referenciaComercialOT(orden: OrdenTrabajoModel) {
+  return {
+    idCliente: orden.cotizacion?.idCliente ?? orden.idCliente,
+    nombreCliente: orden.cotizacion?.cliente?.razonSocial ?? orden.cliente?.razonSocial,
+    idCotizacion: orden.idCotizacion,
+    codigoCotizacion: orden.cotizacion?.codigo,
+  };
+}
+
 export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
   // Suscripción selectiva por tabla (solo re-renderiza si esa tabla cambia)
   const ordenesTrabajo = useDbTable("ordenes_trabajo");
+  const ordenesVigentes = useMemo(() => ordenesTrabajo.filter((orden) => orden.vigente !== false), [ordenesTrabajo]);
+  const { filtrados: ordenesFiltradas, controles: filtrosComerciales } =
+    useFiltrosClienteCotizacion(ordenesVigentes, referenciaComercialOT);
+  const idsOrdenesFiltradas = useMemo(() => new Set(ordenesFiltradas.map((orden) => orden.idOrdenTrabajo)), [ordenesFiltradas]);
   const clientes = useDbTable("clientes");
   const tarifas = useDbTable("tarifas");
   const { loadTable } = useDbActions();
@@ -1514,8 +1465,6 @@ export const OrdenesTrabajo = ({ otToOpen }: { otToOpen?: number | null }) => {
     return () => { activo = false; };
   }, [revisionTecnicos]);
 
-  console.log(technicians,"esto essss")
-
 
 const ordenSeleccionadaActual = ordenesTrabajo.find(
     (orden) => String(orden.idOrdenTrabajo) === selectedOT?.id,
@@ -1561,7 +1510,7 @@ const ordenSeleccionadaActual = ordenesTrabajo.find(
       (detalle) => ({
         id: detalle.idDetalle?.toString() || crypto.randomUUID(),
         item: detalle.item || 1,
-        tipoServicio: normalizarTipoServicio(detalle.tipoServicio),
+        tipoServicio: detalle.tipoServicio,
         instrumento: detalle.instrumento || "",
         fabricante: detalle.fabricante ?? null,
         modelo: detalle.modelo ?? null,
@@ -1583,10 +1532,13 @@ const ordenSeleccionadaActual = ordenesTrabajo.find(
       })
     );
 
+    const responsable = otCompleta.responsable?.trim() || "";
+
     const otCompleto: OTType = {
       id: otPreview.id || otCompleta.idOrdenTrabajo.toString(),
+      codigo: otCompleta.codigo,
       cliente: clienteData?.razonSocial || "Sin cliente",
-      tecnico: otCompleta.responsable || "Sin asignar",
+      tecnico: responsable || "Sin asignar",
       fecha: fechaISOParaInput(otCompleta.fechaCalibracion),
       estado: (otCompleta.estado ?? "Creada") as EstadoOrden,
       retraso: estaVencidaLaFechaLimite(otCompleta.fechaLimiteFacturacion),
@@ -1613,7 +1565,7 @@ const ordenSeleccionadaActual = ordenesTrabajo.find(
       telefonoSolicitante: otCompleta?.telefonoContacto_solcitante || clienteData?.telefono || "",
       noOrdenTrabajo: otCompleta.codigo,
       noCotizacion: otCompleta.cotizacion?.codigo?.toString() || "",
-      responsableUsc: otCompleta.responsable || "",
+      responsableUsc: responsable === "Sin asignar" ? "" : responsable,
       fechaDiligenciamiento: fechaISOParaInput(otCompleta.fecha_dilgenciamento),
       requiereAnexo: otCompleta.requireAnexo ? "Si" : "No",
       estadoOrden: otCompleta.estado ?? "",
@@ -1621,7 +1573,7 @@ const ordenSeleccionadaActual = ordenesTrabajo.find(
       estado_revision: otCompleta.estadoRevision ?? undefined,
       ultima_version: String(otCompleta.version ?? 1),
       maquinas: [],
-      tecnicos: otCompleta.responsable ? [otCompleta.responsable] : [],
+      tecnicos: responsable && responsable !== "Sin asignar" ? [responsable] : [],
       asignaciones: {},
       instrumentos: instrumentosMapeados,
     };
@@ -1699,31 +1651,28 @@ const saveOrderEdits = async () => {
 
       // 🟢 2. Estructuración del Payload
       const payload = {
+        codigoActual: selectedOT.codigo,
+        observaciones: orderDraft.observacionesGenerales.trim() || null,
         razonSocialCert: orderDraft.razonSocialCert.trim() || null,
         nitCert: orderDraft.nitCert.trim() || null,
         correoCertificados: orderDraft.correoCertificados.trim() || null,
         direccionCert: orderDraft.direccionCert.trim() || null,
         ciudadCert: orderDraft.ciudadCert.trim() || null,
         correoFactura: orderDraft.correoFactura.trim() || null,
-        responsableUsc: orderDraft.responsableUsc || null,
+        responsableUsc: orderDraft.responsableUsc.trim() || null,
         fechaDiligenciamiento: orderDraft.fechaDiligenciamiento,
         fechaLimiteFacturacion: orderDraft.fechaLimiteFacturacion === selectedOT.fechaLimiteFacturacion
           ? undefined : orderDraft.fechaLimiteFacturacion || null,
-        fechaCalibracion: orderDraft.lugarCalibracion === "En sitio" && orderDraft.fechaCalibracion
-          ? orderDraft.fechaCalibracion.slice(0, 10)
-          : null,
-        horaCalibracion: orderDraft.lugarCalibracion === "En sitio" && orderDraft.horaCalibracion
-          ? orderDraft.horaCalibracion.match(/\d{2}:\d{2}/)?.[0] ?? null
-          : null,
+        fechaCalibracion: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.fechaCalibracion || null : undefined,
+        horaCalibracion: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.horaCalibracion || null : undefined,
         personaContactar: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.personaContactar || null : null,
         telefonoCalibracion: orderDraft.lugarCalibracion === "En sitio" ? orderDraft.telefonoCalibracion || null : null,
         lugarCalibracion: orderDraft.lugarCalibracion,
         estadoOrden: orderDraft.estadoOrden as EstadoOrden,
         instrumentos: instrumentDrafts.map((inst) => ({
-          // Si el ID tiene guiones (UUID de front), lo mandamos como undefined para que Fastify sepa que es nuevo
-          idDetalle: inst.id.includes('-') ? undefined : Number(inst.id),
+          idDetalle: Number(inst.id),
           item: inst.item,
-          tipoServicio: tipoServicioADB(inst.tipoServicio),
+          tipoServicio: inst.tipoServicio,
           instrumento: inst.instrumento,
           fabricante: inst.fabricante ?? null,
           modelo: inst.modelo ?? null,
@@ -1753,8 +1702,11 @@ const saveOrderEdits = async () => {
       const updatedOT: OTType = {
         ...selectedOT,
         ...orderDraft,
+        codigo: response.codigo ?? selectedOT.codigo,
+        noOrdenTrabajo: response.codigo ?? orderDraft.noOrdenTrabajo,
         estado: (response.estado as EstadoOrden) ?? (orderDraft.estadoOrden as EstadoOrden),
-        tecnico: orderDraft.responsableUsc,
+        responsableUsc: response.responsable ?? "",
+        tecnico: response.responsable || "Sin asignar",
         instrumentos: instrumentDrafts,
       };
       
@@ -1854,9 +1806,8 @@ const saveOrderEdits = async () => {
   );
 
   const otss: Partial<OTBase>[] = useMemo(() => {
-    const candidatas = ordenesTrabajo
-      .filter((orden) => orden.vigente !== false)
-      .filter((orden) => !(orden.sitioCalibracion == null && orden.tieneHijas))
+    const candidatas = ordenesVigentes
+      .filter((orden) => !(orden.sitioCalibracion == null && orden.tieneHijas));
 
     // La API entrega también el historial. Para datos antiguos puede haber
     // varias filas con VIGENTE=true (o sin ese campo); agrupar por familia y
@@ -1895,8 +1846,10 @@ const saveOrderEdits = async () => {
       }
     }
 
-    return [...ultimaPorFamiliaYSitio.values()].map(mapearOTResumen);
-  }, [ordenesTrabajo, mapearOTResumen]);
+    return [...ultimaPorFamiliaYSitio.values()]
+      .filter((orden) => idsOrdenesFiltradas.has(orden.idOrdenTrabajo))
+      .map(mapearOTResumen);
+  }, [ordenesVigentes, idsOrdenesFiltradas, mapearOTResumen]);
 
   /**
    * Árbol jerárquico (Master → hijas) para la vista Tree.
@@ -1911,7 +1864,7 @@ const saveOrderEdits = async () => {
       return [version, letra, orden.idOrdenTrabajo] as const;
     };
 
-    for (const orden of ordenesTrabajo.filter((item) => item.vigente !== false)) {
+    for (const orden of ordenesVigentes) {
       const familia = orden.idOtRaiz != null
         ? `raiz:${orden.idOtRaiz}`
         : orden.idOrdenTrabajoPadre != null
@@ -1934,7 +1887,9 @@ const saveOrderEdits = async () => {
       }
     }
 
-    const vigentes = [...ultimaPorFamiliaYSitio.values()].map(mapearOTResumen);
+    const vigentes = [...ultimaPorFamiliaYSitio.values()]
+      .filter((orden) => idsOrdenesFiltradas.has(orden.idOrdenTrabajo))
+      .map(mapearOTResumen);
 
     const porId = new Map(vigentes.map((n) => [n.id, n]));
 
@@ -1949,7 +1904,7 @@ const saveOrderEdits = async () => {
           (n) => n.idOrdenTrabajoPadre != null && String(n.idOrdenTrabajoPadre) === String(raiz.id)
         ),
       }));
-  }, [ordenesTrabajo, mapearOTResumen]);
+  }, [ordenesVigentes, idsOrdenesFiltradas, mapearOTResumen]);
 
   /**
    * Filtra las órdenes según el texto de búsqueda (código, cliente o cotización).
@@ -1986,6 +1941,12 @@ const saveOrderEdits = async () => {
         onBack={closeOT}
         totalOTs={otss.length}
       />
+
+      {!selectedOT && (!errorCargaOrdenes || ordenesTrabajo.length > 0) && (
+        <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3">
+          <FiltrosClienteCotizacion {...filtrosComerciales} />
+        </div>
+      )}
 
       {!selectedOT && errorCargaOrdenes && ordenesTrabajo.length === 0 && (
         <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">

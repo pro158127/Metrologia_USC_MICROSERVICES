@@ -25,7 +25,7 @@ async function registrarPrecio(
   if (!tarifa) throw new AppError(404, 'Tarifa no encontrada.');
 
   const vigente = await tx.historial_tarifas.findFirst({
-    where: { ID_TARIFA_FK: idTarifa, FECHA_FIN: null },
+    where: { ID_TARIFA_FK: idTarifa },
     orderBy: { FECHA_INICIO: 'desc' },
   });
   const fechaInicio = inicio ? new Date(inicio) : new Date();
@@ -34,7 +34,7 @@ async function registrarPrecio(
     throw new AppError(409, 'La nueva vigencia debe empezar después de la vigente y terminar después de su inicio.');
   }
   await tx.historial_tarifas.updateMany({
-    where: { ID_TARIFA_FK: idTarifa, FECHA_FIN: null },
+    where: { ID_TARIFA_FK: idTarifa, OR: [{ FECHA_FIN: null }, { FECHA_FIN: { gt: fechaInicio } }] },
     data: { FECHA_FIN: fechaInicio },
   });
   await tx.historial_tarifas.create({

@@ -38,25 +38,3 @@ export interface Kpi {
   bg: string;
   trend: string;
 }
-
-export interface AuditTraceabilityRow {
-  factura: string;
-  cliente: string;
-  fecha: string;
-  valor: string;
-  ots: string;
-  equipos: number;
-  cert: string;
-}
-
-export interface AuditTraceabilityReportProps {
-  facturaSearch: string;
-  showTrazabilidad: boolean;
-  onSearchChange: (value: string) => void;
-  onGenerateReport: () => void;
-  generating?: boolean;
-  downloads?: { pdf: string | null; excel: string | null } | null;
-  onDownloadPdf?: () => void;
-  onDownloadExcel?: () => void;
-  filas: AuditTraceabilityRow[];
-}

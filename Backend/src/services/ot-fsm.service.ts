@@ -67,7 +67,7 @@ export function cabeceraRecepcionLista(recepcion: {
   NOMBRE_ENTREGA?: string | null;
   NOMBRE_RECIBE?: string | null;
 } | null | undefined): boolean {
-  return Boolean(recepcion?.FECHA_RECEPCION && recepcion.NOMBRE_ENTREGA?.trim() && recepcion.NOMBRE_RECIBE?.trim());
+  return Boolean(recepcion?.FECHA_RECEPCION && recepcion.NOMBRE_RECIBE?.trim());
 }
 
 export function instrumentoListoParaAsignar(detalle: {

@@ -51,9 +51,9 @@ interface InstrumentoEstadoRecepcion {
   estadoIBC?: unknown;
 }
 
-function validarRecepcionDefinitiva(body: InstrumentoEstadoRecepcion[], cabecera: { nombreEntrega?: string | null; fechaRecepcion?: string | null }) {
+function validarRecepcionDefinitiva(body: InstrumentoEstadoRecepcion[], cabecera: { fechaRecepcion?: string | null }) {
   return Boolean(
-    cabecera.nombreEntrega?.trim() && cabecera.fechaRecepcion && body.length > 0 &&
+    cabecera.fechaRecepcion && body.length > 0 &&
     body.every((inst) => {
       const entrada = (inst.estadoIBC as { entrada?: Record<string, unknown> } | null)?.entrada;
       return [inst.instrumento, inst.marca, inst.modelo, inst.serie, inst.codigoInventario, inst.resolucion]

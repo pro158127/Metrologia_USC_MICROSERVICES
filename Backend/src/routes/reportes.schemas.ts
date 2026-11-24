@@ -684,6 +684,7 @@ export const reportesCertificadoDtoSchema = z.object({
   nit: z.string(),
   tecnico: z.string(),
   ot: z.string(),
+  cotizacion: z.string().nullable().optional(),
   fecha: z.string().nullable(),
   rutaUrl: z.string().nullable(),
   tipoServicio: z.string().nullable(),

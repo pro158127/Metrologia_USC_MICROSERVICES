@@ -1,7 +1,7 @@
 // 1. Imports
 "use client";
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   BarChart,
   Bar,
@@ -13,7 +13,7 @@ import {
   Line,
   CartesianGrid,
 } from "recharts";
-import { Download, Search, FileText, X } from "lucide-react";
+import { Download, LoaderCircle, FileText, X } from "lucide-react";
 import { useDbTable, useDbActions, useDbLoading, useRevisionTablas } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
@@ -22,12 +22,13 @@ import {
   exportarReportePdf,
   exportarReporteExcel,
   consultarEstadoJobReporte,
-  encolarReporteAuditoriaFactura,
+  buscarFacturasArchivadas,
+  type FacturaArchivada,
   type DatosReporte,
   type FiltrosReporte,
 } from "@/app/action_module/reportes";
 import { generarUrlArchivo } from "@/app/action_module/archivos";
-import type { BarChartData, ConversionData, TecnicoResumen, Kpi, AuditTraceabilityRow, AuditTraceabilityReportProps } from "@/tipos/reportes";
+import type { BarChartData, ConversionData, TecnicoResumen, Kpi } from "@/tipos/reportes";
 
 // Reusable Tailwind Style Maps (Sugerencia por alta repetibilidad de inputs/selects)
 const inputBaseStyles =
@@ -264,10 +265,89 @@ const TecnicoSummaryTable: React.FC<{ tecnicoData: TecnicoResumen[] }> = ({ tecn
   );
 };
 
+type CampoArchivo = "cliente" | "cotizacion" | "orden" | "numero";
+type FacetasArchivo = Partial<Record<CampoArchivo, readonly string[]>>;
+const etiquetasArchivo: Record<CampoArchivo, string> = {
+  cliente: "Cliente", cotizacion: "Cotización", orden: "Orden OT", numero: "Número de factura",
+};
+const camposCertificados: CampoArchivo[] = ["cliente", "cotizacion", "orden"];
+const camposFacturas: CampoArchivo[] = [...camposCertificados, "numero"];
+
+function clienteArchivo(nombre?: string | null, nit?: string | null) {
+  if (!nombre || nombre === "—") return [];
+  return [nit && nit !== "—" ? `${nombre} · ${nit}` : nombre];
+}
+
+function useSelectoresArchivo<T>(registros: T[], campos: CampoArchivo[], obtenerFacetas: (fila: T) => FacetasArchivo) {
+  const [seleccion, seleccionar] = useState<Partial<Record<CampoArchivo, string>>>({});
+  const filas = useMemo(() => registros.map((fila) => ({ fila, facetas: obtenerFacetas(fila) })), [registros, obtenerFacetas]);
+  const disponibles = useMemo(() => campos.map((campo) => {
+    const valores = new Set(filas.flatMap(({ facetas }) => facetas[campo] ?? []));
+    return [campo, [...valores].sort((a, b) => a.localeCompare(b, "es-CO", { numeric: true }))] as const;
+  }), [campos, filas]);
+  const activa = Object.fromEntries(disponibles.map(([campo, valores]) => [
+    campo, valores.includes(seleccion[campo] ?? "") ? seleccion[campo] : undefined,
+  ])) as Partial<Record<CampoArchivo, string>>;
+  const coincide = (facetas: FacetasArchivo, exceptuar?: CampoArchivo) =>
+    campos.every((campo) => {
+      const valor = activa[campo];
+      return campo === exceptuar || !valor || facetas[campo]?.includes(valor);
+    });
+  return {
+    registros: filas.filter(({ facetas }) => coincide(facetas)).map(({ fila }) => fila),
+    limpiar: () => seleccionar({}),
+    campos: disponibles.map(([campo, valores]) => {
+      const relacionados = new Set(filas.filter(({ facetas }) => coincide(facetas, campo)).flatMap(({ facetas }) => facetas[campo] ?? []));
+      return {
+        campo, valor: activa[campo] ?? "", opciones: valores.filter((valor) => relacionados.has(valor)),
+        cambiar: (valor: string) => seleccionar((prev) => ({ ...prev, [campo]: valor })),
+      };
+    }),
+  };
+}
+
+function SelectoresArchivo({ campos, limpiar }: {
+  campos: { campo: CampoArchivo; valor: string; opciones: string[]; cambiar: (valor: string) => void }[];
+  limpiar: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      {campos.map(({ campo, valor, opciones, cambiar }) => (
+        <label key={campo} className="flex min-w-40 flex-1 flex-col gap-1 text-xs font-medium text-slate-700">
+          {etiquetasArchivo[campo]}
+          <select className={`w-full ${inputBaseStyles}`} value={valor} onChange={(e) => cambiar(e.target.value)}>
+            <option value="">Todas las opciones</option>
+            {opciones.map((opcion) => <option key={opcion} value={opcion}>{opcion}</option>)}
+          </select>
+        </label>
+      ))}
+      {campos.some(({ valor }) => valor) && (
+        <button type="button" onClick={limpiar} className="rounded-xl px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50">
+          Limpiar filtros
+        </button>
+      )}
+    </div>
+  );
+}
+
+const facetasCertificado = (certificado: DatosReporte["certificados"][number]): FacetasArchivo => ({
+  cliente: clienteArchivo(certificado.cliente, certificado.nit),
+  cotizacion: certificado.cotizacion ? [certificado.cotizacion] : [],
+  orden: certificado.ot && certificado.ot !== "—" ? [certificado.ot] : [],
+});
+
+const facetasFactura = (factura: FacturaArchivada): FacetasArchivo => ({
+  cliente: clienteArchivo(factura.cliente, factura.nit),
+  cotizacion: factura.cotizacion ? [factura.cotizacion] : [],
+  orden: factura.ordenes,
+  numero: [factura.numero],
+});
+
 const HistoricalCertificatesTable: React.FC<{
   certHistoricos: DatosReporte["certificados"];
   onVerPdf: (rutaUrl: string | null, titulo: string) => void;
 }> = ({ certHistoricos, onVerPdf }) => {
+  const filtros = useSelectoresArchivo(certHistoricos, camposCertificados, facetasCertificado);
   return (
     <div className="rounded-[20px] border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-hidden mb-6">
       <div className="px-6 py-4 border-b border-slate-100">
@@ -275,11 +355,13 @@ const HistoricalCertificatesTable: React.FC<{
           Búsqueda de certificados históricos (RF-41)
         </span>
       </div>
+      <div className="px-6 py-4"><SelectoresArchivo campos={filtros.campos} limpiar={filtros.limpiar} /></div>
+      {!filtros.registros.length && <p className="px-6 pb-4 text-xs text-slate-500">No hay certificados para estos filtros.</p>}
       <div className="max-h-96 overflow-auto" tabIndex={0}>
         <table className="w-full">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr className="bg-slate-50/75 border-b border-slate-100">
-              {["N° Certificado", "Cliente", "NIT", "Instrumento", "Estampilla", "Fecha emisión", "Técnico", "Acciones"].map((h) => (
+              {["N° Certificado", "Cliente", "NIT", "Cotización", "Orden OT", "Instrumento", "Estampilla", "Fecha emisión", "Técnico", "Acciones"].map((h) => (
                 <th key={h} className="text-left px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   {h}
                 </th>
@@ -287,11 +369,13 @@ const HistoricalCertificatesTable: React.FC<{
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {certHistoricos.map((c) => (
+            {filtros.registros.map((c) => (
               <tr key={c.codigo} className="hover:bg-slate-50/50 transition-colors">
                 <td className="px-6 py-4 text-sm font-bold text-[#5680F9]">{c.codigo}</td>
                 <td className="px-6 py-4 text-sm font-semibold text-slate-700">{c.cliente}</td>
                 <td className="px-6 py-4 text-sm text-slate-500 font-medium">{c.nit}</td>
+                <td className="px-6 py-4 text-sm text-slate-600">{c.cotizacion ?? "—"}</td>
+                <td className="px-6 py-4 text-sm text-slate-600">{c.ot}</td>
                 <td className="px-6 py-4 text-sm text-slate-600">{c.instrumento}</td>
                 <td className="px-6 py-4 text-sm text-slate-500 font-mono">{c.estampilla ?? "—"}</td>
                 <td className="px-6 py-4 text-sm text-slate-500">{c.fecha ? new Date(c.fecha).toLocaleDateString("es-CO") : "—"}</td>
@@ -313,108 +397,83 @@ const HistoricalCertificatesTable: React.FC<{
   );
 };
 
-const AuditTraceabilityReport: React.FC<AuditTraceabilityReportProps> = ({
-  facturaSearch,
-  showTrazabilidad,
-  onSearchChange,
-  onGenerateReport,
-  generating = false,
-  downloads = null,
-  onDownloadPdf,
-  onDownloadExcel,
-  filas,
-}) => {
-  const { can } = usePermissions();
-  const puedeGenerar = can("reportes_y_consolidados", "generar_consolidado_ventas");
-  return (
-    <div className="rounded-[20px] border border-slate-100 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] mb-6">
-      <div className="text-sm font-bold text-slate-800 border-l-[3.5px] border-[#5680F9] pl-3 mb-1">
-        Reporte de trazabilidad para auditorías (RF-46)
-      </div>
-      <div className="text-xs text-slate-400 pl-4 mb-4">
-        Genera el reporte a partir de un número de factura. Tiempo de generación: ≤5 segundos.
-      </div>
-      <div className="flex gap-3 mb-4 pl-4">
-        <div className="relative flex-1">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            value={facturaSearch}
-            disabled={generating}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Número de factura (ej: FAC-2026-045)..."
-            className={`w-full pl-9 pr-4 ${inputBaseStyles}`}
-          />
-        </div>
-        {puedeGenerar && (
-        <button
-          onClick={onGenerateReport}
-          disabled={generating || !facturaSearch.trim()}
-          className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-[#5680F9] text-white hover:bg-blue-600 font-semibold text-xs transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {generating ? "Generando PDF y Excel…" : "Generar reporte auditoría"}
-        </button>
-        )}
-      </div>
+const estadosFacturaPdf = { disponible: "Disponible", pendiente: "En preparación", fallido: "Error al archivar", sin_pdf: "Sin PDF archivado" };
 
-      {showTrazabilidad && (
-        <div className="rounded-xl border border-slate-100 overflow-hidden mt-5 shadow-sm">
-          <div className="flex items-center justify-between px-5 py-3.5 bg-slate-900">
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
-              Resultado: {facturaSearch}
-            </span>
-            <div className="flex gap-2">
-              <button onClick={onDownloadPdf} disabled={!downloads?.pdf} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                <Download size={12} /> PDF (auditor)
-              </button>
-              <button onClick={onDownloadExcel} disabled={!downloads?.excel} className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#5680F9] hover:bg-blue-600 text-white text-xs font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                <Download size={12} /> Excel (análisis)
-              </button>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-slate-50/75 border-b border-slate-100">
-                  {["Factura", "Cliente", "Fecha", "Valor", "OT asociadas", "Equipos", "N° Certificado"].map((h) => (
-                    <th key={h} className="text-left px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filas.map((t, i) => (
-                  <tr key={i} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-5 py-3.5 text-sm font-semibold text-[#5680F9]">{t.factura}</td>
-                    <td className="px-5 py-3.5 text-sm font-semibold text-slate-700">{t.cliente}</td>
-                    <td className="px-5 py-3.5 text-sm text-slate-500">{t.fecha}</td>
-                    <td className="px-5 py-3.5 text-sm text-slate-800 font-bold">{t.valor}</td>
-                    <td className="px-5 py-3.5 text-sm font-semibold text-[#5680F9]">{t.ots}</td>
-                    <td className="px-5 py-3.5 text-sm text-slate-500 font-medium">{t.equipos}</td>
-                    <td className="px-5 py-3.5 font-semibold text-sm">
-                      {t.cert === "—" ? (
-                        <span className="inline-flex px-2 py-0.5 rounded-xl bg-amber-50 text-amber-700 border border-amber-100 text-[10px] font-bold">
-                          ⚠️ Sin certificado
-                        </span>
-                      ) : (
-                        <span className="text-emerald-600 font-semibold text-sm">{t.cert}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {filas.length === 0 && (
-                  <tr><td colSpan={7} className="px-5 py-8 text-center text-xs text-slate-500">
-                    {generating ? "Consultando la factura y preparando los archivos…" : "Sin resultado disponible para esta factura."}
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
+function ConsultaFacturas({ descargar }: { descargar: (numero: string) => Promise<void> }) {
+  const { can } = usePermissions();
+  const puedeConsultar = can("reportes_y_consolidados", "generar_consolidado_ventas");
+  const [facturas, setFacturas] = useState<FacturaArchivada[]>([]);
+  const [buscando, setBuscando] = useState(true);
+  const [error, setError] = useState("");
+  const [descargas, setDescargas] = useState<Set<string>>(new Set());
+  const enCurso = useRef(new Set<string>());
+  const revision = useRevisionTablas("facturas", "documentos");
+  const filtros = useSelectoresArchivo(facturas, camposFacturas, facetasFactura);
+
+  const iniciarDescarga = async (numero: string) => {
+    if (enCurso.current.has(numero)) return;
+    enCurso.current.add(numero);
+    setDescargas(new Set(enCurso.current));
+    try {
+      await descargar(numero);
+    } finally {
+      enCurso.current.delete(numero);
+      setDescargas(new Set(enCurso.current));
+    }
+  };
+
+  useEffect(() => {
+    if (!puedeConsultar) return;
+    let activo = true;
+    void buscarFacturasArchivadas({ numero: "", cotizacion: "", orden: "", cliente: "" }).then((resultado) => {
+      if (!activo) return;
+      setFacturas(resultado.data ?? []);
+      setError(resultado.error ?? "");
+      setBuscando(false);
+    });
+    return () => { activo = false; };
+  }, [puedeConsultar, revision]);
+
+  if (!puedeConsultar) return null;
+  return (
+    <section className="mb-6 rounded-2xl border border-slate-100 bg-white p-6">
+      <h2 className="mb-2 text-sm font-bold text-slate-800">Facturas archivadas</h2>
+      <div className="mb-5"><SelectoresArchivo campos={filtros.campos} limpiar={filtros.limpiar} /></div>
+      {buscando ? <p role="status" className="text-xs text-slate-500">Buscando facturas…</p>
+        : error ? <p role="alert" className="text-xs text-rose-700">{error}</p>
+          : !filtros.registros.length ? <p className="text-xs text-slate-500">No se encontraron facturas para los filtros seleccionados.</p>
+            : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>{["Factura", "Cliente", "Cotización", "Órdenes OT", "Fecha", "Valor", "PDF"].map((titulo) => <th key={titulo} className="p-3">{titulo}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filtros.registros.map((factura) => (
+                      <tr key={factura.numero}>
+                        <td className="p-3 font-semibold">{factura.numero}</td>
+                        <td className="p-3">{factura.cliente ?? "—"}</td>
+                        <td className="p-3">{factura.cotizacion ?? "—"}</td>
+                        <td className="p-3">{factura.ordenes.join(", ") || "—"}</td>
+                        <td className="p-3">{new Date(factura.fecha).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })}</td>
+                        <td className="p-3">{formatearMoneda(factura.valor)}</td>
+                        <td className="p-3">{factura.estadoPdf === "disponible" ? (
+                          <button type="button" disabled={descargas.has(factura.numero)} aria-busy={descargas.has(factura.numero)}
+                            className="inline-flex min-w-36 items-center justify-center gap-2 rounded-lg bg-blue-700 px-3 py-2 font-semibold text-white transition-colors hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:cursor-wait disabled:bg-blue-400"
+                            onClick={() => void iniciarDescarga(factura.numero)}>
+                            {descargas.has(factura.numero) ? <><LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> Descargando…</>
+                              : <><Download size={14} aria-hidden="true" /> Descargar PDF</>}
+                          </button>
+                        ) : estadosFacturaPdf[factura.estadoPdf]}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+    </section>
   );
-};
+}
 
 // 3. Componente Padre (`MainRenderer`)
 
@@ -433,13 +492,6 @@ export function MainRendererreport() {
   const [toast, setToast] = useState("");
   const [viewer, setViewer] = useState<{ url: string | null; titulo: string } | null>(null);
   const [verificando, setVerificando] = useState(false);
-  const [facturaSearch, setFacturaSearch] = useState("");
-  const [showTrazabilidad, setShowTrazabilidad] = useState(false);
-  const [generandoAuditoria, setGenerandoAuditoria] = useState(false);
-  const [archivosAuditoria, setArchivosAuditoria] = useState<{ pdf: string | null; excel: string | null } | null>(null);
-  const [resumenAuditoria, setResumenAuditoria] = useState<{
-    factura: string; cliente: string; fecha: string | null; valor: number; ots: string; equipos: number; cert: string | null;
-  } | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -506,19 +558,6 @@ export function MainRendererreport() {
 
   const tecnicos = useMemo(() => (datos?.tecnicos ?? []).map((t) => t.tecnico), [datos]);
   const clientesFiltro = useMemo(() => clientes.map((c) => c.razonSocial), [clientes]);
-
-  const filasAuditoriaMostradas: AuditTraceabilityRow[] = useMemo(() => {
-    if (!resumenAuditoria) return [];
-    return [{
-      factura: resumenAuditoria.factura,
-      cliente: resumenAuditoria.cliente,
-      fecha: resumenAuditoria.fecha ? new Date(resumenAuditoria.fecha).toLocaleDateString("es-CO") : "—",
-      valor: formatearMoneda(resumenAuditoria.valor),
-      ots: resumenAuditoria.ots,
-      equipos: resumenAuditoria.equipos,
-      cert: resumenAuditoria.cert ?? "—",
-    }];
-  }, [resumenAuditoria]);
 
   const verPdf = useCallback(
     async (rutaUrl: string | null, titulo: string) => {
@@ -589,59 +628,27 @@ export function MainRendererreport() {
     [filtros, showToast]
   );
 
-  const handleGenerateReport = useCallback(async () => {
-    const numeroFactura = facturaSearch.trim();
-    if (!numeroFactura || generandoAuditoria) return;
-    setShowTrazabilidad(true);
-    setGenerandoAuditoria(true);
-    setArchivosAuditoria(null);
-    setResumenAuditoria(null);
-    const creado = await encolarReporteAuditoriaFactura(numeroFactura);
-    if (!creado.jobId) {
-      showToast(creado.error ?? "No se pudo encolar el reporte de auditoría.");
-      setGenerandoAuditoria(false);
-      return;
+  const descargarFactura = useCallback(async (numeroFactura: string) => {
+    try {
+      const url = `/api/reportes/facturas/${encodeURIComponent(numeroFactura)}/download`;
+      const respuesta = await fetch(url, { cache: 'no-store' });
+      if (!respuesta.ok) {
+        const error = await respuesta.json().catch(() => null) as { error?: string } | null;
+        throw new Error(error?.error ?? "No se pudo descargar el PDF archivado.");
+      }
+      const archivo = URL.createObjectURL(await respuesta.blob());
+      const enlace = document.createElement("a");
+      enlace.href = archivo;
+      enlace.download = `${numeroFactura.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`;
+      document.body.appendChild(enlace);
+      enlace.click();
+      enlace.remove();
+      window.setTimeout(() => URL.revokeObjectURL(archivo), 1000);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "No se pudo descargar el PDF archivado.");
     }
+  }, [showToast]);
 
-    const inicio = Date.now();
-    const consultar = async (): Promise<void> => {
-      const estado = await consultarEstadoJobReporte(creado.jobId!);
-      if (estado?.status === "completed") {
-        setGenerandoAuditoria(false);
-        setArchivosAuditoria(estado.archivos ?? null);
-        setResumenAuditoria(estado.resumen ?? null);
-        if (!estado.archivos?.pdf || !estado.archivos?.excel) {
-          showToast(estado.error ?? "El reporte terminó sin los dos archivos esperados.");
-        } else if (Date.now() - inicio > 5000) {
-          showToast("Reporte listo. La generación superó los 5 segundos definidos en RF-46.");
-        }
-        return;
-      }
-      if (estado?.status === "failed") {
-        setGenerandoAuditoria(false);
-        showToast(estado.error ?? "Falló la generación del reporte de auditoría.");
-        return;
-      }
-      if (Date.now() - inicio > 2 * 60 * 1000) {
-        setGenerandoAuditoria(false);
-        showToast("La generación sigue pendiente. Revisa los logs del worker de reportes.");
-        return;
-      }
-      window.setTimeout(() => { void consultar(); }, 500);
-    };
-    void consultar();
-  }, [facturaSearch, generandoAuditoria, showToast]);
-
-  const descargarAuditoria = useCallback((url: string | null | undefined, extension: "pdf" | "xlsx") => {
-    if (!url) return;
-    const enlace = document.createElement("a");
-    enlace.href = url;
-    enlace.download = `trazabilidad_${facturaSearch.trim()}.${extension}`;
-    enlace.style.display = "none";
-    document.body.appendChild(enlace);
-    enlace.click();
-    enlace.remove();
-  }, [facturaSearch]);
 
   return (
     <div className="module-page text-slate-900">
@@ -680,22 +687,7 @@ export function MainRendererreport() {
           <ChartsSection barData={barData} conversionData={conversionData} />
           <TecnicoSummaryTable tecnicoData={tecnicoData} />
           <HistoricalCertificatesTable certHistoricos={certHistoricos} onVerPdf={verPdf} />
-          <AuditTraceabilityReport
-            facturaSearch={facturaSearch}
-            showTrazabilidad={showTrazabilidad}
-            onSearchChange={(value) => {
-              setFacturaSearch(value);
-              setArchivosAuditoria(null);
-              setResumenAuditoria(null);
-              setShowTrazabilidad(false);
-            }}
-            onGenerateReport={handleGenerateReport}
-            generating={generandoAuditoria}
-            downloads={archivosAuditoria}
-            onDownloadPdf={() => descargarAuditoria(archivosAuditoria?.pdf, "pdf")}
-            onDownloadExcel={() => descargarAuditoria(archivosAuditoria?.excel, "xlsx")}
-            filas={filasAuditoriaMostradas}
-          />
+          <ConsultaFacturas descargar={descargarFactura} />
         </>
       )}
 

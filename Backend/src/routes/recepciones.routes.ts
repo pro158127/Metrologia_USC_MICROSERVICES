@@ -200,7 +200,7 @@ async function generarCotizacionDesdeRecepcion(tx: Prisma.TransactionClient, idC
 function nombreUsuarioActual(request: {
   user?: { name?: string; user?: { nombreCompleto?: string } } | null;
 }): string {
-  return request.user?.name ?? request.user?.user?.nombreCompleto ?? '';
+  return request.user?.name?.trim() || request.user?.user?.nombreCompleto?.trim() || '';
 }
 
 function mapDetalleCreate(inst: InstrumentoInput, item: number) {
@@ -647,7 +647,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             SITIO_CALIBRACION: sitio,
             FECHA_RECEPCION: new Date(body.fechaRecepcion),
             FECHA_SALIDA: body.fechaSalida ? new Date(body.fechaSalida) : null,
-            NOMBRE_RECIBE: nombreUsuarioActual(request) || body.nombreRecibe || null,
+            NOMBRE_RECIBE: body.instrumentos.length > 0 ? nombreUsuarioActual(request) || null : null,
             NOMBRE_EMPACA: body.nombreEmpaca ?? null,
             NOMBRE_CALIBRA: body.nombreCalibra ?? null,
             NOMBRE_RECIBE_SERVICIO: body.nombreRecibeServicio ?? null,
@@ -701,7 +701,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           cambioDeCodigo(cotizacionNueva ? null : cotizacion.CODIGO_COTIZACION, vigente.cotizaciones?.CODIGO_COTIZACION),
         ].filter(Boolean).join(' · ');
         await registrarHistorialRecepcion(tx, cotizacion.ID_COTIZACION,
-          `Recepción ${vigente.CODIGO_RECEPCION} creada con ${instrumentosConId.length} instrumento(s).`,
+          `${generarCotizacion && !cotizacionNueva ? "Revisión pendiente desde Recepción · " : ""}Recepción ${vigente.CODIGO_RECEPCION} creada con ${instrumentosConId.length} instrumento(s).`,
           [codigos, instrumentosConId.map((inst) => inst.instrumento).join(', ')].filter(Boolean).join('\n'),
           nombreUsuarioActual(request) || String(idUsuario));
         return { recepcion: vigente, job };
@@ -756,11 +756,6 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
       assertPermission(request, 'recepcion_de_equipos', 'registrar');
       const { id } = request.params;
       const body = request.body;
-      const estadoCalculado = calcularEstadoRecepcion(
-        body.instrumentos,
-        body,
-        nombreUsuarioActual(request),
-      );
       const idUsuario = Number(request.user?.sub ?? 0);
       let generarRecDoc = false;
       let generarOtDoc = false;
@@ -802,7 +797,12 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           linea.ID_UNIDADES.map((id): [string, string] => [id, linea.TIPO_SERVICIO])));
 
         const detallesActuales = actual.recepcion_equipo_detalles.filter((d) => d.activacion !== false).sort((a, b) => (a.ITEM ?? 0) - (b.ITEM ?? 0));
-        const nombreRecibeEfectivo = actual.NOMBRE_RECIBE || nombreUsuarioActual(request) || body.nombreRecibe || null;
+        const nombreRecibeEfectivo = actual.NOMBRE_RECIBE?.trim() ? actual.NOMBRE_RECIBE :
+          (body.instrumentos.length > 0 ? nombreUsuarioActual(request) || null : null);
+        const estadoCalculado = calcularEstadoRecepcion(body.instrumentos, body, nombreRecibeEfectivo ?? '');
+        if (body.solicitante.trim() !== actual.SOLICITANTE.trim()) {
+          throw new AppError(409, 'El solicitante ya está vinculado. Cambiarlo requiere revisar el cliente de la cotización y de la orden.');
+        }
         const porId = new Map(detallesActuales.map((detalle) => [detalle.ID_INSTRUMENTO, detalle]));
         const idsRecibidos = body.instrumentos.flatMap((inst) => inst.idInstrumento == null ? [] : [inst.idInstrumento]);
         if (new Set(idsRecibidos).size !== idsRecibidos.length || idsRecibidos.some((id) => !porId.has(id))) {
@@ -810,7 +810,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
         }
         const valorEntrada = snapshotEstable({
           cabecera: {
-            solicitante: body.solicitante,
+            solicitante: actual.SOLICITANTE,
             nombreEntrega: body.nombreEntrega,
             sitio,
             fechaRecepcion: new Date(body.fechaRecepcion).toISOString().slice(0, 10),
@@ -907,12 +907,11 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
           where: { ID_RECEPCION: id },
           data: {
             ...(recepcionCambio ? { CODIGO_RECEPCION: nuevoCodigoRec } : {}),
-            SOLICITANTE: body.solicitante,
             NOMBRE_ENTREGA: body.nombreEntrega ?? null,
             SITIO_CALIBRACION: sitio,
             FECHA_RECEPCION: new Date(body.fechaRecepcion),
             FECHA_SALIDA: body.fechaSalida ? new Date(body.fechaSalida) : null,
-            NOMBRE_RECIBE: actual.NOMBRE_RECIBE || nombreUsuarioActual(request) || body.nombreRecibe || null,
+            NOMBRE_RECIBE: nombreRecibeEfectivo,
             NOMBRE_EMPACA: body.nombreEmpaca ?? null,
             NOMBRE_CALIBRA: body.nombreCalibra ?? null,
             NOMBRE_RECIBE_SERVICIO: body.nombreRecibeServicio ?? null,
@@ -1169,7 +1168,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
               retirados.length ? `Retirados · ${retirados.map((inst) => inst.instrumento).join(', ')}` : '',
             ].filter(Boolean);
             await registrarHistorialRecepcion(tx, idCotizacionCierre,
-              `Actualización desde Recepción ${final!.CODIGO_RECEPCION}.`, cambios.join('\n') || null,
+              `${generarCotDoc || agregados.length > 0 || retirados.length > 0 ? "Revisión pendiente desde Recepción · " : ""}Actualización desde Recepción ${final!.CODIGO_RECEPCION}.`, cambios.join('\n') || null,
               nombreUsuarioActual(request) || String(idUsuario));
           }
           await registrarBitacora(tx, {
@@ -1412,7 +1411,7 @@ export default async function recepcionesRoutes(fastify: FastifyInstance) {
             observaciones,
           ].filter(Boolean).join('\n');
           await registrarHistorialRecepcion(tx, cotizacionId,
-            `Se retiró «${detalle.INSTRUMENTO}» de ${rec.CODIGO_RECEPCION}.${motivo ? ` Motivo · ${motivo}` : ''}`,
+            `Revisión pendiente desde Recepción · Se retiró «${detalle.INSTRUMENTO}» de ${rec.CODIGO_RECEPCION}.${motivo ? ` Motivo · ${motivo}` : ''}`,
             cambios || null, aprobo);
         }
 

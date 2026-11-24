@@ -76,12 +76,20 @@ export async function sincronizarOTMaestraDesdeRecepcion(tx: Tx, idMaestra: numb
       SERIE: unidad.SERIE,
       CODIGO_INVENTARIO: unidad.CODIGO_INVENTARIO,
       RESOLUCION: unidad.RESOLUCION,
+      UBICACION: unidad.UBICACION,
+      PUNTOS_CALIBRAR: unidad.PUNTOS_CALIBRAR,
+      UNIDAD: unidad.UNIDAD,
+      INTERVALO_RANGO: unidad.INTERVALO_RANGO,
+      DECLARACION_CONFORMIDAD: unidad.DECLARACION_CONFORMIDAD,
+      LIMITE_CONTROL_EMC: unidad.LIMITE_CONTROL_EMC,
+      DOC_ESPECIFICACION: unidad.DOC_ESPECIFICACION,
+      REGLA_DECISION: unidad.REGLA_DECISION,
       activacion: true,
     };
     if (!anterior) {
       await tx.orden_trabajo_detalles.create({ data: { ...datos, ID_ORDEN_TRABAJO_FK: idMaestra } });
       cambio = true;
-    } else if (Object.entries(datos).some(([campo, valor]) => anterior[campo as keyof typeof datos] !== valor)) {
+    } else if (Object.entries(datos).some(([campo, valor]) => JSON.stringify(anterior[campo as keyof typeof datos]) !== JSON.stringify(valor))) {
       await tx.orden_trabajo_detalles.update({ where: { ID_DETALLE: anterior.ID_DETALLE }, data: datos });
       cambio = true;
     }
