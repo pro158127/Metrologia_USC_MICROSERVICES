@@ -364,7 +364,7 @@ export const mapeoConfigTarifasSchema = z.object({
   columnas: z.object({
     magnitud: z.string().min(1),      // <-- Python espera letras (strings)
     instrumento: z.string().min(1),
-    norma: z.string().min(1),
+    norma: z.string().min(1).optional(),
     tipoServicio: z.string().min(1),
   }),
   columnasPrecios: z.array(z.string()).optional(), // <-- Python itera sobre esta lista de letras

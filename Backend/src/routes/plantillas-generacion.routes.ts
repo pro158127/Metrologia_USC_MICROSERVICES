@@ -7,7 +7,8 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 
 import { generarExcelBodySchema,respuestaGeneracionEncoladaSchema,GenerarExcelBody } from './plantillas-generacion.schemas.js';
 
-  import { getGenerationExcelQueue ,GenerationExcelJobData,GENERATION_EXCEL} from '../lib/queue/queue.js';
+import { registrarGeneracionPendiente } from '../services/generacion-pendiente.service.js';
+import { AppError } from '../lib/errors.js';
 
 export default async function plantillasGeneracionRoutes(fastify: FastifyInstance) {
   fastify.setValidatorCompiler(validatorCompiler);
@@ -33,23 +34,8 @@ export default async function plantillasGeneracionRoutes(fastify: FastifyInstanc
       const { codigo_actual, tipo_entry } = body;
       const p = fastify.prisma;
       
-      const verificar_schema = await p.version_plantillas.findFirst({
-        where: { ID_VERSION_PLANTILLA: tipo }
-      });
-  
-      if(!verificar_schema?.MAPPING_CONFIG) {
-        const msg = 'No se encuentra mapeado el excel, revisa la configuración';
-        // Agregamos la propiedad 'error' aquí
-        return reply.status(400).send({ ok: false, mensaje: msg, error: msg });
-      }
-      
-      if(tipo_entry === 'prod' && !codigo_actual && !id_registro) {
-        const msg = 'El campo codigo_actual y id_registro son obligatorios para tipo_entry prod';
-        return reply.status(400).send({ ok: false, mensaje: msg, error: msg });
-      }
-
-      if(tipo_entry === 'test' && !tipo) {
-        const msg = 'El campo id_registro y tipo son obligatorios para tipo_entry test';
+      if (tipo_entry === 'prod' && !id_registro) {
+        const msg = 'El registro es obligatorio para generar un documento.';
         return reply.status(400).send({ ok: false, mensaje: msg, error: msg });
       }
 
@@ -91,8 +77,6 @@ export default async function plantillasGeneracionRoutes(fastify: FastifyInstanc
         }
 
         if(id_registro == null){
-          console.log("entro ");
-          await p.quote.update({ where: { id: body.id_job }, data: { status: 'FAILED' }});
           const msg = 'No se pudo obtener un registro aleatorio para el tipo especificado';
           return reply.status(400).send({ ok: false, mensaje: msg, error: msg });
         }
@@ -100,25 +84,21 @@ export default async function plantillasGeneracionRoutes(fastify: FastifyInstanc
 
       /// incializar la tarea 
       try {
-        const quote_base = await p.quote.create({ data: { status: 'PENDING' }});
-        const queue = getGenerationExcelQueue();
-        const jobData: GenerationExcelJobData = {
-          tipo,
-          id_registro,
-          codigo_actual,
-          tipo_entry,
-          id_job: quote_base.id,
-          action:action,
+        const quote_base = await p.$transaction((tx) => registrarGeneracionPendiente(tx, 'generar_excel', {
+          tipo, id_registro, tipo_entry, codigo_actual, action,
+          force_regenerate: body.force_regenerate,
           id_usuario: Number(request.user?.sub ?? 0) || undefined,
           id_cotizacion: tipo === 1 ? id_registro : undefined,
-        };
-        await queue.add(GENERATION_EXCEL, jobData);
+        }));
 
         // El 202 es de éxito, no requiere la llave error
         return reply.status(202).send({ ok: true, mensaje: 'Generación de Excel encolada correctamente', id_job: quote_base.id }); 
       }
       catch (e) {
-        console.error('Error al encolar la generación de Excel:', e);
+        if (e instanceof AppError && (e.statusCode === 400 || e.statusCode === 412)) {
+          return reply.status(400).send({ ok: false, mensaje: e.message, error: e.message });
+        }
+        request.log.error({ err: e }, 'Error al registrar la generación de Excel');
         const msg = 'Error al encolar la generación de Excel';
         return reply.status(500).send({ ok: false, mensaje: msg, error: msg });
       }

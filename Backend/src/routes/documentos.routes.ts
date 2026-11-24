@@ -21,7 +21,7 @@ function sanitizeFileName(fileName: string): string {
   return `${cleanBase}${extension}`;
 }
 
-/** Streama un objeto de MinIO hacia el navegador (con CORS y Content-Disposition). */
+/** Descarga el objeto completo antes de responder para conservar el flujo previo. */
 async function streamArchivo(fastify: FastifyInstance, key: string, reply: FastifyReply): Promise<void> {
   const getCommand = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key });
   const s3Response = await s3Client.send(getCommand);

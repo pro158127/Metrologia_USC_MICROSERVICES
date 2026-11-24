@@ -15,7 +15,7 @@ export async function generarUrlArchivo(s3Key: string): Promise<string | null> {
     if (!session?.user) return null;
 
     const idUsuario = session.user.id_user ?? session.user.id ?? '';
-    const token = await generarTokenBackend({ sub: String(idUsuario) });
+    const token = await generarTokenBackend({ sub: String(idUsuario), sessionVersion: session.user.sessionVersion ?? 0 });
 
     const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
     return `${base}/api/v1/documentos/stream?key=${encodeURIComponent(s3Key)}&token=${encodeURIComponent(token)}`;

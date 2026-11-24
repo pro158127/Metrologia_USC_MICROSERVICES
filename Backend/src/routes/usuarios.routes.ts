@@ -4,7 +4,8 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { AppError } from '../lib/errors.js';
 import { assertPermission } from '../lib/permissions.js';
 import { hashPassword, generarContrasenaTemporalSegura } from '../services/password.service.js';
-import { getEmailQueue } from '../lib/queue/queue.js';
+import { registrarCorreoPendiente } from '../services/email-delivery.service.js';
+import { protegerContenidoCorreo } from '../services/contenido-correo.service.js';
 import {
   actualizarUsuarioBodySchema,
   bitacoraRawToDtoSchema,
@@ -43,6 +44,10 @@ async function registrarAuditoria(
   } catch (error) {
     fastify.log.error(error);
   }
+}
+
+function desconectarSesionesUsuario(fastify: FastifyInstance, idUsuario: number) {
+  fastify.io.in(`user_room_${idUsuario}`).disconnectSockets(true);
 }
 
 export default async function usuariosRoutes(fastify: FastifyInstance) {
@@ -87,14 +92,21 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       const contraseñaTemporal = generarContrasenaTemporalSegura();
       const contraseñaHasheada = await hashPassword(contraseñaTemporal);
 
-      const nuevoUsuario = await fastify.prisma.usuarios.create({
-        data: {
-          NOMBRE_COMPLETO: nombre,
-          CORREO_INSTITUCION: correo,
-          ID_ROL_FK: idRol,
-          ESTADO: estado ?? false,
-          contrase_a: contraseñaHasheada,
-        },
+      const nuevoUsuario = await fastify.prisma.$transaction(async (tx) => {
+        const creado = await tx.usuarios.create({
+          data: { NOMBRE_COMPLETO: nombre, CORREO_INSTITUCION: correo, ID_ROL_FK: idRol,
+            ESTADO: estado ?? false, contrase_a: contraseñaHasheada },
+        });
+        await registrarCorreoPendiente(tx, {
+          to: correo, subject: 'Bienvenido al Sistema de Metrología USC - Tu Cuenta ha sido Creada',
+          template_type: 'crear_usuario',
+          context_data: { nombre, correo, ...protegerContenidoCorreo('contrasenaTemporal', contraseñaTemporal,
+            { version_credencial: creado.UPDATE_AT?.getTime() ?? 0 }) },
+          id_registro: creado.ID_USUARIO_AUTO_INCREMENT,
+          notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+          modulo_origen: 'administracion_usuarios',
+        });
+        return creado;
       });
 
       await registrarAuditoria(
@@ -108,30 +120,6 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
           correo: nuevoUsuario.CORREO_INSTITUCION,
         }
       );
-
-      try {
-        await getEmailQueue().add('crear_usuario', {
-          to: correo,
-          subject: 'Bienvenido al Sistema de Metrología USC - Tu Cuenta ha sido Creada',
-          template_type: 'crear_usuario',
-          context_data: {
-            nombre,
-            correo,
-            contrasenaTemporal: contraseñaTemporal,
-          },
-          id_registro: nuevoUsuario.ID_USUARIO_AUTO_INCREMENT,
-          notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
-          modulo_origen: 'administracion_usuarios',
-          tabla_origen: 'usuarios',
-          tipo_entry: 'prod',
-        });
-      } catch (mailError) {
-        fastify.log.error(mailError);
-        return {
-          success: true as const,
-          warning: `El usuario fue creado, pero falló el encolado del correo. Compártele esta clave temporal: ${contraseñaTemporal}`,
-        };
-      }
 
       return { success: true as const };
     }
@@ -159,11 +147,16 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       if (datos.estado !== undefined) data.ESTADO = datos.estado;
       if (datos.intentos !== undefined) data.intentos = datos.intentos;
       if (datos.elminado !== undefined) data.elminado = datos.elminado;
+      // Reactivar desde Administración también debe liberar el bloqueo por
+      // intentos fallidos; de lo contrario el login la seguirá rechazando.
+      if (datos.estado === true) data.intentos = 0;
+      if (Object.keys(data).length > 0) data.UPDATE_AT = new Date();
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
         data,
       });
+      if (Object.keys(data).length > 0) desconectarSesionesUsuario(fastify, idUsuario);
 
       const action =
         datos.estado !== undefined
@@ -212,8 +205,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
-        data: { elminado: true, ESTADO: false },
+        data: { elminado: true, ESTADO: false, UPDATE_AT: new Date() },
       });
+      desconectarSesionesUsuario(fastify, idUsuario);
 
       await registrarAuditoria(
         fastify,
@@ -253,8 +247,9 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
 
       const actualizado = await fastify.prisma.usuarios.update({
         where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
-        data: { elminado: false, ESTADO: true, intentos: 0 },
+        data: { elminado: false, ESTADO: true, intentos: 0, UPDATE_AT: new Date() },
       });
+      desconectarSesionesUsuario(fastify, idUsuario);
 
       await registrarAuditoria(
         fastify,
@@ -285,19 +280,29 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
       assertPermission(request, 'administracion', 'gestionar_usuarios_roles');
       const idUsuario = request.params.id;
 
-      const usuario = await fastify.prisma.usuarios.findUnique({
-        where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
-        select: { NOMBRE_COMPLETO: true, CORREO_INSTITUCION: true },
-      });
-      if (!usuario) throw new AppError(404, 'El usuario especificado no existe.');
-
       const nuevaContrasenaTemporal = generarContrasenaTemporalSegura();
       const contrasenaHasheada = await hashPassword(nuevaContrasenaTemporal);
 
-      const actualizado = await fastify.prisma.usuarios.update({
-        where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
-        data: { contrase_a: contrasenaHasheada },
+      const actualizado = await fastify.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "ID_USUARIO_AUTO_INCREMENT" FROM usuarios WHERE "ID_USUARIO_AUTO_INCREMENT" = ${idUsuario} FOR UPDATE`;
+        const usuario = await tx.usuarios.findUnique({ where: { ID_USUARIO_AUTO_INCREMENT: idUsuario } });
+        if (!usuario || usuario.elminado) throw new AppError(404, 'El usuario especificado no existe.');
+        const version = new Date(Math.max(Date.now(), (usuario.UPDATE_AT?.getTime() ?? 0) + 1));
+        const modificado = await tx.usuarios.update({
+          where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
+          data: { contrase_a: contrasenaHasheada, UPDATE_AT: version },
+        });
+        await registrarCorreoPendiente(tx, {
+          to: modificado.CORREO_INSTITUCION, subject: 'Restablecimiento de Contraseña - Metrología USC',
+          template_type: 'restablecer_contrasena',
+          context_data: { nombre: modificado.NOMBRE_COMPLETO, ...protegerContenidoCorreo('nuevaContrasena', nuevaContrasenaTemporal,
+            { version_credencial: version.getTime() }) },
+          id_registro: idUsuario, notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
+          modulo_origen: 'administracion_usuarios',
+        });
+        return modificado;
       });
+      desconectarSesionesUsuario(fastify, idUsuario);
 
       await registrarAuditoria(
         fastify,
@@ -310,29 +315,6 @@ export default async function usuariosRoutes(fastify: FastifyInstance) {
           correo: actualizado.CORREO_INSTITUCION,
         }
       );
-
-      try {
-        await getEmailQueue().add('restablecer_contrasena', {
-          to: usuario.CORREO_INSTITUCION,
-          subject: 'Restablecimiento de Contraseña - Metrología USC',
-          template_type: 'restablecer_contrasena',
-          context_data: {
-            nombre: usuario.NOMBRE_COMPLETO,
-            nuevaContrasena: nuevaContrasenaTemporal,
-          },
-          id_registro: idUsuario,
-          notificar_usuario_id: Number(request.user?.sub ?? 0) || null,
-          modulo_origen: 'administracion_usuarios',
-          tabla_origen: 'usuarios',
-          tipo_entry: 'prod',
-        });
-      } catch (mailError) {
-        fastify.log.error(mailError);
-        return {
-          success: true as const,
-          warning: `Contraseña restablecida en el sistema, pero falló el encolado del correo. Compártele la clave temporal manualmente: ${nuevaContrasenaTemporal}`,
-        };
-      }
 
       return { success: true as const };
     }

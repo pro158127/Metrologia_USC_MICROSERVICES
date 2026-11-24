@@ -86,6 +86,7 @@ async function multipartFetch<T = unknown>(
   const id = session.user.id_user ?? session.user.id ?? '';
   const token = await generarTokenBackend({
     sub: String(id),
+    sessionVersion: session.user.sessionVersion ?? 0,
     email: session.user.email ?? '',
     user: {
       id: String(id),
@@ -262,6 +263,7 @@ export async function generarPrevisualizacionSello(formDataInput: FormData): Pro
   const id = session.user.id_user ?? session.user.id ?? '';
   const token = await generarTokenBackend({
     sub: String(id),
+    sessionVersion: session.user.sessionVersion ?? 0,
     email: session.user.email ?? '',
     user: {
       id: String(id),
@@ -307,6 +309,7 @@ export async function obtenerArchivoSelloSeguro(key: string): Promise<{ success:
     const id = session.user.id_user ?? session.user.id ?? '';
     const token = await generarTokenBackend({
       sub: String(id),
+    sessionVersion: session.user.sessionVersion ?? 0,
       email: session.user.email ?? '',
       user: {
         id: String(id),

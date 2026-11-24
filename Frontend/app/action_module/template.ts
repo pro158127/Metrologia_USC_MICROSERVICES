@@ -1,21 +1,20 @@
 'use server';
 
 import { auth } from '@/app/Login/types/auth';
-import { fastifyRequest, FastifyHttpError, BASE_URL } from '@/app/lib/api/fastifyClient';
+import { BASE_URL,FastifyHttpError,fastifyRequest } from '@/app/lib/api/fastifyClient';
 import { generarTokenBackend } from '@/app/lib/auth-token';
 import type {
-  MapeoExcel,
-  MappingConfig,
-  InputSchema,
-  SnapshotResponse,
-  MapeoConfigTarifas,
-  ConsolidarTarifasResponse,
-  EstadoJobTarifasResponse,
-  GeneracionPlantillaPayload,
-  GeneracionPlantillaResponse,GeneracionPlantillatest
+ConsolidarTarifasResponse,
+EstadoJobTarifasResponse,
+GeneracionPlantillaResponse,GeneracionPlantillatest,
+InputSchema,
+MapeoConfigTarifas,
+MapeoExcel,
+MappingConfig,
+SnapshotResponse
 } from '@/tipos/plantillas';
-import type { RespuestaVersion, } from 'backend/src/routes/plantillas.schemas';
-import type {generarUrlResponseSchema} from 'backend/src/routes/schema.sign_document'
+import type { RespuestaVersion,} from 'backend/src/routes/plantillas.schemas';
+import type { generarUrlResponseSchema } from 'backend/src/routes/schema.sign_document';
 // Tipado estricto para el parámetro de entrada
 interface GetPlantillaParams {
   idPlantilla: number;
@@ -227,6 +226,7 @@ export async function crearNuevaVersion(params: NuevaVersionParams): Promise<{ s
     const id = session.user.id_user ?? session.user.id ?? '';
     const token = await generarTokenBackend({
       sub: String(id),
+      sessionVersion: session.user.sessionVersion ?? 0,
       email: session.user.email ?? '',
       user: {
         id: String(id),
@@ -302,17 +302,17 @@ export async function consultar_outputshema(tipo: tipos): Promise<{response: Res
       break;
     default:
       // Salvaguarda por si TypeScript es ignorado en runtime
-      throw new Error(`Tipo de plantilla no reconocido: ${tipo}`); 
+      throw new Error(`Tipo de plantilla no reconocido: ${tipo}`);
   }
 
   // 2. Ejecutar la llamada HTTP al endpoint
   const session = await auth();
-  
+
   // CORRECCIÓN 1: El genérico ahora refleja lo que realmente envía el backend
   const response = await fastifyRequest<RespuestaVersion>(
     session,
     `/api/v1/plantillas/${plantillaId}/version`,
-    { method: 'GET' } 
+    { method: 'GET' }
   );
 
   if (!response) {
@@ -324,7 +324,7 @@ export async function consultar_outputshema(tipo: tipos): Promise<{response: Res
     response: {
       data: response.data,
       success: response.success
-      
+
     }
   };
 }
@@ -360,7 +360,7 @@ export async function testReviewGeneracionPlantilla(
     return await fastifyRequest<GeneracionPlantillaResponse>(
       session,
       // Define la ruta exacta que tendrá tu controlador en Fastify
-      `/api/v1/plantillas/generacion/test-review`, 
+      `/api/v1/plantillas/generacion/test-review`,
       { method: 'POST', body: payload }
     );
   } catch (error) {
@@ -376,7 +376,8 @@ export async function testReviewGeneracionPlantilla(
 // 2. ENDPOINT DE GENERACIÓN REAL (PRODUCCIÓN)
 // ============================================================================
 
-import type { GenerarExcelBody, RespuestaGeneracionEncolada } from 'backend/src/routes/plantillas-generacion.schemas';
+import type { GenerarExcelBody,RespuestaGeneracionEncolada } from 'backend/src/routes/plantillas-generacion.schemas';
+import type { responseQuote } from 'backend/src/routes/schema-checkStatus';
 export async function generarExcelPlantilla(
   payload: GenerarExcelBody
 ): Promise<RespuestaGeneracionEncolada> {
@@ -387,27 +388,26 @@ export async function generarExcelPlantilla(
       '/api/v1/plantillas/generar-excel',
       { method: 'POST', body: payload }
     );
-    return { 
-      mensaje: response.mensaje, 
-      ok: true, 
-      id_job: response.id_job 
+    return {
+      mensaje: response.mensaje,
+      ok: true,
+      id_job: response.id_job
     };
   } catch (error) {
     console.error('[SERVER ACTION ERROR - generarExcelPlantilla]:', error);
-    
+
     // Capturamos el mensaje exacto que viene de tu backend en data.error
-    const mensajeError = error instanceof FastifyHttpError 
-      ? error.message 
+    const mensajeError = error instanceof FastifyHttpError
+      ? error.message
       : 'Error interno al encolar la generación del Excel.';
 
     // Retornamos la misma estructura (caja azul) para no romper la UI
-    return { 
-      ok: false, 
-      mensaje: mensajeError 
-    } as RespuestaGeneracionEncolada; 
+    return {
+      ok: false,
+      mensaje: mensajeError
+    } as RespuestaGeneracionEncolada;
   }
 }
-import type {responseQuote} from 'backend/src/routes/schema-checkStatus'
 export async function getQuoteStatus(id: number | string): Promise<responseQuote> {
   try {
     const session = await auth();
@@ -440,7 +440,7 @@ export async function firmador(s3Key: string): Promise<{ succes: boolean; url: s
     const response = await fastifyRequest<generarUrlResponseSchema>(
       session,
       `/api/v1/archivos/generar-url`,
-      { 
+      {
         method: 'POST',
         body: { s3Key } // ✅ Ahora sí enviamos el objeto esperado por Zod
       }

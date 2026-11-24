@@ -1,49 +1,50 @@
 'use client';
 
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { toast } from 'sonner';
 import {
-  History,
-  Edit3,
-  LoaderCircle,
-  X,
-  Save,
-  Upload,
-  AlertCircle,
-  CheckCircle2,
-  Layers,
-  Table,
-  MousePointerClick,
-  RefreshCw,
-  Info,
-  Trash2,
-  MapPin,
-  FileUp,
-  Sparkles,
-  FileCheck,
-} from 'lucide-react';
-import dynamic from 'next/dynamic';
-import type {
-  InputSchema,
-  MappingConfig,
-  PlantillaWithVersionResponse,
-  TemplateHistoryLog,
-  CellSelection,
-  HighlightRange,
-  UniverSheetHandle,
-} from '@/tipos/plantillas';
-import {
-  getTodasLasPlantillasCompletas,
-  getSnapshot,
-  pollSnapshotJob,
-  saveMappingConfig,
-  crearNuevaVersion,
-  getQuoteStatus,generarExcelPlantilla
+crearNuevaVersion,
+firmador,
+generarExcelPlantilla,
+getQuoteStatus,
+getSnapshot,
+getTodasLasPlantillasCompletas,
+pollSnapshotJob,
+saveMappingConfig
 } from '@/app/action_module/template';
-import { firmador } from '@/app/action_module/template';
-import type {responseQuote,url} from 'backend/src/routes/schema-checkStatus'
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import downloadFromPresignedUrl from '@/app/lib/downlowad';
 import { validarArchivo } from '@/app/lib/upload';
+import type {
+CellSelection,
+HighlightRange,
+InputSchema,
+MappingConfig,
+PlantillaWithVersionResponse,
+TemplateHistoryLog,
+UniverSheetHandle,
+} from '@/tipos/plantillas';
+import {
+AlertCircle,
+CheckCircle2,
+Edit3,
+FileCheck,
+FileUp,
+History,
+Info,
+Layers,
+LoaderCircle,
+MapPin,
+MousePointerClick,
+RefreshCw,
+Save,
+Sparkles,
+Table,
+Trash2,
+Upload,
+X,
+} from 'lucide-react';
+import dynamic from 'next/dynamic';
+import React,{ useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { toast } from 'sonner';
 // ============================================================================
 // 1. COMPONENTE UNIVER (CARGA DINÁMICA)
 // ============================================================================
@@ -236,6 +237,7 @@ export default function TemplatesMappingPage() {
     [templates, busqueda]
   );
 
+  const revision = useRevisionTablas("plantillas", "version_plantillas");
   const reload = useCallback(async () => {
     try {
       const load = await getTodasLasPlantillasCompletas();
@@ -267,7 +269,7 @@ export default function TemplatesMappingPage() {
             idPlantilla: p.idPlantilla,
             activa: p.activa,
             modulo: p.modulo,
-            nombre: p.modulo,
+            nombre: p.nombre,
             versionActual: ultimaVersion
               ? {
                   idVersionPlantilla: ultimaVersion.idVersionPlantilla,
@@ -308,8 +310,8 @@ export default function TemplatesMappingPage() {
   useEffect(() => {
     const id = setTimeout(() => reload(), 0);
     return () => clearTimeout(id);
-  }, [reload]);
-const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
+  }, [reload, revision]);
+
   return (
     <div className="w-full px-2 md:px-0 py-4">
       <div
@@ -394,11 +396,11 @@ const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
     const id_plantilla = tpl?.data?.idPlantilla ?? 0;
     try {
       toast.loading('Iniciando encolamiento y procesando...');
-      
+
       const res = await generarExcelPlantilla({
         tipo: id_plantilla,
         tipo_entry: 'test',
-  
+
       });
 
       if (!res.ok || !res.id_job) {
@@ -413,13 +415,13 @@ const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
       // Bucle de polling síncrono dentro del mismo evento del botón
       while (!completado) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        
+
         const statusRes = await getQuoteStatus(jobId);
         console.log(statusRes,"AQUI")
         if (statusRes.ok && statusRes.urls) {
-          const { ok, urls,estado } = statusRes;
+          const { estado } = statusRes;
 
-          if (estado === 'COMPLETED') {     
+          if (estado === 'COMPLETED') {
             console.log(statusRes.urls.excel,statusRes.urls.url_pdf)
             completado = true;
             toast.dismiss();
@@ -428,7 +430,7 @@ const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
             const rsesult2= await firmador(statusRes.urls.excel??"")
 
             if(resul1.succes && rsesult2.succes){
-              
+
               const dowload1=await downloadFromPresignedUrl(resul1.url??"","test")
               const dowload2=await downloadFromPresignedUrl(resul1.url??"","test")
               if(dowload1&&dowload2){
@@ -443,8 +445,8 @@ const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
               toast.error("Error al devolver archivo certificado")
             }
 
-            
-          
+
+
             return true; // Devuelve true al completar
           }
 
@@ -469,7 +471,7 @@ const [activeJobId, setActiveJobId] = useState<number | string | null>(null);
   <span>Review</span>
 </button>
               {/* Botón secundario: Historial */}
-           
+
               <button
                 onClick={() => {
                   const id_plantlla = tpl?.data?.idPlantilla;
@@ -517,8 +519,8 @@ export function EditorModal({
   onClose: () => void;
   onReload: () => void;
 }) {
-  const [consolidando, setConsolidando] = useState(false);
-const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const consolidando = false;
+
   const inputSchema = template?.data?.versionActual?.inputSchema ?? null;
   const versionActual = template?.data?.versionActual ?? null;
 
@@ -544,7 +546,7 @@ const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
 const buildRanges = useCallback((): HighlightRange[] => {
   const ranges: HighlightRange[] = [];
-  
+
   for (const s of draft.scalars) {
     if (s.cell) ranges.push({ sheetName: s.sheet ?? '', a1: s.cell, color: COLOR_SCALAR });
   }
@@ -552,8 +554,8 @@ const buildRanges = useCallback((): HighlightRange[] => {
   for (const t of draft.tables) {
     // 1. Pinta la cabecera PRIMERO (es independiente de la fila de inicio)
    if (t.star_header) {
-    ranges.push({ 
-      sheetName: t.sheet ?? '', 
+    ranges.push({
+      sheetName: t.sheet ?? '',
       a1: `A${t.star_header}`, // <-- Inyectamos la columna 'A' antes del número
       color: '#FCA5A5'
     });
@@ -575,10 +577,10 @@ const buildRanges = useCallback((): HighlightRange[] => {
     }
   }
     }
-    
+
     ranges.push({ sheetName: t.sheet ?? '', a1: `A${t.startRow}`, color: COLOR_STARTROW });
   }
-  
+
   return ranges;
 }, [draft]);
 
@@ -606,7 +608,7 @@ const buildRanges = useCallback((): HighlightRange[] => {
 
     async function load() {
       console.log("Entro_captor",versionActual,versionId)
-      
+
       setSnapshotLoading(true);
       setSnapshotError(null);
       const first = await getSnapshot(pId, vId);
@@ -703,10 +705,10 @@ const buildRanges = useCallback((): HighlightRange[] => {
   }
 }
 
- 
-      
 
-  
+
+
+
       return next;
     });
   }, [activeTarget]);
@@ -733,7 +735,7 @@ const unmapColumn = (tableKey: string, key: string) => {
         if (c) {
           // ✅ CORRECCIÓN: Limpiar ambos campos para reiniciar el estado por completo
           c.column = null;
-          c.columnsList = []; 
+          c.columnsList = [];
         }
       }
       return next;
@@ -781,8 +783,8 @@ const unmapColumn = (tableKey: string, key: string) => {
             sheet: t.sheet ?? undefined,
             columns: t.columns
               .filter((c) => c.column || (c.columnsList && c.columnsList.length > 0))
-              .map((c) => ({ 
-            key: c.key, 
+              .map((c) => ({
+            key: c.key,
             column: c.column || undefined,
             columnsList: c.columnsList && c.columnsList.length > 0 ? c.columnsList : undefined
           })),
@@ -793,22 +795,22 @@ const unmapColumn = (tableKey: string, key: string) => {
 
   const handleSave = async () => {
     if (!versionActual) return;
-    const faltanEscalares = draft.scalars.some(s => 
+    const faltanEscalares = draft.scalars.some(s =>
   s.required && !s.cell
 );
 
 // 2. Validación de Tablas y Columnas: Aquí sí evaluamos 'column' y el nuevo 'columnsList'
 const faltanTablas = draft.tables.some(t => {
-  const columnasFaltantes = t.columns.some(c => 
+  const columnasFaltantes = t.columns.some(c =>
     c.required && !c.column && (!c.columnsList || c.columnsList.length === 0)
   );
   // Añade '!t.endRow' si es obligatorio
-  return columnasFaltantes || !t.startRow || !t.star_header || !t.endRow; 
+  return columnasFaltantes || !t.startRow || !t.star_header || !t.endRow;
 });
 
 if (faltanEscalares || faltanTablas) {
   toast.error('Operación denegada: Faltan variables obligatorias por mapear.');
-  return; 
+  return;
 }
     setSaving(true);
     setSaveMsg(null);
@@ -864,7 +866,7 @@ if (faltanEscalares || faltanTablas) {
     return draft.tables.find((t) => t.key === activeTarget.tableKey)?.label ?? 'tabla';
   })();
 
- 
+
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
@@ -1236,7 +1238,7 @@ if (faltanEscalares || faltanTablas) {
   </span>
 </div>
 
-                      
+
 
                       {/* Columnas de la tabla */}
                       <div className="flex flex-col gap-1.5 pl-2 border-l-2 border-emerald-100">
@@ -1270,7 +1272,7 @@ if (faltanEscalares || faltanTablas) {
                                 {t.sheet ? `${t.sheet}!` : ''}Col. {c.column} {t.startRow ? `(Fila ${t.startRow})` : ''}
                               </StatusBadge>
                             )}
-                            
+
                             {/* Múltiples columnas */}
                             {c.columnsList && c.columnsList.length > 0 && c.columnsList.map(col => (
                               <StatusBadge key={col} tone="mapped">
@@ -1283,7 +1285,7 @@ if (faltanEscalares || faltanTablas) {
                               <StatusBadge tone="pending">Pendiente</StatusBadge>
                             )}
                           </span>
-                          
+
                           {/* Botón para limpiar (ajusta unmapColumn para que también limpie c.columnsList = []) */}
                           {(c.column || (c.columnsList && c.columnsList.length > 0)) && (
                             <button

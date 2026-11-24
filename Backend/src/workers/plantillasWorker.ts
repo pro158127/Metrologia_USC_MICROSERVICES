@@ -80,11 +80,37 @@ function identidad(item: ItemTarifaParseado): string {
   return JSON.stringify([item.magnitud, item.instrumento, item.norma, item.tipoServicio]);
 }
 
-async function persistirTarifas(
+export async function persistirTarifas(
   tx: Prisma.TransactionClient,
   items: ItemTarifaParseado[]
 ): Promise<number> {
-  if (items.length === 0) return 0;
+  const consolidadas = new Map<string, ItemTarifaParseado>();
+  for (const item of items) {
+    const clave = identidad(item);
+    for (const precio of item.preciosPorAnio) {
+      if (!Number.isInteger(precio.anio) || precio.anio < 2000 || precio.anio > 2099 ||
+          !Number.isFinite(precio.precio) || precio.precio < 0 || precio.precio > PRECIO_MAX) continue;
+      let tarifa = consolidadas.get(clave);
+      if (!tarifa) {
+        tarifa = { ...item, preciosPorAnio: [] };
+        consolidadas.set(clave, tarifa);
+      }
+      const anterior = tarifa.preciosPorAnio.find((fila) => fila.anio === precio.anio);
+      if (anterior && anterior.precio !== precio.precio) {
+        throw new Error(`Precios distintos para "${item.instrumento}" en ${precio.anio}. Corrige las filas duplicadas.`);
+      }
+      if (!anterior) tarifa.preciosPorAnio.push(precio);
+    }
+  }
+  items = [...consolidadas.values()];
+  if (items.length === 0) throw new Error('No se encontraron precios válidos en las columnas y años configurados.');
+
+  const reactivadas = await tx.tarifas.updateMany({
+    where: { ESTADO: { not: 'ACTIVO' }, OR: items.map((item) => ({
+      MAGNITUD: item.magnitud, Instrumento: item.instrumento, Norma: item.norma, TIPO_SERVICIO: item.tipoServicio,
+    })) },
+    data: { ESTADO: 'ACTIVO' },
+  });
 
   const MAGNITUD: string[] = [];
   const Instrumento: string[] = [];
@@ -110,6 +136,7 @@ async function persistirTarifas(
       ${TIPO_SERVICIO}::text[],
       ARRAY_FILL('ACTIVO'::text, ARRAY[${items.length}]::int[])::text[]
     )
+    ORDER BY 1, 2, 3, 4
    ON CONFLICT ("MAGNITUD", "Instrumento", "Norma", "TIPO_SERVICIO")
    DO UPDATE SET "ESTADO" = 'ACTIVO'
     RETURNING "ID_TARIFA", "MAGNITUD", "Instrumento", "Norma", "TIPO_SERVICIO"
@@ -139,7 +166,7 @@ async function persistirTarifas(
       const fechaInicio = new Date(`${anio}-01-01T00:00:00.000Z`);
       let fechaFin: Date | null = null;
       if (i < preciosOrdenados.length - 1) {
-        fechaFin = new Date(`${anio}-12-31T23:59:59.999Z`);
+        fechaFin = new Date(`${anio + 1}-01-01T00:00:00.000Z`);
       }
       historial.set(`${idTarifa}:${anio}`, {
         ID_TARIFA_FK: idTarifa,
@@ -151,7 +178,7 @@ async function persistirTarifas(
   }
 
   const filas = [...historial.values()];
-  let cambiosReales = 0;
+  let cambiosReales = reactivadas.count;
 
   // 3. Upsert del historial con validación estricta de cambios
   for (let i = 0; i < filas.length; i += CHUNK_UPSERT) {
@@ -169,14 +196,29 @@ async function persistirTarifas(
       ON CONFLICT ("ID_TARIFA_FK", "FECHA_INICIO")
       DO UPDATE SET
         "PRECIO_U" = EXCLUDED."PRECIO_U",
-        "FECHA_FIN" = EXCLUDED."FECHA_FIN"
+        "FECHA_FIN" = LEAST(public.historial_tarifas."FECHA_FIN", EXCLUDED."FECHA_FIN")
       WHERE public.historial_tarifas."PRECIO_U" != EXCLUDED."PRECIO_U"
-         OR public.historial_tarifas."FECHA_FIN" IS DISTINCT FROM EXCLUDED."FECHA_FIN"
+         OR public.historial_tarifas."FECHA_FIN" IS DISTINCT FROM
+            LEAST(public.historial_tarifas."FECHA_FIN", EXCLUDED."FECHA_FIN")
     `;
 
     cambiosReales += filasAfectadas;
   }
 
+  // Incluye fechas de años ya publicados y cambios manuales al cerrar intervalos solapados.
+  cambiosReales += await tx.$executeRaw`
+    WITH periodos AS (
+      SELECT "ID_HISTORIAL",
+        LEAD("FECHA_INICIO") OVER (PARTITION BY "ID_TARIFA_FK" ORDER BY "FECHA_INICIO") AS siguiente
+      FROM public.historial_tarifas
+      WHERE "ID_TARIFA_FK" = ANY(${tarifas.map((tarifa) => tarifa.ID_TARIFA)}::int[])
+    )
+    UPDATE public.historial_tarifas AS precio SET "FECHA_FIN" = periodos.siguiente
+    FROM periodos
+    WHERE precio."ID_HISTORIAL" = periodos."ID_HISTORIAL"
+      AND periodos.siguiente IS NOT NULL
+      AND (precio."FECHA_FIN" IS NULL OR precio."FECHA_FIN" > periodos.siguiente)
+  `;
   return cambiosReales;
 }
 

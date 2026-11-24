@@ -8,10 +8,10 @@ export async function excelToUniverSnapshot(
   fileName?: string
 ) {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer as any);
+  await workbook.xlsx.load(buffer as Parameters<typeof workbook.xlsx.load>[0]);
 
   const styleRegistry = createStyleRegistry();
-  const sheets: Record<string, any> = {};
+  const sheets: Record<string, ReturnType<typeof parseSheet>> = {};
   const sheetOrder: string[] = [];
 
   // ✅ Pasar el índice a parseSheet

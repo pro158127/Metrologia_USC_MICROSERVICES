@@ -1,32 +1,39 @@
 'use client';
 
 // 1. IMPORTS
-import React, { useEffect, useState, useMemo, useCallback } from "react";
-import { Search, Plus, Eye, Edit, X, CheckCircle, CircleSlash, Upload, FileText, RefreshCw } from "lucide-react";
-import { useSession } from "next-auth/react";
-import { useDbTable,useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
-import type { ClienteModel } from "@/tipos/entidades";
-import type {
-  ClienteVista,
-  ClienteFormData,
-  ClienteFormSaveData,
-  PermisosUsuario,
-  ModalHeaderProps,
-  RutFileInputProps,
-  ClientFormModalProps,
-  CustomerTableRowProps,
-  ClientControlsProps,
-  ClientesModuloProps,
-} from "@/tipos/clientes";
-import { crearCliente, obtenerClientes, obtenerUltimaCotizacionFinalizada, crearDocumento, actualizarCliente, cambiarEstadoCliente } from "@/app/action_module/modulo_cliente";
 import { subirArchivoDocumento } from "@/app/action_module/archivos";
+import { actualizarCliente,cambiarEstadoCliente,crearCliente,crearDocumento,obtenerUltimaCotizacionFinalizada } from "@/app/action_module/modulo_cliente";
+import { useDbActions,useDbLoading,useDbTable } from "@/app/componets/tables_recharge";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import { validarArchivo } from "@/app/lib/upload";
+import type {
+ClientControlsProps,
+ClienteFormData,
+ClienteFormSaveData,
+ClientesModuloProps,
+ClientFormModalProps,
+CustomerTableRowProps,
+FiltroEstadoCliente,
+ModalHeaderProps,
+PermisosUsuario,
+RutFileInputProps,
+} from "@/tipos/clientes";
+import type { ClienteModel } from "@/tipos/entidades";
+import { CheckCircle,CircleSlash,Edit,Eye,FileText,Plus,RefreshCw,Search,Upload,X } from "lucide-react";
+import { useSession } from "next-auth/react";
+import React,{ useCallback,useEffect,useMemo,useState } from "react";
 import { toast } from "sonner";
 
+const FILTROS_ESTADO = [
+  { value: "Todos", label: "Todos" },
+  { value: "ACTIVO", label: "Activos" },
+  { value: "INACTIVO", label: "Inactivos" },
+] as const;
+
 const CIUDADES_COLOMBIA = [
-  "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena", 
-  "Bucaramanga", "Pereira", "Manizales", "Cúcuta", "Santa Marta", 
-  "Ibagué", "Pasto", "Palmira", "Buenaventura", "Popayán", 
+  "Cali", "Bogotá", "Medellín", "Barranquilla", "Cartagena",
+  "Bucaramanga", "Pereira", "Manizales", "Cúcuta", "Santa Marta",
+  "Ibagué", "Pasto", "Palmira", "Buenaventura", "Popayán",
   "Armenia", "Villavicencio", "Neiva", "Montería", "Tuluá"
 ] as const;
 
@@ -73,7 +80,7 @@ const RutFileInput = ({
         accept=".pdf,png,.jpg,.jpeg"
         onChange={onFileChange}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        required={!isEditMode && !idRutDocumento}
+        required={!isEditMode && !selectedFile}
       />
       {selectedFile ? (
         <div className="flex items-center gap-2 text-emerald-400 font-medium">
@@ -107,8 +114,6 @@ export const ClientFormModal = ({
   onClose,
   onSave,
 }: ClientFormModalProps) => {
-  if (!isOpen) return null;
-
   const isEditMode = client !== null;
   const [formData, setFormData] = useState<Partial<ClienteFormData>>(
     isEditMode
@@ -128,6 +133,8 @@ export const ClientFormModal = ({
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  if (!isOpen) return null;
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const archivo = e.target.files[0];
@@ -140,16 +147,18 @@ export const ClientFormModal = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    onSave(
+    const saved = await onSave(
       {
         ...formData,
+        idCliente: client?.idCliente,
         idRutDocumento: formData.idRutDocumento ?? null,
         rutFile: selectedFile,
       },
       isEditMode ? "edit" : "create"
     );
+    if (saved) onClose();
   };
 
   return (
@@ -216,12 +225,15 @@ export const ClientFormModal = ({
                 required
               >
                 <option value="" disabled>Selecciona una ciudad</option>
+                {formData.ciudad && !CIUDADES_COLOMBIA.some((ciudad) => ciudad === formData.ciudad) && (
+                  <option value={formData.ciudad}>{formData.ciudad}</option>
+                )}
                 {CIUDADES_COLOMBIA.map((ciudad) => (
                   <option key={ciudad} value={ciudad}>{ciudad}</option>
                 ))}
               </select>
 
-          
+
             </div>
             <div>
               <label className="block text-slate-400 font-bold mb-1">Tipo de Cliente</label>
@@ -233,7 +245,7 @@ export const ClientFormModal = ({
                 <option value="NATURAL">Natural</option>
                 <option value="JURIDICO">Jurídico</option>
               </select>
-          
+
             </div>
                   <div>
               <label className="block text-slate-400 font-bold mb-1">Dirrecion</label>
@@ -324,12 +336,12 @@ const CustomerTableRow = ({
       <td className="px-4 py-3.5">
         <span
           className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${
-            c.status||c.estado === "ACTIVO"
+            c.status === "ACTIVO"
               ? "bg-emerald-50 text-emerald-700 border-emerald-100"
               : "bg-rose-50 text-rose-700 border-rose-100"
           }`}
         >
-          {c.status||c.estado}
+          {c.status}
         </span>
       </td>
       <td className="px-4 py-3.5">
@@ -337,10 +349,7 @@ const CustomerTableRow = ({
           {permisos?.clientes?.ver_historial === true && (
             <button
               type="button"
-              onClick={() => {
-                console.log(c.idCliente);
-                onSelectCliente(c.idCliente);
-              }}
+              onClick={() => onSelectCliente(c.idCliente)}
               className="p-1.5 rounded-lg bg-blue-50 text-[#5680F9] hover:bg-blue-100 transition-colors"
               title="Ver Perfil"
             >
@@ -362,11 +371,11 @@ const CustomerTableRow = ({
           {permisos?.clientes?.desactivar === true && (
             <button
               type="button"
-              onClick={() => handleToggleStatus(c.idCliente)}
+              onClick={() => handleToggleStatus(c)}
               className="p-1.5 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-colors"
-              title="Cambiar estado"
+              title={c.status === "ACTIVO" ? "Desactivar cliente" : "Activar cliente"}
             >
-              {c.estado === "ACTIVO" ? <CircleSlash size={14} /> : <CheckCircle size={14} />}
+              {c.status === "ACTIVO" ? <CircleSlash size={14} /> : <CheckCircle size={14} />}
             </button>
           )}
         </div>
@@ -397,18 +406,18 @@ const ClientControls = ({
       />
     </div>
     <div className="flex gap-1">
-      {["Todos", "Activos", "Inactivos"].map((f) => (
+      {FILTROS_ESTADO.map(({ value, label }) => (
         <button
-          key={f}
+          key={value}
           type="button"
-          onClick={() => setFilter(f)}
+          onClick={() => setFilter(value)}
           className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
-            filter === f
+            filter === value
               ? "bg-[#5680F9] border-[#5680F9] text-white"
               : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
           }`}
         >
-          {f}
+          {label}
         </button>
       ))}
     </div>
@@ -425,18 +434,19 @@ const ClientControls = ({
 );
 
 // 3. COMPONENTE PADRE (MainRenderer)
-export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps) {
-  const clientes = useDbTable("clientes") as unknown as ClienteVista[];
-  const {loadTable}=useDbActions()
+export function MainRenderer({ onSelectCliente }: ClientesModuloProps) {
+  const clientes = useDbTable("clientes");
+  const { loadTable } = useDbActions();
   const loadingClientes = useDbLoading("clientes");
+  useModuleSplashReady("clientes", !loadingClientes);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("Todos");
+  const [filter, setFilter] = useState<FiltroEstadoCliente>("Todos");
   const { data: session } = useSession();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<ClienteModel | null>(null);
 
-  const handleEdit = useCallback((client: ClienteVista) => {
+  const handleEdit = useCallback((client: ClienteModel) => {
     setSelectedClient(client);
     setIsModalOpen(true);
   }, []);
@@ -446,27 +456,37 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
     setIsModalOpen(true);
   }, []);
 
-  const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit") => {
-    let url_ar = "";
-    if (mode === "create") {
-      if (data.rutFile) {
-        const up = await subirArchivoDocumento(data.rutFile as File);
-        if (!up.ok || !up.rutaUrl) {
-          console.error("Error al subir el archivo:", up.error);
-          return;
-        }
-        url_ar = up.rutaUrl;
+  const handleSave = async (data: ClienteFormSaveData, mode: "create" | "edit"): Promise<boolean> => {
+    try {
+      if (mode === "edit" && !data.idCliente) {
+        throw new Error("Selecciona un cliente para guardar los cambios.");
       }
 
-      console.log("Crear cliente con datos:", data, "Ruta URL:", url_ar);
-      try {
-        const resul1 = crearDocumento({
+      let idRutDocumento: number | undefined;
+      if (mode === "create" || data.rutFile) {
+        if (!data.rutFile) {
+          toast.error("Adjunta el documento RUT para continuar.");
+          return false;
+        }
+        const up = await subirArchivoDocumento(data.rutFile as File);
+        if (!up.ok || !up.rutaUrl) {
+          toast.error(up.error || "No se pudo subir el RUT.");
+          return false;
+        }
+        const documento = await crearDocumento({
           nombre: `Rut_${data.nitCedula}`,
-          rutaUrl: url_ar,
+          rutaUrl: up.rutaUrl,
           mimeType: (data.rutFile as File).type,
           proveedor: "AWS_S3",
         });
-        console.log("Resultado de crearDocumento:", await resul1, "Ruta URL:", url_ar);
+        if (!documento.success || !documento.data?.idDocumento) {
+          toast.error(documento.error || "No se pudo registrar el documento RUT.");
+          return false;
+        }
+        idRutDocumento = documento.data.idDocumento;
+      }
+
+      if (mode === "create") {
         const result = await crearCliente({
           correo: data.correo ?? "",
           nitCedula: data.nitCedula ?? "",
@@ -475,19 +495,14 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
           telefono: data.telefono ?? "",
           observacion: data.observacion ?? "",
           tipoCliente: data.tipoCliente,
-          idRutDocumento: (await resul1).data?.idDocumento,
+          idRutDocumento: idRutDocumento!,
           dirrecion:data.dirrecion??"sin dirrecion",
           ciudad: data.ciudad ?? "Cali",
         });
         if (!result.success) throw new Error(result.error || "Error al crear cliente");
-      } catch (error) {
-        console.error("Error al crear cliente:", error);
       }
-    }
-    if (mode === "edit") {
-      console.log("Actualizar cliente con datos:", data);
-      try {
-        const result = await actualizarCliente(data.idCliente!, {
+      if (mode === "edit" && data.idCliente) {
+        const result = await actualizarCliente(data.idCliente, {
           correo: data.correo ?? "",
           nitCedula: data.nitCedula ?? "",
           razonSocial: data.razonSocial ?? "",
@@ -496,49 +511,48 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
           observacion: data.observacion ?? "",
           dirrecion:data.dirrecion??"sin dirrecion",
           tipoCliente: data.tipoCliente,
-          idRutDocumento: data.idRutDocumento ?? undefined,
+          idRutDocumento,
           ciudad: data.ciudad ?? "Cali",
-          
+
         });
         if (!result.success) throw new Error(result.error || "Error al actualizar cliente");
-      } catch (error) {
-        console.error("Error al actualizar cliente:", error);
       }
+      const recargado = await loadTable("clientes", true);
+      if (recargado) {
+        toast.success(mode === "create" ? "Cliente creado correctamente." : "Cliente actualizado correctamente.");
+      } else {
+        toast.warning("Cliente guardado. No se pudo recargar la lista.");
+      }
+      return true;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo guardar el cliente.");
+      return false;
     }
-
-    setIsModalOpen(false);
   };
 
-  const handleToggleStatus = useCallback((id: number) => {
+  const handleToggleStatus = useCallback(async (cliente: ClienteModel) => {
+    const status = cliente.status === "ACTIVO" ? "INACTIVO" : "ACTIVO";
     try {
-      cambiarEstadoCliente(
-        id,
-        clientes.find((c) => c.idCliente === id)?.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO"
-      )
-        .then((result) => {
-          if (!result.success) throw new Error(result.error || "Error al cambiar estado del cliente");
-          console.log("Estado del cliente cambiado con éxito:", result);
-        })
-        .catch((error) => {
-          console.error("Error al cambiar estado del cliente:", error);
-        });
+      const result = await cambiarEstadoCliente(cliente.idCliente, status);
+      if (!result.success) throw new Error(result.error || "No se pudo cambiar el estado del cliente.");
+      const recargado = await loadTable("clientes", true);
+      if (recargado) {
+        toast.success(status === "ACTIVO" ? "Cliente activado." : "Cliente desactivado.");
+      } else {
+        toast.warning("Estado guardado. No se pudo recargar la lista.");
+      }
     } catch (error) {
-      console.error("Error al cambiar estado del cliente:", error);
+      toast.error(error instanceof Error ? error.message : "No se pudo cambiar el estado del cliente.");
     }
-  }, [clientes]);
+  }, [loadTable]);
 
   const filtered = useMemo(() => {
-    console.log(clientes)
-    console.log("recarga  despues de hace cambio o nincial ")
+    const termino = search.toLowerCase();
     return clientes.filter((c) => {
-      const matchSearch =
-        c.razonSocial.toLowerCase().includes(search.toLowerCase()) ||
-        c.nitCedula.includes(search);
-      return matchSearch && (filter === "Todos" || c.estado === (filter === "ACTIVO" ? "ACTIVO" : "INACTIVO"));
+      const matchSearch = c.razonSocial.toLowerCase().includes(termino) || c.nitCedula.includes(termino);
+      return matchSearch && (filter === "Todos" || c.status === filter);
     });
-    
-  }, [clientes, search, filter,loadTable]);
-
+  }, [clientes, search, filter]);
 
   const permisos = useMemo<PermisosUsuario | undefined>(
     () => session?.user?.permissions?.permisos,
@@ -546,11 +560,8 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
   );
 
   useEffect(() => {
-    loadTable("clientes")
-
-
-
-}, [loadTable]);
+    void loadTable("clientes");
+  }, [loadTable]);
 
   return (
     <div className="w-full bg-transparent p-4">
@@ -599,12 +610,14 @@ export function MainRenderer({ onSelectCliente, onVolver }: ClientesModuloProps)
         </table>
       </div>
 
-      <ClientFormModal
-        isOpen={isModalOpen}
-        client={selectedClient}
-        onClose={() => setIsModalOpen(false)}
-        onSave={handleSave}
-      />
+      {isModalOpen && (
+        <ClientFormModal
+          isOpen
+          client={selectedClient}
+          onClose={() => setIsModalOpen(false)}
+          onSave={handleSave}
+        />
+      )}
     </div>
   );
 }

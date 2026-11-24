@@ -1,18 +1,21 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { Search, Plus, Trash2, Phone, Mail, Users, CalendarClock, CheckCircle, XCircle } from "lucide-react";
-import { useDbTable, useDbLoading, useDbActions } from "@/app/componets/tables_recharge";
+import { Search, Plus, Trash2, Phone, Mail, Users, CalendarClock, CheckCircle, XCircle, Pencil, X } from "lucide-react";
+import { useDbTable, useDbActions, useRevisionTablas } from "@/app/componets/tables_recharge";
+import { obtenerCotizacionesEnSeguimiento } from "@/app/action_module/cotizacion";
 import { Estados } from "@/tipos/enums";
 import type { CotizacionModel, SeguimientoComercialModel } from "@/tipos/entidades";
 import { TIPOS_SEGUIMIENTO, type TipoSeguimiento } from "@/tipos/seguimiento";
 import {
   crearSeguimiento,
+  actualizarSeguimiento,
   eliminarSeguimiento,
 } from "@/app/action_module/seguimiento";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import ResponsiveTable from "@/app/dashboard/components/ResponsiveTable";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 const tipoIcono: Record<string, React.ReactNode> = {
   LLAMADA: <Phone size={13} />,
@@ -25,6 +28,9 @@ const tipoIcono: Record<string, React.ReactNode> = {
 
 const formatoFecha = (v: Date | string | null | undefined) =>
   v ? new Date(v).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+const fechaParaInput = (v: Date | string) => new Intl.DateTimeFormat("en-CA", {
+  year: "numeric", month: "2-digit", day: "2-digit", timeZone: "America/Bogota",
+}).format(new Date(v));
 
 function origenSeguimiento(cotizacion: CotizacionModel): string {
   const entrada = [...(cotizacion.historialEstados ?? [])]
@@ -42,10 +48,13 @@ function origenSeguimiento(cotizacion: CotizacionModel): string {
 }
 
 export default function SeguimientoComercial() {
-  const cotizaciones = useDbTable("cotizaciones") as unknown as CotizacionModel[];
+  const [enSeguimiento, setEnSeguimiento] = useState<CotizacionModel[]>([]);
+  const [loading, setLoading] = useState(true);
+  useModuleSplashReady("seguimiento", !loading);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
+  const revision = useRevisionTablas("cotizaciones", "historial_estado_cotizacion", "seguimientos_comerciales");
   const seguimientos = useDbTable("seguimientos_comerciales") as unknown as SeguimientoComercialModel[];
   const { loadTable } = useDbActions();
-  const loading = useDbLoading("cotizaciones");
   const { data: session } = useSession();
   const { can } = usePermissions();
   const puedeGestionar = can("cotizaciones", "crear_editar");
@@ -59,16 +68,23 @@ export default function SeguimientoComercial() {
     resultado: "",
   });
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [local, setLocal] = useState<SeguimientoComercialModel[]>([]);
 
   useEffect(() => {
-    loadTable("cotizaciones");
-    loadTable("seguimientos_comerciales");
+    void loadTable("seguimientos_comerciales");
   }, [loadTable]);
 
-  const enSeguimiento = useMemo(() => {
-    return (cotizaciones ?? []).filter((c) => c.estado === Estados.EN_SEGUIMIENTO);
-  }, [cotizaciones]);
+  useEffect(() => {
+    let vigente = true;
+    obtenerCotizacionesEnSeguimiento().then((respuesta) => {
+      if (!vigente) return;
+      if (respuesta.ok && respuesta.data) setEnSeguimiento(respuesta.data);
+      setErrorCarga(respuesta.ok ? null : respuesta.error ?? "No se pudo cargar Seguimiento Comercial.");
+      setLoading(false);
+    });
+    return () => { vigente = false; };
+  }, [revision]);
 
   const filtered = useMemo(() => {
     return enSeguimiento.filter(
@@ -85,10 +101,10 @@ export default function SeguimientoComercial() {
     // creada por la API, y `local` podía volver a añadirla (doble aparición).
     const mapa = new Map<number, SeguimientoComercialModel>();
     for (const s of seguimientos) {
-      if (s.idCotizacion === selectedId) mapa.set(s.idSeguimiento, s);
+      if (s.idCotizacion === selectedId && !s.eliminadoAt) mapa.set(s.idSeguimiento, s);
     }
     for (const s of local) {
-      if (s.idCotizacion === selectedId) mapa.set(s.idSeguimiento, s);
+      if (s.idCotizacion === selectedId && !s.eliminadoAt) mapa.set(s.idSeguimiento, s);
     }
     return Array.from(mapa.values()).sort(
       (a, b) => new Date(b.fechaGestion).getTime() - new Date(a.fechaGestion).getTime()
@@ -117,22 +133,61 @@ export default function SeguimientoComercial() {
         setLocal((prev) => [res.data, ...prev]);
         setForm({ tipo: "LLAMADA", descripcion: "", proximaGestion: "", resultado: "" });
       }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo guardar la gestión.");
     } finally {
       setSaving(false);
     }
   }, [selectedId, form, session]);
 
   const borrarSeguimiento = useCallback(async (id: number) => {
+    const motivo = window.prompt("Motivo para eliminar esta gestión:");
+    if (!motivo?.trim()) return;
     try {
-      await eliminarSeguimiento(id);
+      await eliminarSeguimiento(id, motivo.trim());
       setLocal((prev) => prev.filter((s) => s.idSeguimiento !== id));
     } catch (error) {
-      console.error(error);
+      window.alert(error instanceof Error ? error.message : "No se pudo eliminar la gestión.");
     }
   }, []);
 
+  const iniciarEdicion = useCallback((s: SeguimientoComercialModel) => {
+    setEditingId(s.idSeguimiento);
+    setForm({
+      tipo: (TIPOS_SEGUIMIENTO.some((t) => t.value === s.tipo) ? s.tipo : "OTRO") as TipoSeguimiento,
+      descripcion: s.descripcion,
+      proximaGestion: s.proximaGestion ? fechaParaInput(s.proximaGestion) : "",
+      resultado: s.resultado ?? "",
+    });
+  }, []);
+
+  const cancelarEdicion = useCallback(() => {
+    setEditingId(null);
+    setForm({ tipo: "LLAMADA", descripcion: "", proximaGestion: "", resultado: "" });
+  }, []);
+
+  const guardarEdicion = useCallback(async () => {
+    if (!editingId || !form.descripcion.trim()) return;
+    setSaving(true);
+    try {
+      const result = await actualizarSeguimiento(editingId, {
+        tipo: form.tipo,
+        descripcion: form.descripcion.trim(),
+        proximaGestion: form.proximaGestion ? new Date(`${form.proximaGestion}T00:00:00`) : null,
+        resultado: form.resultado.trim() || null,
+      });
+      setLocal((prev) => prev.map((s) => s.idSeguimiento === editingId ? result.data : s));
+      cancelarEdicion();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "No se pudo actualizar la gestión.");
+    } finally {
+      setSaving(false);
+    }
+  }, [editingId, form, cancelarEdicion]);
+
   return (
     <div className="w-full p-4">
+      {errorCarga && <p role="alert" className="mb-3 text-xs text-rose-700">{errorCarga}</p>}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="relative flex-1 min-w-56">
           <Search size={15} color="#9CA3AF" className="absolute left-3 top-1/2 -translate-y-1/2" />
@@ -152,7 +207,7 @@ export default function SeguimientoComercial() {
           loading={loading}
           data={filtered}
           rowKey={(c) => c.idCotizacion}
-          onRowClick={(c) => setSelectedId(c.idCotizacion)}
+          onRowClick={(c) => { setSelectedId(c.idCotizacion); cancelarEdicion(); }}
           emptyText="No hay cotizaciones en seguimiento."
           minWidth="min-w-[720px]"
           columns={[
@@ -184,7 +239,7 @@ export default function SeguimientoComercial() {
               </div>
 
               <div className="border border-slate-100 rounded-xl p-3 bg-slate-50/50 space-y-2">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Nueva gestión</div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{editingId ? "Editar gestión" : "Nueva gestión"}</div>
                 <div className="flex gap-2">
                   <select
                     value={form.tipo}
@@ -215,7 +270,7 @@ export default function SeguimientoComercial() {
                   placeholder="Resultado (opcional)"
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs outline-none focus:border-[#5680F9]"
                 />
-                {puedeGestionar && (
+                {puedeGestionar && !editingId && (
                 <button
                   onClick={agregarSeguimiento}
                   disabled={saving || !form.descripcion.trim()}
@@ -223,6 +278,14 @@ export default function SeguimientoComercial() {
                 >
                   <Plus size={14} /> {saving ? "Guardando..." : "Registrar gestión"}
                 </button>
+                )}
+                {puedeGestionar && editingId && (
+                  <div className="flex gap-2">
+                    <button onClick={guardarEdicion} disabled={saving || !form.descripcion.trim()} className="px-3 py-2 rounded-lg bg-[#5680F9] text-white text-xs font-bold disabled:opacity-50">
+                      {saving ? "Guardando..." : "Guardar cambios"}
+                    </button>
+                    <button onClick={cancelarEdicion} disabled={saving} className="px-3 py-2 rounded-lg border text-xs" aria-label="Cancelar edición"><X size={14} /></button>
+                  </div>
                 )}
               </div>
 
@@ -246,7 +309,17 @@ export default function SeguimientoComercial() {
                           <p className="text-[10px] text-slate-400 mt-1">Próxima gestión: {formatoFecha(s.proximaGestion)}</p>
                         )}
                       </div>
-                      {puedeGestionar && (
+                      {s.origen === "SISTEMA" && <span className="text-[10px] text-slate-400">Evento del sistema · solo lectura</span>}
+                      {puedeGestionar && s.origen !== "SISTEMA" && (
+                      <button
+                        onClick={() => iniciarEdicion(s)}
+                        className="p-2 touch-target inline-flex items-center justify-center text-slate-300 hover:text-blue-500 transition-colors"
+                        title="Editar"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      )}
+                      {puedeGestionar && s.origen !== "SISTEMA" && (
                       <button
                         onClick={() => borrarSeguimiento(s.idSeguimiento)}
                         className="p-2 touch-target inline-flex items-center justify-center text-slate-300 hover:text-rose-500 transition-colors"

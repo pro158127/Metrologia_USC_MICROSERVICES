@@ -1,3 +1,4 @@
+import { cabeceraRecepcionLista, instrumentoListoParaAsignar, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { z } from 'zod';
 
 export const estadosEnum = z.enum(['BORRADOR', 'ENVIADA', 'APROBADA', 'RECHAZADA', 'EN_SEGUIMIENTO']);
@@ -109,6 +110,10 @@ export type CotizacionDto = z.infer<typeof cotizacionDtoSchema>;
 export const ordenTrabajoDetalleDtoSchema = z.object({
   idDetalle: z.number(),
   idOrdenTrabajo: z.number(),
+  idUnidad: z.string().nullable(),
+  listoParaAsignar: z.boolean(),
+  calibracionIniciada: z.boolean(),
+  certificadoCreado: z.boolean(),
   item: z.number(),
   tipoServicio: z.string(),
   instrumento: z.string(),
@@ -380,6 +385,7 @@ export const ordenTrabajoDetalleRawToDtoSchema = z
   .object({
     ID_DETALLE: z.number(),
     ID_ORDEN_TRABAJO_FK: z.number(),
+    ID_UNIDAD_FK: z.string().nullish(),
     ITEM: z.number(),
     TIPO_SERVICIO: z.string(),
     INSTRUMENTO: z.string(),
@@ -401,6 +407,10 @@ export const ordenTrabajoDetalleRawToDtoSchema = z
   .transform((raw): OrdenTrabajoDetalleDto => ({
     idDetalle: raw.ID_DETALLE,
     idOrdenTrabajo: raw.ID_ORDEN_TRABAJO_FK,
+    idUnidad: raw.ID_UNIDAD_FK ?? null,
+    listoParaAsignar: false,
+    calibracionIniciada: false,
+    certificadoCreado: false,
     item: raw.ITEM,
     tipoServicio: raw.TIPO_SERVICIO,
     instrumento: raw.INSTRUMENTO,
@@ -445,6 +455,7 @@ export const ordenTrabajoRawToDtoSchema = z
     TELEFONO_CONTACTO: z.string().nullish(),
     FECHA_CALIBRACION: z.coerce.date().nullish(),
     hora: z.coerce.date().nullish(),
+    HORA_CALIBRACION: z.coerce.date().nullish(),
     Razon_social: z.string().nullish(),
     dirrecion_solcitante: z.string().nullish(),
     PERSONA_CONTACT_SOLCITANTE: z.string().nullish(),
@@ -467,9 +478,16 @@ export const ordenTrabajoRawToDtoSchema = z
     cotizaciones: cotizacionRawToDtoSchema.nullish(),
     orden_trabajo_detalles: z.array(ordenTrabajoDetalleRawToDtoSchema).nullish(),
     recepciones_equipo: z.array(z.object({
+      FECHA_RECEPCION: z.coerce.date().nullish(),
+      NOMBRE_ENTREGA: z.string().nullish(),
+      NOMBRE_RECIBE: z.string().nullish(),
       recepcion_equipo_detalles: z.array(z.object({
+        ID_UNIDAD_FK: z.string().nullish(),
+        ITEM: z.number().nullish(),
+        ESTAMPILLA: z.string().nullish(),
+        ESTADO_IBC: z.json().optional(),
         calibraciones: z.object({
-          certificados: z.object({ ESTADO_REVISION: z.string().nullish() }).nullish(),
+          certificados: z.object({ ID_CERTIFICADO: z.number(), ESTADO_REVISION: z.string().nullish() }).nullish(),
         }).nullish(),
       }).passthrough()).nullish(),
     }).passthrough()).nullish(),
@@ -505,7 +523,7 @@ export const ordenTrabajoRawToDtoSchema = z
     personaContacto: raw.PERSONA_CONTACTO ?? null,
     telefonoContacto: raw.TELEFONO_CONTACTO ?? null,
     fechaCalibracion: raw.FECHA_CALIBRACION ?? null,
-    hora: raw.hora ?? null,
+    hora: raw.HORA_CALIBRACION ?? (raw.FECHA_CALIBRACION ? raw.hora : null) ?? null,
     Razon_social: raw.Razon_social ?? 'sin razon_social',
     dirrecion_solcitante: raw.dirrecion_solcitante ?? 'sin dirreccion',
     personaContacto_solicitante: raw.PERSONA_CONTACT_SOLCITANTE ?? null,
@@ -526,7 +544,19 @@ export const ordenTrabajoRawToDtoSchema = z
     alertamessag: raw.alertamessag ?? 'sin novedades',
     cliente: raw.clientes ?? null,
     cotizacion: raw.cotizaciones ?? null,
-    instrumentos: raw.orden_trabajo_detalles ?? [],
+    instrumentos: (raw.orden_trabajo_detalles ?? []).map((detalle) => {
+      const detalleRecepcion = vincularUnidadRecepcion(
+        { ID_UNIDAD_FK: detalle.idUnidad, ITEM: detalle.item },
+        raw.recepciones_equipo?.[0]?.recepcion_equipo_detalles ?? [],
+      );
+      return {
+        ...detalle,
+        listoParaAsignar: cabeceraRecepcionLista(raw.recepciones_equipo?.[0]) &&
+          detalleRecepcion != null && instrumentoListoParaAsignar(detalleRecepcion),
+        calibracionIniciada: detalleRecepcion?.calibraciones != null,
+        certificadoCreado: detalleRecepcion?.calibraciones?.certificados != null,
+      };
+    }),
   }));
 export type OrdenTrabajoRaw = z.input<typeof ordenTrabajoRawToDtoSchema>;
 
@@ -544,7 +574,11 @@ export type DatosInicialesResponse = z.infer<typeof datosInicialesResponseSchema
 export const importarOtExcelBodySchema = z.object({
   s3KeyTemp: z.string().min(5, "La llave S3 es obligatoria"),
   tipoFlujo: z.enum(['estandar', 'inverso']),
-  idCotizacion: z.number().optional(), // Clave: Si no viene, el worker hace la magia del flujo anormal
+  idCotizacion: z.number().optional(),
+}).superRefine((value, ctx) => {
+  if (value.tipoFlujo === 'inverso' && value.idCotizacion === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['idCotizacion'], message: 'Selecciona la cotización para la importación inversa.' });
+  }
 });
 export type ImportarOtExcelBody = z.infer<typeof importarOtExcelBodySchema>;
 
@@ -587,14 +621,22 @@ export const estadoOtEnum = z.enum([
 ]);
 
 export const consolidarOtBodySchema = z.object({
+  codigoActual: z.string().optional(),
+  observaciones: z.string().trim().nullable().optional(),
+  // Datos diligenciados por el cliente, guardados como snapshot de la OT.
+  razonSocialCert: z.string().nullable().optional(),
+  nitCert: z.string().nullable().optional(),
+  correoCertificados: z.string().nullable().optional(),
+  direccionCert: z.string().nullable().optional(),
+  ciudadCert: z.string().nullable().optional(),
+  correoFactura: z.string().nullable().optional(),
   responsableUsc: z.string().nullable(),
   fechaDiligenciamiento: z.string().nullable(),
-  fechaCalibracion: z.string().nullable().optional(),
-  horaCalibracion: z.string().nullable().optional(),
-  requiereAnexo: z.string(),
-  observacionesGenerales: z.string().nullable(),
+  fechaCalibracion: z.iso.date().nullable().optional(),
+  horaCalibracion: z.iso.time({ precision: -1 }).nullable().optional(),
   lugarCalibracion: z.string(),
   personaContactar: z.string().nullable().optional(),
+  fechaLimiteFacturacion: z.iso.date().nullable().optional(),
   telefonoCalibracion: z.string().nullable().optional(),
   // El estado ya no se acepta como texto libre: la FSM lo calcula en backend.
   // Se mantiene opcional (y tolera "") por compatibilidad con el cliente actual.

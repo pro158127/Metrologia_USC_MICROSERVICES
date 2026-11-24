@@ -1,14 +1,15 @@
 "use client";
 
 // 1. IMPORTS
-import React, { useCallback, useState } from "react";
+import { permisionMapping } from "@/app/lib/permissions/mapping";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { signOut } from "next-auth/react";
 import dynamic from "next/dynamic";
-import { Sidebar, ModuleKey } from "./components/sidebar";
-import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import { permisionMapping } from "@/app/lib/permissions/mapping";
+import { useCallback,useEffect,useRef,useState } from "react";
 import { Header } from "./components/Header";
+import { MODULE_READY_EVENT,PageLoadSplash } from "./components/PageLoadSplash";
 import Perfil from "./components/Perfil";
+import { ModuleKey,Sidebar } from "./components/sidebar";
 
 // Carga perezosa (code-splitting): evita que Next compile todos los módulos
 // pesados (xlsx, @univerjs, pdfjs, recharts, etc.) en el primer render del
@@ -21,7 +22,6 @@ const SeguimientoComercial = dynamic(() => import("./module/seguimiento"), { ssr
 const Dashboard = dynamic(() => import("./dashboard"), { ssr: false });
 const OrdenesTrabajo = dynamic(() => import("./module/ordenes_ot"), { ssr: false });
 const MainRenderers = dynamic(() => import("./module/recepciones").then((m) => m.MainRenderers), { ssr: false });
-const SocketDebugger = dynamic(() => import("../componets/debugges_webscoekt "), { ssr: false });
 const RevisionCertificados = dynamic(() => import("./module/Revison_certifados"), { ssr: false });
 const CalibracionInformesMockup = dynamic(() => import("./module/Calibracion_informes"), { ssr: false });
 const MainRendererenv = dynamic(() => import("./module/Envio_entrega"), { ssr: false });
@@ -68,24 +68,24 @@ const FondoDecorativo = () => {
  * Decide qué pantalla/módulo mostrar según lo que seleccionó el usuario
  */
 
-import { useEffect } from "react";
-
 interface ModuloActivoProps {
   modulo: ModuleKey;
   clienteId: number | null;                 // ← el ID del cliente seleccionado
   onSelectCliente: (id: number) => void;   // ← navega a perfil
-  onVolver: () => void;     
-  onNavigarte: (modulo: ModuleKey) =>void;               // ← vuelve a lista
+  onVolver: () => void;
+  onNavigarte: (modulo: ModuleKey, idCertificado?: number) => void;
+  certificadoToOpen: number | null;               // ← vuelve a lista
   otToOpen: number | null;                 // ← OT a preseleccionar en Órdenes
   onOpenOt: (id: number) => void;          // ← abre una OT desde importación
 }
 
 const ModuloActivo = ({
-    modulo, 
-  clienteId, 
-  onSelectCliente, 
+    modulo,
+  clienteId,
+  onSelectCliente,
   onVolver ,
   onNavigarte,
+  certificadoToOpen,
   otToOpen,
   onOpenOt,
 }: ModuloActivoProps)=> {
@@ -98,7 +98,7 @@ const ModuloActivo = ({
 
     case "perfil_cliente":
       return <ClienteDetailPage onVolver={onVolver} id_cliente={clienteId} />;
-    
+
     case "cotizaciones":
       return <Cotizaciones />;
 
@@ -112,7 +112,7 @@ const ModuloActivo = ({
     case "importarOrden":
       return <MainRenderer2 onOpenOt={onOpenOt} />;
     case "revision":
-      return <RevisionCertificados/>
+      return <RevisionCertificados certificadoInicial={certificadoToOpen} />
     case "dashboard":
       return <Dashboard onNavigate={onNavigarte}/>
     case "calibracion":
@@ -135,7 +135,14 @@ export const MainRenderer = () => {
 
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
+  const activeModuleRef = useRef<ModuleKey>("dashboard");
+  const pendingModuleRef = useRef<{ key: ModuleKey; id: number } | null>({ key: "dashboard", id: 0 });
+  const navigationIdRef = useRef(0);
+  const splashDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const splashWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [splashVisible, setSplashVisible] = useState(false);
   const [cliente, setCliente] = useState<number | null>(null);
+  const [certificadoToOpen, setCertificadoToOpen] = useState<number | null>(null);
   const [otToOpen, setOtToOpen] = useState<number | null>(null);
   const [showProfile, setShowProfile] = useState(false);
 
@@ -144,39 +151,98 @@ export const MainRenderer = () => {
     return key === true || hasModule(key as string);
   }, [hasModule]);
 
-  const navegarSeguro = useCallback((m: ModuleKey) => {
-    setActiveModule(puedeVer(m) ? m : "dashboard");
-  }, [puedeVer]);
+  const iniciarNavegacionModulo = useCallback((module: ModuleKey) => {
+    if (module === activeModuleRef.current) return;
+    activeModuleRef.current = module;
+    setActiveModule(module);
+
+    const renderizaModulo = new Set<ModuleKey>([
+      "dashboard", "clientes", "cotizaciones", "seguimiento", "ordenes", "importarOrden",
+      "recepcion", "calibracion", "revision", "entrega", "reportes", "administracion", "perfil_cliente",
+    ]).has(module);
+    const id = ++navigationIdRef.current;
+    pendingModuleRef.current = renderizaModulo ? { key: module, id } : null;
+    setSplashVisible(false);
+    if (splashDelayRef.current) clearTimeout(splashDelayRef.current);
+    if (splashWatchdogRef.current) clearTimeout(splashWatchdogRef.current);
+    if (!renderizaModulo) return;
+
+    // Fast module changes stay unobstructed; slower loads reveal the full-page splash.
+    splashDelayRef.current = setTimeout(() => {
+      if (pendingModuleRef.current?.id === id) setSplashVisible(true);
+    }, 120);
+    // A broken request must not leave the screen covered indefinitely.
+    splashWatchdogRef.current = setTimeout(() => {
+      if (pendingModuleRef.current?.id !== id) return;
+      pendingModuleRef.current = null;
+      setSplashVisible(false);
+    }, 15000);
+  }, []);
+
+  useEffect(() => {
+    const confirmarCargaModulo = (event: Event) => {
+      const key = (event as CustomEvent<{ moduleKey?: ModuleKey }>).detail?.moduleKey;
+      if (!key || pendingModuleRef.current?.key !== key || activeModuleRef.current !== key) return;
+      pendingModuleRef.current = null;
+      if (splashDelayRef.current) clearTimeout(splashDelayRef.current);
+      if (splashWatchdogRef.current) clearTimeout(splashWatchdogRef.current);
+      setSplashVisible(false);
+    };
+    window.addEventListener(MODULE_READY_EVENT, confirmarCargaModulo);
+    // The first dashboard module can also need a full-page initial load.
+    const id = pendingModuleRef.current?.id;
+    if (id != null) {
+      splashDelayRef.current = setTimeout(() => {
+        if (pendingModuleRef.current?.id === id) setSplashVisible(true);
+      }, 120);
+      splashWatchdogRef.current = setTimeout(() => {
+        if (pendingModuleRef.current?.id !== id) return;
+        pendingModuleRef.current = null;
+        setSplashVisible(false);
+      }, 15000);
+    }
+    return () => {
+      window.removeEventListener(MODULE_READY_EVENT, confirmarCargaModulo);
+      if (splashDelayRef.current) clearTimeout(splashDelayRef.current);
+      if (splashWatchdogRef.current) clearTimeout(splashWatchdogRef.current);
+    };
+  }, []);
+
+  const navegarSeguro = useCallback((m: ModuleKey, idCertificado?: number) => {
+    setCertificadoToOpen(m === "revision" ? idCertificado ?? null : null);
+    iniciarNavegacionModulo(puedeVer(m) ? m : "dashboard");
+  }, [iniciarNavegacionModulo, puedeVer]);
 
 
   useEffect(() => {
     console.log("Módulo activo:", activeModule);
   }, [activeModule]);
   // Funciones para cambiar de pantalla y seleccionar cliente
-  const change_perfil = {
-    change_id_cliente: (n: number) => setCliente(n),
-    change_module: () => setActiveModule("perfil_cliente"),
-    change_cliente: () => setActiveModule("clientes"),
-  };
+
 
   const handleSelectCliente = useCallback((id: number) => {
   setCliente(id);
-  setActiveModule("perfil_cliente"); // Navega automáticamente
-}, []);
+  iniciarNavegacionModulo("perfil_cliente"); // Navega automáticamente
+}, [iniciarNavegacionModulo]);
 
 
 const handleVolverClientes = useCallback(() => {
-  setActiveModule("clientes");
-}, []);
+  iniciarNavegacionModulo("clientes");
+}, [iniciarNavegacionModulo]);
 
 const handleOpenOt = useCallback((id: number) => {
   setOtToOpen(id);
-  setActiveModule("ordenes");
-}, []);
+  iniciarNavegacionModulo("ordenes");
+}, [iniciarNavegacionModulo]);
 
-  const handleLogout = () => {
-    console.log("Cerrando sesión...");
-    signOut();
+  const handleLogout = async () => {
+    try {
+      // Espera a que NextAuth elimine la cookie antes de cambiar de pantalla.
+      await signOut({ redirect: false });
+    } catch (error) {
+      console.error("No se pudo completar la solicitud de cierre de sesión:", error);
+    }
+    window.location.replace("/Login");
   };
 
   return (
@@ -213,6 +279,7 @@ const handleOpenOt = useCallback((id: number) => {
               onSelectCliente={handleSelectCliente}
               onVolver={handleVolverClientes}
               onNavigarte={navegarSeguro}
+              certificadoToOpen={certificadoToOpen}
               otToOpen={otToOpen}
               onOpenOt={handleOpenOt}
             />
@@ -225,6 +292,7 @@ const handleOpenOt = useCallback((id: number) => {
       </div>
 
       {showProfile && <Perfil onClose={() => setShowProfile(false)} />}
+      <PageLoadSplash visible={splashVisible} moduleTitle={MODULE_TITLES[activeModule] || "Módulo"} />
     </div>
   );
 };

@@ -1,0 +1,1 @@
+ALTER TYPE "sitio_calibracion" ADD VALUE IF NOT EXISTS 'INTERNO_USC';

@@ -18,7 +18,7 @@ export const detalleInputSchema = z.object({
   normaTecnica: z.string().nullish(),
   cantidad: z.number().int().min(1),
   valorUnitario: z.number().min(0),
-  sitio: z.enum(['LABORATORIO', 'CLIENTE']).optional(),
+  sitio: z.enum(['LABORATORIO', 'CLIENTE', 'INTERNO_USC']).optional(),
 });
 export type DetalleInput = z.infer<typeof detalleInputSchema>;
 
@@ -52,6 +52,7 @@ export type CrearCotizacionBody = z.infer<typeof crearCotizacionBodySchema>;
 
 export const cambiarEstadoBodySchema = z.object({
   nuevoEstado: estadosEnum,
+  codigo: z.string().trim().min(1).optional(),
   motivoRechazo: z.string().nullish(),
 });
 export type CambiarEstadoBody = z.infer<typeof cambiarEstadoBodySchema>;
@@ -219,6 +220,7 @@ export const cotizacionDtoSchema = z.object({
   idCliente: z.number().nullable(),
   montoTotal: z.number().nullable(),
   createdAt: z.coerce.date(),
+  fechaVencimiento: z.coerce.date().optional(),
   updatedAt: z.coerce.date().nullable(),
   viaticos: z.number(),
   estado: estadosEnum,
@@ -229,6 +231,10 @@ export const cotizacionDtoSchema = z.object({
   cliente: clienteDtoSchema.nullable().optional(),
   historialEstados: z.array(historialEstadoDtoSchema).optional(),
   Historiacambios: z.array(historialCambioDtoSchema).optional(),
+  seguimientosComerciales: z.array(z.object({
+    id: z.number(), tipo: z.string(), descripcion: z.string(), fecha: z.coerce.date(),
+    resultado: z.string().nullable(), origen: z.string(), usuario: z.string().nullable(),
+  })).optional(),
   ordenes: z.array(ordenTrabajoDtoSchema).optional(),
   recepciones: z.array(recepcionEquipoDtoSchema).optional(),
   documentos: z.array(documentoDtoSchema).optional(),
@@ -565,6 +571,10 @@ export const cotizacionRawToDtoSchema = z
     clientes: clienteRawToDtoSchema.nullish(),
     historial_estado_cotizacion: z.array(historialEstadoRawToDtoSchema).nullish(),
     historial_cambios: z.array(historialCambioRawToDtoSchema).nullish(),
+    seguimientos_comerciales: z.array(z.object({
+      ID_SEGUIMIENTO: z.number(), TIPO: z.string(), DESCRIPCION: z.string(), FECHA_GESTION: z.coerce.date(),
+      RESULTADO: z.string().nullish(), ORIGEN: z.string(), usuarios: z.object({ NOMBRE_COMPLETO: z.string() }).nullish(),
+    })).nullish(),
     ordenes_trabajo: z.array(ordenTrabajoRawToDtoSchema).nullish(),
     recepciones_equipo: z.array(recepcionEquipoRawToDtoSchema).nullish(),
     documentos: z.array(documentoRawToDtoSchema).nullish(),
@@ -586,6 +596,10 @@ export const cotizacionRawToDtoSchema = z
     ...(raw.clientes && { cliente: raw.clientes }),
     ...(raw.historial_estado_cotizacion && { historialEstados: raw.historial_estado_cotizacion }),
     ...(raw.historial_cambios && { Historiacambios: raw.historial_cambios }),
+    ...(raw.seguimientos_comerciales && { seguimientosComerciales: raw.seguimientos_comerciales.map((item) => ({
+      id: item.ID_SEGUIMIENTO, tipo: item.TIPO, descripcion: item.DESCRIPCION, fecha: item.FECHA_GESTION,
+      resultado: item.RESULTADO ?? null, origen: item.ORIGEN, usuario: item.usuarios?.NOMBRE_COMPLETO ?? null,
+    })) }),
     ...(raw.ordenes_trabajo && { ordenes: raw.ordenes_trabajo }),
     ...(raw.recepciones_equipo && { recepciones: raw.recepciones_equipo }),
     ...(raw.documentos && { documentos: raw.documentos }),

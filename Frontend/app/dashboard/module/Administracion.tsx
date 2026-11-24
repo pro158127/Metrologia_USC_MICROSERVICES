@@ -2,27 +2,27 @@
 
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useEffectEvent } from "react";
-import { Plus, Shield, X, Check, Search, FileSpreadsheet, User } from "lucide-react";
+import { Check,FileSpreadsheet,Plus,Search,Shield,X } from "lucide-react";
+import { useCallback,useEffect,useMemo,useState } from "react";
 
-import { actualizarUsuarioGenerico, crearUsuarioGenerico, restablecerContrasenaGenerico, obtenerBitacoraPorPermiso, eliminarUsuario, restaurarUsuario } from "@/app/action_module/administration";
+import { actualizarUsuarioGenerico,crearUsuarioGenerico,eliminarUsuario,obtenerBitacoraPorPermiso,restablecerContrasenaGenerico,restaurarUsuario } from "@/app/action_module/administration";
 import { actualizarParametrosSistema } from "@/app/action_module/parametros_sistema";
 
 import type {
-  AdminTab,
-  ConfigSection,
-  init_bitacora,
-  ToastProps,
-  FormUsuario,
-  ModalUsuarioProps,
-  TabUsuariosProps,
-  TipoRol,
-  TipoModulo,
-  FiltrosBitacora,
-  tab_bitacora,
-  TabConfiguracionProps,
-  uso_rol,
-  RolColorMap,
+AdminTab,
+ConfigSection,
+FiltrosBitacora,
+FormUsuario,
+init_bitacora,
+ModalUsuarioProps,
+RolColorMap,
+tab_bitacora,
+TabConfiguracionProps,
+TabUsuariosProps,
+TipoModulo,
+TipoRol,
+ToastProps,
+uso_rol,
 } from "@/tipos/administracion";
 import type { ParametroSistemaModel } from "@/tipos/entidades";
 
@@ -224,7 +224,7 @@ console.log(userdelted,"esto es  ")
             }}
           />
         </div>
-        
+
         <div className="flex items-center justify-between md:justify-start gap-4 w-full md:w-auto">
           <span style={{ color: "#475569", fontSize: 13, fontWeight: 500 }}>
             {filteredUsers.length} usuarios
@@ -296,7 +296,7 @@ console.log(userdelted,"esto es  ")
       <tbody className="divide-y divide-slate-100">
 
       {activeUsers.map((u,i)=> {
-        
+
         const rc =
         rolColors[u.rolnombre] ||
         {
@@ -305,7 +305,7 @@ console.log(userdelted,"esto es  ")
         };
         const rowKey = u.idUsuario ?? `user-row-${i}`;
         return (
-          
+
         <tr
           key={rowKey}
           className="
@@ -558,15 +558,15 @@ console.log(userdelted,"esto es  ")
           u.idUsuario
         );
 
-        await restablecerContrasenaGenerico(
+        const resultado = await restablecerContrasenaGenerico(
           u.idUsuario
         );
 
         setLoadingResetId(null);
 
-        showToast(
-        "Contraseña temporal enviada"
-        );
+        showToast(resultado.success
+          ? resultado.warning ?? "Correo de restablecimiento programado"
+          : resultado.error ?? "No se pudo restablecer la contraseña");
 
         }}
         className="
@@ -659,12 +659,12 @@ console.log(userdelted,"esto es  ")
          } else {
            showToast(`❌ No se pudo eliminar: ${respuesta.error || "Error desconocido."}`);
          }
-        
+
         }
-         
 
 
-          catch(error){
+
+          catch{
            showToast("Algo sucedio ,contacta al administrador")
           }
 
@@ -686,10 +686,10 @@ console.log(userdelted,"esto es  ")
           color:"#DC2626"
         }}
         >
-            
-       
+
+
         {elemianarloading===u.idUsuario?
-      
+
           <svg
   width="18"
   height="18"
@@ -729,12 +729,12 @@ console.log(userdelted,"esto es  ")
   fill="none"
   xmlns="http://www.w3.org/2000/svg"
 ></svg>
-        
-      
+
+
       }
 
-      eleminar 
-        
+      eleminar
+
 
         </button>
         )}
@@ -877,12 +877,12 @@ console.log(userdelted,"esto es  ")
         {puedeGestionarUsuarios && (
         <button
         disabled={loadingrestaurar===u.idUsuario}
-        
+
             className="px-3 py-2 rounded-xl cursor-pointer"
             style={{
                 background: "#DCFCE7",
                 color: "#166534",
-                
+
             }}
             onClick={
               async()=>{
@@ -895,7 +895,7 @@ console.log(userdelted,"esto es  ")
          } else {
            showToast(`❌ No se pudo restaurar: ${respuesta.error || "Error desconocido."}`);
          }}
-          catch(error){
+          catch{
            showToast("Algo sucedio ,contacta al administrador")
           }
 
@@ -908,9 +908,9 @@ console.log(userdelted,"esto es  ")
             }
         >
           {loadingrestaurar===u.idUsuario ? <p>restaurando....</p>:<p>restaurar</p>}
-           
 
-             
+
+
         </button>
         )}
 
@@ -1000,7 +1000,7 @@ const [exportando, setExportando] = useState(false);
     if (!filtros.fecha) return "";
     const [year, month, day] = filtros.fecha.split("-");
     if (!year || !month || !day) return "";
-    return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year.slice(-2)}`; 
+    return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year.slice(-2)}`;
     // Genera el formato "DD/MM/YY", idéntico a toLocaleDateString('es-ES')
   }, [filtros.fecha]);
 
@@ -1009,7 +1009,7 @@ const [exportando, setExportando] = useState(false);
     recarga()
     console.log("entro")
 
-  },[])
+  },[recarga])
   const filterinFormation = useMemo(
     () =>
       (info_bitacora || []).filter((item) => {
@@ -1097,8 +1097,8 @@ const [exportando, setExportando] = useState(false);
   return (
     <div className="w-full px-2 md:px-0">
       {/* Alerta de Seguridad Inmutable */}
-      <div 
-        className="flex items-start md:items-center gap-3 p-3.5 mb-5 rounded-xl" 
+      <div
+        className="flex items-start md:items-center gap-3 p-3.5 mb-5 rounded-xl"
         style={{ background: "#FEF2F2", border: "1px solid #FCA5A5" }}
       >
         <Shield size={18} color="#DC2626" className="shrink-0 mt-0.5 md:mt-0" />
@@ -1112,29 +1112,29 @@ const [exportando, setExportando] = useState(false);
         <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "#1E293B" }}>
           Filtrar registros de auditoría
         </p>
-        
+
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
           {/* 1. Filtro: Usuario (Nombre) */}
         <div className="flex flex-col gap-1">
   <label style={{ color: "#1E293B", fontSize: 12, fontWeight: 600 }}>
     Usuario / Nombre
   </label>
-  
-  <input 
-    type="text" 
-    placeholder="Buscar o seleccionar usuario..." 
+
+  <input
+    type="text"
+    placeholder="Buscar o seleccionar usuario..."
     value={filtros.usuario}
     onChange={(e) => handleFiltroChange("usuario", e.target.value)}
     // 1. Enlazamos el input con el datalist de abajo usando el ID único:
     list="sugerencias-usuarios"
-    className="w-full px-3 py-2.5 rounded-lg text-slate-900 placeholder:text-slate-400" 
-    style={{ 
-      border: "1px solid #CBD2E1", 
-      fontSize: 13, 
-      outline: "none", 
-      background: "#FFFFFF", 
-      color: "#0F172A" 
-    }} 
+    className="w-full px-3 py-2.5 rounded-lg text-slate-900 placeholder:text-slate-400"
+    style={{
+      border: "1px solid #CBD2E1",
+      fontSize: 13,
+      outline: "none",
+      background: "#FFFFFF",
+      color: "#0F172A"
+    }}
   />
 
   {/* 2. El datalist contiene las opciones interactivas */}
@@ -1152,12 +1152,12 @@ const [exportando, setExportando] = useState(false);
   value={filtros.modulo} // Asegúrate de que coincida con tu estado de filtros (ej. filtros.modulo)
   onChange={(e) => handleFiltroChange("modulo", e.target.value as TipoModulo)}
   className="w-full px-3 py-2.5 rounded-lg text-slate-900"
-  style={{ 
-    border: "1px solid #CBD2E1", 
-    fontSize: 13, 
-    outline: "none", 
-    background: "#FFFFFF", 
-    color: "#0F172A" 
+  style={{
+    border: "1px solid #CBD2E1",
+    fontSize: 13,
+    outline: "none",
+    background: "#FFFFFF",
+    color: "#0F172A"
   }}
 >
   <option value="">Todos los módulos</option>
@@ -1176,12 +1176,12 @@ const [exportando, setExportando] = useState(false);
           value={filtros.rol}
           onChange={(e) => handleFiltroChange("rol", e.target.value as TipoRol)}
           className="w-full px-3 py-2.5 rounded-lg text-slate-900"
-          style={{ 
-            border: "1px solid #CBD2E1", 
-            fontSize: 13, 
-            outline: "none", 
-            background: "#FFFFFF", 
-            color: "#0F172A" 
+          style={{
+            border: "1px solid #CBD2E1",
+            fontSize: 13,
+            outline: "none",
+            background: "#FFFFFF",
+            color: "#0F172A"
           }}
         >
           <option value="">Todos los roles</option>
@@ -1196,20 +1196,20 @@ const [exportando, setExportando] = useState(false);
           {/* 4. Filtro: Fecha */}
           <div className="flex flex-col gap-1">
             <label style={{ color: "#1E293B", fontSize: 12, fontWeight: 600 }}>Fecha específica</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={filtros.fecha}
               onChange={(e) => handleFiltroChange("fecha", e.target.value)}
-              className="w-full px-3 py-2.5 rounded-lg text-slate-900" 
-              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF", color: "#0F172A" }} 
+              className="w-full px-3 py-2.5 rounded-lg text-slate-900"
+              style={{ border: "1px solid #CBD2E1", fontSize: 13, outline: "none", background: "#FFFFFF", color: "#0F172A" }}
             />
           </div>
         </div>
 
         {/* Botonera de Acciones (Apilada en celulares, en línea en escritorio) */}
         <div className="flex flex-col sm:flex-row gap-2 mt-2 sm:justify-end">
-       
-          
+
+
   <button
   onClick={handleExportarExcel}
   disabled={exportando}
@@ -1247,15 +1247,15 @@ const [exportando, setExportando] = useState(false);
   className={`
     group relative flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium text-sm
     transition-all duration-300 ease-in-out
-    ${estaRecargando 
-      ? "bg-slate-100 text-slate-400 cursor-not-allowed" 
+    ${estaRecargando
+      ? "bg-slate-100 text-slate-400 cursor-not-allowed"
       : "bg-blue-600 text-white hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-200 active:scale-95"
     }
   `}
 >
   {/* CONTENEDOR DE ICONOS */}
   <div className="relative w-5 h-5 flex items-center justify-center">
-    
+
     {/* SVG 1: Recargar (Visible por defecto, desaparece al cargar) */}
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -1297,7 +1297,7 @@ const [exportando, setExportando] = useState(false);
         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
       />
     </svg>
-    
+
   </div>
 
   {/* TEXTO DINÁMICO */}
@@ -1314,7 +1314,7 @@ const [exportando, setExportando] = useState(false);
       {/* Contenedor con Scroll Horizontal en móvil */}
 
 
-<div 
+<div
   className="w-full rounded-2xl border border-slate-200/80 bg-white shadow-xl shadow-slate-100/50 overflow-hidden"
 >
   {/* CONTENEDOR CON SCROLL GENERAL (Horizontal para móviles, Vertical limitado para muchos datos) */}
@@ -1323,8 +1323,8 @@ const [exportando, setExportando] = useState(false);
       <thead>
         <tr className="bg-slate-50/70 backdrop-blur-md sticky top-0 z-10 transition-colors">
           {["Fecha / Hora", "Usuario", "Rol", "Acción realizada", "Módulo", "Dirección IP"].map((h, idx) => (
-            <th 
-              key={h} 
+            <th
+              key={h}
               className={`
                 text-left px-5 py-4 text-[11px] font-bold tracking-wider text-slate-500 uppercase
                 border-b border-slate-200 bg-slate-50/90 backdrop-blur-sm sticky top-0
@@ -1337,11 +1337,11 @@ const [exportando, setExportando] = useState(false);
           ))}
         </tr>
       </thead>
-      
+
       <tbody className="divide-y divide-slate-100 bg-white">
         {filterinFormation.map((b, i) => (
-          <tr 
-            key={i} 
+          <tr
+            key={i}
             className="hover:bg-slate-50/80 transition-all duration-200 group"
           >
             {/* 1. Fecha / Hora */}
@@ -1350,7 +1350,7 @@ const [exportando, setExportando] = useState(false);
                 {b.fecha}
               </span>
             </td>
-            
+
             {/* 2. Usuario */}
             <td className="px-5 py-3.5 whitespace-nowrap">
               <div className="flex items-center gap-2.5">
@@ -1363,21 +1363,21 @@ const [exportando, setExportando] = useState(false);
                 </span>
               </div>
             </td>
-            
+
             {/* 3. Rol */}
             <td className="px-5 py-3.5 whitespace-nowrap">
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-md text-[11px] font-medium tracking-wide bg-indigo-50 text-indigo-700 border border-indigo-100/80 shadow-sm shadow-indigo-100/30">
                 {b.rol}
               </span>
             </td>
-            
+
             {/* 4. Acción realizada */}
             <td className="px-5 py-3.5">
               <span className="text-sm font-medium text-slate-600 line-clamp-1 group-hover:text-slate-900 transition-colors">
                 {b.accion}
               </span>
             </td>
-            
+
             {/* 5. Módulo */}
             <td className="px-5 py-3.5 whitespace-nowrap">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-slate-700 bg-slate-100 border border-slate-200/60">
@@ -1385,7 +1385,7 @@ const [exportando, setExportando] = useState(false);
                 {b.modulo}
               </span>
             </td>
-            
+
             {/* 6. Dirección IP */}
             <td className="px-5 py-3.5 whitespace-nowrap">
               <span className="text-xs font-mono font-medium text-slate-400 group-hover:text-slate-600 transition-colors">
@@ -1397,7 +1397,7 @@ const [exportando, setExportando] = useState(false);
       </tbody>
     </table>
   </div>
-  
+
   {/* FOOTER DE CONTEO (Opcional, pero le da el toque final premium) */}
   <div className="bg-slate-50/50 px-5 py-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
     <span>Mostrando {filterinFormation.length} registros de auditoría</span>
@@ -1443,7 +1443,7 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
   return (
     <div className="flex flex-col gap-6 w-full">
       {/* Menú Segmentado (Segmented Control Pattern) */}
-      <nav 
+      <nav
         aria-label="Pestañas de configuración"
         className="flex items-center p-1 gap-1 w-full overflow-x-auto rounded-xl bg-slate-100/80 border border-slate-200/60 backdrop-blur-sm scrollbar-none"
       >
@@ -1465,10 +1465,10 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
                 }
               `}
             >
-              <Icon 
+              <Icon
                 className={`w-4 h-4 transition-colors duration-200 ${
                   isActive ? "text-indigo-600" : "text-slate-400 group-hover:text-slate-600"
-                }`} 
+                }`}
               />
               <span>{item.label}</span>
             </button>
@@ -1487,7 +1487,7 @@ export default function RenderTabConfiguracion({ configSection, setConfigSection
     </div>
   );
 }
-//////////////////////77configuracion 
+//////////////////////77configuracion
 //////////////////// configuracio plantillas
 
 import TemplatesMappingPage from "./componentes/template";
@@ -1498,7 +1498,7 @@ export function RenderConfigPlantillas() {
 import SelloManagementDashboard from "./componentes/sello_config_global";
 function RenderConfigSello() {
   return ( <SelloManagementDashboard/>
-   
+
   );
 }
 
@@ -1516,7 +1516,7 @@ function RenderConfigParametros() {
     return <div className="text-sm text-slate-500">Cargando parámetros...</div>;
   }
 
-  return <FormParametros parametrosPorClave={parametrosPorClave} onGuardado={() => loadTable("parametros_sistema")} />;
+  return <FormParametros parametrosPorClave={parametrosPorClave} onGuardado={async () => { await loadTable("parametros_sistema", true); }} />;
 }
 
 function FormParametros({
@@ -1676,12 +1676,12 @@ function FormParametros({
 // 4. COMPONENTE PRINCIPAL
 // ==========================================
 
-import { useSession } from "next-auth/react";
 import { generarTokenBackend } from "@/app/lib/auth-token";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import { useSession } from "next-auth/react";
 // 🔄 Reemplazar useDbRealtime por los nuevos hooks
-import { UsuarioModel, useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
-import { warn } from "console";
+import { useDbActions,useDbLoading,useDbTable,UsuarioModel } from "@/app/componets/tables_recharge";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 // ==========================================
 // COMPONENTE PRINCIPAL
@@ -1706,6 +1706,10 @@ export function Administracion() {
   const roles = useDbTable("roles");
   const { loadAllData, loadTable } = useDbActions();
   const loadingUsuarios = useDbLoading("usuarios");
+  const loadingRoles = useDbLoading("roles");
+  const loadingParametros = useDbLoading("parametros_sistema");
+  const loadingSellos = useDbLoading("sellos");
+  useModuleSplashReady("administracion", !loadingUsuarios && !loadingRoles && !loadingParametros && !loadingSellos);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -1738,6 +1742,7 @@ export function Administracion() {
 
     generarTokenBackend({
       sub: session?.user?.id_user ?? "",
+      sessionVersion: session?.user?.sessionVersion ?? 0,
       email: session?.user?.email ?? "",
       user: {
         id: session?.user?.id_user ?? "",
@@ -1896,13 +1901,13 @@ export function Administracion() {
     await loadTable("usuarios", true);
   };
 
-  const recargarUsuarios = useCallback(() => loadTable("usuarios", true), [loadTable]);
+  const recargarUsuarios = useCallback(async () => { await loadTable("usuarios", true); }, [loadTable]);
 console.log("LONGITUD STORE:", usuarios.length);
 console.log("LONGITUD FILTRADOS:", filteredUsers.length);
   return (
     <div className="module-page relative">
       {toast && <RenderToast message={toast} />}
-      
+
       {showModal && (
         <RenderModalUsuario
           editingUser={editingUser}

@@ -180,6 +180,7 @@ export interface CotizacionModel {
   idCliente: number | null;
   montoTotal: number | string | null;
   createdAt: Date | string;
+  fechaVencimiento?: Date | string;
   updatedAt: Date | string | null;
   viaticos: number | string | null;
   estado: Estados;
@@ -190,11 +191,26 @@ export interface CotizacionModel {
   cliente: ClienteModel | null;
   historialEstados: HistorialEstadoCotizacionModel[];
   Historiacambios: HistorialCambioItem[];
+  seguimientosComerciales?: SeguimientoComercialTraza[];
+}
+
+export interface SeguimientoComercialTraza {
+  id: number;
+  tipo: string;
+  descripcion: string;
+  fecha: Date | string;
+  resultado: string | null;
+  origen: string;
+  usuario: string | null;
 }
 
 export interface OrdenTrabajoDetalleModel {
   idDetalle: number;
   idOrdenTrabajo: number;
+  idUnidad: string | null;
+  listoParaAsignar: boolean;
+  calibracionIniciada: boolean;
+  certificadoCreado: boolean;
   item: number;
   tipoServicio: string;
   instrumento: string;
@@ -285,6 +301,7 @@ export interface RecepcionEquipoDetalleModel {
   estampilla: string | null;
   observaciones: string | null;
   calibracionIniciada?: boolean;
+  certificadoAprobado?: boolean;
 }
 
 export interface RecepcionEquipoModel {
@@ -388,6 +405,8 @@ export interface SeguimientoComercialModel {
   resultado: string | null;
   idUsuario: number | null;
   createdAt: Date | string;
+  origen: "MANUAL" | "SISTEMA";
+  eliminadoAt?: Date | string | null;
   usuario?: { idUsuario: number; nombreCompleto: string; correo: string } | null;
 }
 

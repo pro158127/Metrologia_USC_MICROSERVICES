@@ -8,17 +8,17 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { FiltrosClienteCotizacion, useFiltrosClienteCotizacion } from "@/app/dashboard/components/FiltrosClienteCotizacion";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   Package,
   FileText,
   CheckCircle,
   ArrowLeft,
-  Shield,
   Calendar,
   Filter,
   Plus,
   Trash2,
-  Search,
   History,
   X,
 } from "lucide-react";
@@ -29,8 +29,6 @@ import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
 import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
-import { VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
-import type { QuoteItem, TarifaOption, cambiospayload } from "@/tipos/cotizacion";
 import type {
   FilaInstrumento,
   FormularioRecepcion,
@@ -38,14 +36,11 @@ import type {
   FilterBarProps,
   RecepcionCardProps,
   DatosGeneralesSectionProps,
+  SolicitanteRecepcion,
   TablaInstrumentosProps,
   InspeccionYFirmasSectionProps,
   FormFooterActionsProps,
   RecepcionEquipoModel,
-  ClienteModel,
-  CotizacionModel,
-  OrdenTrabajoModel,
-  TarifaModel,
 } from "@/tipos/recepciones";
 
 // ============================================================
@@ -119,20 +114,27 @@ const HeaderSection = ({
   );
 };
 
+function referenciaComercialRecepcion({ raw, solicitante, codigoCotizacion }: RecepcionConInfo) {
+  return {
+    idCliente: raw.cotizacion?.idCliente ?? raw.ordenTrabajo?.idCliente,
+    nombreCliente: raw.cotizacion?.cliente?.razonSocial ?? raw.ordenTrabajo?.cliente?.razonSocial ?? solicitante,
+    idCotizacion: raw.idCotizacion ?? raw.ordenTrabajo?.idCotizacion,
+    codigoCotizacion: codigoCotizacion || raw.ordenTrabajo?.cotizacion?.codigo,
+  };
+}
+
 // 3.3 FilterBar
 const FilterBar = ({
-  filtroCliente,
+  filtrosComerciales,
   filtroAnio,
   filtroMes,
   filtroDia,
-  clientesUnicos,
   aniosDisponibles,
-  onClienteChange,
   onAnioChange,
   onMesChange,
   onDiaChange,
   onAgregarRecepcion,
-}: FilterBarProps) => {
+}: FilterBarProps & { filtrosComerciales: React.ComponentProps<typeof FiltrosClienteCotizacion> }) => {
   const { can } = usePermissions();
   const puedeRegistrar = can("recepcion_de_equipos", "registrar");
   const MESES = [
@@ -159,29 +161,7 @@ const FilterBar = ({
           <span>Filtrar por:</span>
         </div>
 
-        <div className="relative">
-          <input
-            type="text"
-            list="clientes-datalist"
-            value={filtroCliente}
-            onChange={(e) => onClienteChange(e.target.value)}
-            placeholder="Buscar o selec. cliente..."
-            className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-3 py-1.5 outline-none font-medium text-slate-700 w-48 placeholder:text-slate-400"
-          />
-          <datalist id="clientes-datalist">
-            {clientesUnicos.map((cliente) => (
-              <option key={cliente} value={cliente} />
-            ))}
-          </datalist>
-          {filtroCliente && (
-            <button
-              onClick={() => onClienteChange("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[10px] font-bold border-none bg-transparent cursor-pointer"
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <FiltrosClienteCotizacion {...filtrosComerciales} />
 
         <select
           value={filtroAnio}
@@ -248,7 +228,7 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
           </span>
         </div>
         <div className="text-xs font-medium text-slate-600">
-          {recepcionInfo.clienteNombre}
+          {recepcionInfo.solicitante || "Solicitante no especificado"}
         </div>
         <div className="text-[10px] text-slate-400 font-medium mt-1">
           {recepcionInfo.codigoCotizacion && (
@@ -266,12 +246,11 @@ const RecepcionCard = ({ recepcionInfo, onSelect }: RecepcionCardProps) => {
   );
 };
 
-// 3.5 DatosGeneralesSection (con búsqueda de cotización y OT)
+// 3.5 DatosGeneralesSection
 const DatosGeneralesSection = ({
   // Valores del formulario
-  idCliente,
-  clienteNombre,
   solicitante,
+  idCliente,
   nombreQuienEntrega,
   cotizacionCodigo,
   ordenTrabajoCodigo,
@@ -281,36 +260,21 @@ const DatosGeneralesSection = ({
   nombreQuienRecibe,
   nombreQuienEmpaca,
   // Datos para sugerencias (desde contexto)
-  clientes,
-  cotizaciones,
-  ordenesTrabajo,
+  solicitantes,
+  cargandoSolicitantes,
+  onSeleccionarSolicitante,
   // Función de actualización
   isNew, // 🟢 Nueva propiedad
   bloqueado = false,
   nombreRecibeBloqueado = false,
   onUpdateGeneral,
-  onUpdateCliente,
 }: DatosGeneralesSectionProps & {
   isNew: boolean;
   nombreRecibeBloqueado?: boolean;
-  onUpdateCliente: (id: number | null) => void;
 }) => {
-  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
-  const camposRaizBloqueados = isNew || bloqueado;
-  const clienteBloqueado = bloqueado;
-  // Listas para datalist
-  const clientesList = useMemo(
-    () => clientes.map((c) => c.razonSocial).filter(Boolean),
-    [clientes]
-  );
-  const cotizacionesList = useMemo(
-    () => cotizaciones.map((c) => c.codigo).filter(Boolean),
-    [cotizaciones]
-  );
-  const ordenesList = useMemo(
-    () => ordenesTrabajo.map((o) => o.codigo).filter(Boolean),
-    [ordenesTrabajo]
-  );
+  // La cotización y la OT se vinculan desde su flujo propio, nunca manualmente aquí.
+  const camposRaizBloqueados = true;
+  const altaIndependiente = isNew && !cotizacionCodigo.trim() && !ordenTrabajoCodigo.trim();
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-sm p-5">
@@ -319,46 +283,34 @@ const DatosGeneralesSection = ({
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="md:col-span-2">
-          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
-            Cliente
+          <label htmlFor="solicitante-recepcion" className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
+            Solicitante
           </label>
-          {clienteBloqueado ? (
-            <input
-              value={clienteNombre || solicitante}
-              disabled
-              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-100 text-slate-400 text-xs cursor-not-allowed font-medium"
-            />
-          ) : (
+          {altaIndependiente ? (
             <select
+              id="solicitante-recepcion"
               value={idCliente ?? ""}
-              onChange={(e) => onUpdateCliente(e.target.value ? Number(e.target.value) : null)}
+              onChange={(event) => onSeleccionarSolicitante(
+                solicitantes.find((cliente) => cliente.idCliente === Number(event.target.value)),
+              )}
+              disabled={cargandoSolicitantes}
               className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
             >
-              <option value="">Seleccionar cliente...</option>
-              {clientes.map((c) => (
-                <option key={c.idCliente} value={c.idCliente}>
-                  {c.razonSocial} — {c.nitCedula}
+              <option value="">{cargandoSolicitantes ? "Cargando solicitantes…" : "Seleccione el solicitante registrado"}</option>
+              {solicitantes.map((cliente) => (
+                <option key={cliente.idCliente} value={cliente.idCliente}>
+                  {cliente.razonSocial} · {cliente.nitCedula}
                 </option>
               ))}
             </select>
+          ) : (
+            <input
+              id="solicitante-recepcion"
+              value={solicitante}
+              readOnly
+              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-100 text-xs"
+            />
           )}
-        </div>
-        <div className="md:col-span-2">
-          <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
-            Solicitante
-          </label>
-          <input
-            list="clientes-datalist-form"
-            value={solicitante}
-            onChange={(e) => onUpdateGeneral("solicitante", e.target.value)}
-            className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs"
-            placeholder="Nombre de la empresa o cliente"
-          />
-          <datalist id="clientes-datalist-form">
-            {clientesList.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
         </div>
         <div>
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
@@ -372,40 +324,26 @@ const DatosGeneralesSection = ({
         </div>
         <div>
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
-            Cotización (código)
+            Cotización (asignación automática)
           </label>
           <input
-            list={!camposRaizBloqueados ? "cotizaciones-datalist" : undefined}
             value={cotizacionCodigo}
-            placeholder="Automático"
+            placeholder={isNew ? "Se asigna automáticamente al guardar" : "Sin cotización asociada"}
             disabled={camposRaizBloqueados}
-            onChange={(e) => onUpdateGeneral("cotizacionCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
-          <datalist id="cotizaciones-datalist">
-            {cotizacionesList.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
         </div>
 
        <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
-            Orden de Trabajo (código)
+            Orden de Trabajo (asignación automática)
           </label>
           <input
-            list={!camposRaizBloqueados ? "ordenes-datalist" : undefined}
             value={ordenTrabajoCodigo}
-            placeholder="Automático"
+            placeholder={isNew ? "Pendiente de aprobación" : "Sin OT asociada"}
             disabled={camposRaizBloqueados}
-            onChange={(e) => onUpdateGeneral("ordenTrabajoCodigo", e.target.value)}
             className={`w-full px-3 py-1.5 rounded-xl border text-xs ${camposRaizBloqueados ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed font-medium' : 'bg-white border-slate-200'}`}
           />
-          <datalist id="ordenes-datalist">
-            {ordenesList.map((o) => (
-              <option key={o} value={o} />
-            ))}
-          </datalist>
         </div>
         <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
@@ -416,6 +354,7 @@ const DatosGeneralesSection = ({
               <input
                 type="radio"
                 name="sitioGlobal"
+                disabled={bloqueado}
                 value="Laboratorio permanente"
                 checked={sitioCalibracion === "Laboratorio permanente"}
                 onChange={(e) => onUpdateGeneral("sitioCalibracion", e.target.value)}
@@ -427,12 +366,25 @@ const DatosGeneralesSection = ({
               <input
                 type="radio"
                 name="sitioGlobal"
+                disabled={bloqueado}
                 value="Instalaciones del cliente"
                 checked={sitioCalibracion === "Instalaciones del cliente"}
                 onChange={(e) => onUpdateGeneral("sitioCalibracion", e.target.value)}
                 className="mr-1.5"
               />{" "}
               Instalaciones del cliente
+            </label>
+            <label className="inline-flex items-center text-xs font-medium text-slate-700">
+              <input
+                type="radio"
+                name="sitioGlobal"
+                value="Interno USC"
+                checked={sitioCalibracion === "Interno USC"}
+                disabled={bloqueado}
+                onChange={(e) => onUpdateGeneral("sitioCalibracion", e.target.value)}
+                className="mr-1.5"
+              />
+              Interno USC
             </label>
           </div>
         </div>
@@ -474,6 +426,9 @@ const DatosGeneralesSection = ({
             }`}
           />
         </div>
+          <p className="col-span-full -mt-3 text-[10px] text-slate-500">
+            Se registra la cuenta que guarda la primera recepción con instrumentos.
+          </p>
         <div className="md:col-span-2">
           <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase">
             Nombre quién empaca
@@ -490,6 +445,27 @@ const DatosGeneralesSection = ({
 };
 
 // 3.6 TablaInstrumentos con selector desde tarifas
+const claveServicioRecepcion = (servicio: string) => servicio.trim().toLowerCase().replace(/[_\s]+/g, " ");
+
+const etiquetaServicioRecepcion = (servicio: string) => {
+  const clave = claveServicioRecepcion(servicio);
+  if (clave === "acreditado") return "Acreditado";
+  if (clave === "no acreditado") return "No acreditado";
+  return servicio.trim();
+};
+
+const tiposServicioRecepcion = (servicios: string[]) =>
+  [...new Map(servicios.filter((servicio) => servicio.trim()).map((servicio) =>
+    [claveServicioRecepcion(servicio), etiquetaServicioRecepcion(servicio)] as const))];
+
+// Los campos de texto con datalist eliminan saltos de línea de las opciones.
+const textoUnaLineaRecepcion = (texto: string) => texto.trim().replace(/\s+/g, " ");
+
+const opcionTarifaRecepcion = (tarifa: { Instrumento: string; tipoServicio: string; magnitud: string; Norma: string }) =>
+  textoUnaLineaRecepcion(`${tarifa.Instrumento} — ${etiquetaServicioRecepcion(tarifa.tipoServicio)} · ${tarifa.magnitud} · ${tarifa.Norma}`);
+
+const claveInstrumentoRecepcion = (nombre: string) => textoUnaLineaRecepcion(nombre).toLocaleLowerCase("es-CO");
+
 const TablaInstrumentos = ({
   instrumentos,
   tarifasDisponibles,
@@ -500,17 +476,10 @@ const TablaInstrumentos = ({
 }: TablaInstrumentosProps) => {
   const { can } = usePermissions();
   const puedeRegistrar = can("recepcion_de_equipos", "registrar");
-  // Función para sugerir instrumentos desde tarifas
-  const sugerenciasTarifas = useMemo(() => {
-    return tarifasDisponibles.map((t) => ({
-      label: `${t.magnitud} - ${t.tipoServicio} (${t.Instrumento})`,
-      value: t.Instrumento,
-      id: t.idTarifa,
-      magnitud: t.magnitud,
-      tipoServicio: t.tipoServicio,
-      instrumento: t.Instrumento,
-    }));
-  }, [tarifasDisponibles]);
+  const tarifasActivas = useMemo(
+    () => tarifasDisponibles.filter((tarifa) => tarifa.estado === "ACTIVO"),
+    [tarifasDisponibles],
+  );
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-sm overflow-hidden">
@@ -569,21 +538,15 @@ const TablaInstrumentos = ({
                   <div className="relative">
                     <input
                       list={`instrumentos-${i}`}
-                      value={inst.instrumento}
-                      disabled={inst.calibracionIniciada}
+                      value={inst.instrumento.replace(/[\r\n]+/g, " ")}
+                      disabled={inst.calibracionIniciada || inst.certificadoAprobado}
                       onChange={(e) => onFilaChange(i, "instrumento", e.target.value)}
                       placeholder="Escriba o seleccione"
                       className="w-full p-1 border border-slate-200 rounded font-medium"
                     />
                     <datalist id={`instrumentos-${i}`}>
-                      {sugerenciasTarifas.map((sug) => (
-                        <option
-                          key={sug.id}
-                          value={sug.instrumento}
-                          data-id={sug.id}
-                          data-magnitud={sug.magnitud}
-                          data-tipo={sug.tipoServicio}
-                        />
+                      {tarifasActivas.map((tarifa) => (
+                        <option key={tarifa.idTarifa} value={opcionTarifaRecepcion(tarifa)} />
                       ))}
                     </datalist>
                   </div>
@@ -604,14 +567,18 @@ const TablaInstrumentos = ({
 
                 <td className="p-3">
                   <select
-                    value={inst.tipoServicio}
-                    disabled={inst.calibracionIniciada}
+                    value={claveServicioRecepcion(inst.tipoServicio)}
+                    disabled={inst.calibracionIniciada || inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "tipoServicio", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded"
                   >
                     <option value="">Seleccione servicio</option>
-                    {[...new Set(tarifasDisponibles.filter((t) => t.estado === "ACTIVO" && t.Instrumento.trim().toLowerCase() === inst.instrumento.trim().toLowerCase()).map((t) => t.tipoServicio))].map((tipo) => (
-                      <option key={tipo} value={tipo}>{tipo}</option>
+                    {tiposServicioRecepcion([
+                      ...tarifasActivas.filter((t) => claveInstrumentoRecepcion(t.Instrumento) === claveInstrumentoRecepcion(inst.instrumento))
+                        .map((t) => t.tipoServicio),
+                      inst.tipoServicio,
+                    ]).map(([tipo, etiqueta]) => (
+                      <option key={tipo} value={tipo}>{etiqueta}</option>
                     ))}
                   </select>
                 </td>
@@ -628,6 +595,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.marca}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "marca", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded"
                   />
@@ -636,6 +604,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.modelo}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "modelo", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded"
                   />
@@ -644,6 +613,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.serie}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "serie", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded font-mono text-[11px]"
                   />
@@ -652,6 +622,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.codigoInterno}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "codigoInterno", e.target.value)}
                     className="w-full p-1 border border-slate-200 rounded font-mono text-[11px]"
                   />
@@ -660,6 +631,7 @@ const TablaInstrumentos = ({
                 <td className="p-2 bg-indigo-50/5">
                   <input
                     value={inst.resolucion}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "resolucion", e.target.value)}
                     placeholder="0.01"
                     className="w-full p-1.5 border border-slate-200 rounded text-center"
@@ -670,12 +642,14 @@ const TablaInstrumentos = ({
                   <input
                     type="checkbox"
                     checked={inst.sensorInt}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "sensorInt", e.target.checked)}
                     className="mr-2"
                   />
                   <input
                     type="checkbox"
                     checked={inst.sensorExt}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "sensorExt", e.target.checked)}
                   />
                 </td>
@@ -732,7 +706,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.estampilla}
-                    disabled={inst.calibracionIniciada}
+                    disabled={inst.calibracionIniciada || inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "estampilla", e.target.value)}
                     placeholder="USC-"
                     className="w-full p-1 border border-slate-200 rounded font-mono text-[11px]"
@@ -742,6 +716,7 @@ const TablaInstrumentos = ({
                 <td className="p-2">
                   <input
                     value={inst.observaciones}
+                    disabled={inst.certificadoAprobado}
                     onChange={(e) => onFilaChange(i, "observaciones", e.target.value)}
                     placeholder="Notas técnicas..."
                     className="w-full p-1 border border-slate-200 rounded"
@@ -753,8 +728,8 @@ const TablaInstrumentos = ({
                   <button
                     type="button"
                     onClick={() => onEliminarFila(i)}
-                    disabled={inst.calibracionIniciada}
-                    title={inst.calibracionIniciada ? "No se puede eliminar: la calibración ya inició" : "Eliminar instrumento"}
+                    disabled={inst.calibracionIniciada || inst.certificadoAprobado}
+                    title={inst.certificadoAprobado ? "No se puede editar ni eliminar: el certificado ya fue aprobado" : inst.calibracionIniciada ? "No se puede eliminar: la calibración ya inició" : "Eliminar instrumento"}
                     className="p-1.5 rounded-lg border border-slate-200 bg-white text-red-500 hover:bg-red-50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Trash2 size={13} />
@@ -930,7 +905,8 @@ const FormFooterActions = ({
 // ============================================================
 import {
   getRecepcionesEnriquecidas,
-  getInitialData,
+  getRecepcionPorId,
+  obtenerSolicitantesDeRecepcion,
   crearRecepcion,
   actualizarRecepcion,
   eliminarInstrumentoRecepcionConMotivo,
@@ -942,11 +918,8 @@ export function MainRenderers() {
   // --- Estado global por tabla (solo se re-renderiza si esa tabla cambia) ---
   const recepcionesEquipo = useDbTable("recepciones_equipo");
   const cotizacionesStore = useDbTable("cotizaciones");
-  const ordenesTrabajoStore = useDbTable("ordenes_trabajo");
-  const clientesStore = useDbTable("clientes");
   const tarifasStore = useDbTable("tarifas");
-  const { mergeTable, setTableLoading } = useDbActions();
-  const loadingRecepciones = useDbLoading("recepciones_equipo");
+  const { loadTable } = useDbActions();
   const { data: session } = useSession();
   const nombreUsuarioSesion = session?.user?.name ?? "";
   const { can } = usePermissions();
@@ -955,9 +928,10 @@ export function MainRenderers() {
 
   // --- Estado local del componente ---
   const [selectedRecepcionId, setSelectedRecepcionId] = useState<string | null>(null);
+  const [cargandoRecepcion, setCargandoRecepcion] = useState(false);
+  const [solicitantes, setSolicitantes] = useState<SolicitanteRecepcion[]>([]);
+  const [cargandoSolicitantes, setCargandoSolicitantes] = useState(false);
   const [formulario, setFormulario] = useState<FormularioRecepcion>({
-    idCliente: null,
-    clienteNombre: "",
     solicitante: "",
     nombreQuienEntrega: "",
     cotizacionCodigo: "",
@@ -976,7 +950,6 @@ export function MainRenderers() {
   });
 
   // Filtros
-  const [filtroCliente, setFiltroCliente] = useState<string>("");
   const [filtroMes, setFiltroMes] = useState<string>("all");
   const [filtroAnio, setFiltroAnio] = useState<string>(new Date().getFullYear().toString());
   const [filtroDia, setFiltroDia] = useState<string>("");
@@ -992,77 +965,23 @@ export function MainRenderers() {
   const [historialItems, setHistorialItems] = useState<HistorialCambioItem[]>([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
 
-  // Soft delete con versionado (reutiliza el VersionModal de Cotizaciones)
-  const [isDeleteVersionOpen, setDeleteVersionOpen] = useState(false);
-  const [deleteModalItems, setDeleteModalItems] = useState<QuoteItem[]>([]);
-  const [deleteInstrumento, setDeleteInstrumento] = useState<{ idInstrumento: number; index: number } | null>(null);
+  const [retiro, setRetiro] = useState<
+    { tipo: "recepcion" } | { tipo: "instrumento"; idInstrumento: number; nombre: string; identificador: string } | null
+  >(null);
+  const [motivoRetiro, setMotivoRetiro] = useState("");
+  const [observacionesRetiro, setObservacionesRetiro] = useState("");
+  const [errorRetiro, setErrorRetiro] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Soft delete de la recepción completa (modal de confirmación)
-  const [deleteRecepcionOpen, setDeleteRecepcionOpen] = useState(false);
-  const [deleteRecepcionMotivo, setDeleteRecepcionMotivo] = useState("");
-
-  // En edición, si la recepción ya está atada a una OT, los campos raíz se bloquean.
+  // Los campos raíz identifican el grupo aunque la OT esté pendiente.
   const esEdicionAtada =
     selectedRecepcionId !== null &&
     selectedRecepcionId !== "NUEVA" &&
-    !!recepcionActual?.idOrdenTrabajo;
+    Boolean(recepcionActual?.idOrdenTrabajo || recepcionActual?.idCotizacion);
   const tecnicosInstrumentos = recepcionActual?.ordenTrabajo?.tecnicosInstrumentos ?? [];
   const nombresTecnicosAsignados = [...new Set(
     tecnicosInstrumentos.map((asignacion) => asignacion.nombreTecnico.trim()).filter(Boolean)
   )].join(", ");
-
-  // --- Helpers para el VersionModal (soft delete) ---
-  const tarifasOptions: TarifaOption[] = useMemo(() => {
-    return (tarifasStore ?? []).map((t) => {
-      const historial = t.historial || [];
-      const activo = historial.find((h) => !h.fechaFin) || historial[0];
-      const precio = activo ? Number(activo.precioU) : 0;
-      return {
-        tipoServicio: t.tipoServicio || "ACREDITADO",
-        magnitud: t.magnitud || "",
-        instrumento: t.Instrumento || "Genérico",
-        norma: t.Norma || "N/A",
-        precio,
-      };
-    });
-  }, [tarifasStore]);
-
-  const getMagnitudesByTipo = useCallback(
-    (tipo: string): string[] => {
-      const unique = new Set<string>();
-      tarifasOptions.forEach((t) => {
-        if (t.tipoServicio === tipo) unique.add(t.magnitud);
-      });
-      return Array.from(unique).filter(Boolean);
-    },
-    [tarifasOptions]
-  );
-
-  const getInstrumentosByMagnitudAndTipo = useCallback(
-    (magnitud: string, tipo: string): TarifaOption[] =>
-      tarifasOptions.filter((t) => t.magnitud === magnitud && t.tipoServicio === tipo),
-    [tarifasOptions]
-  );
-
-  const calculateTotal = useCallback(
-    (listaItems: QuoteItem[], desc: number, viat: number) => {
-      const subtotal = listaItems.reduce(
-        (acc, item) => acc + item.cantidad * item.valorUnitario,
-        0
-      );
-      return (subtotal + viat) * (1 - desc / 100);
-    },
-    []
-  );
-
-  const formatCurrency = (value: number) =>
-    value.toLocaleString("es-CO", {
-      style: "currency",
-      currency: "COP",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
 
   // --- Helpers ---
   const showToast = useCallback((msg: string) => {
@@ -1070,31 +989,27 @@ export function MainRenderers() {
     setTimeout(() => setToast(""), 3000);
   }, []);
 
-useEffect(() => {
-  const fetchInitialData = async () => {
-    // Si ya hay datos, evitamos recargar
-    if (recepcionesEquipo.length > 0) return;
-    setTableLoading("recepciones_equipo", true);
-    try {
-      const data = await getInitialData();
-      // Actualizamos el contexto global (fusionando con el estado actual para no
-      // pisar actualizaciones en tiempo real que hayan llegado durante el fetch)
-      mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-      mergeTable("clientes", data.clientes as ClienteModel[]);
-      mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-      mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-      mergeTable("tarifas", data.tarifas as TarifaModel[]);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setTableLoading("recepciones_equipo", false);
+  useEffect(() => {
+    for (const tabla of ["cotizaciones", "ordenes_trabajo", "tarifas"] as const) {
+      void loadTable(tabla);
     }
-  };
-  fetchInitialData();
-}, []);
+  }, [loadTable]);
+
+  const recargarVinculados = useCallback(() => Promise.all([
+    loadTable("recepciones_equipo", true),
+    loadTable("cotizaciones", true),
+    loadTable("ordenes_trabajo", true),
+  ]), [loadTable]);
+
   // --- Derivaciones desde dbState ---
   // Lista de recepciones enriquecidas (server action)
   const [recepcionesEnriquecidas, setRecepcionesEnriquecidas] = useState<RecepcionConInfo[]>([]);
+  const [cargandoListadoRecepciones, setCargandoListadoRecepciones] = useState(true);
+  const cargandoRecepcionesStore = useDbLoading("recepciones_equipo");
+  const cargandoCotizacionesStore = useDbLoading("cotizaciones");
+  const cargandoOTsStore = useDbLoading("ordenes_trabajo");
+  const cargandoTarifasStore = useDbLoading("tarifas");
+  useModuleSplashReady("recepcion", !cargandoListadoRecepciones && !cargandoRecepcionesStore && !cargandoCotizacionesStore && !cargandoOTsStore && !cargandoTarifasStore);
 
   useEffect(() => {
     let activo = true;
@@ -1103,49 +1018,41 @@ useEffect(() => {
         .then((data) => {
           if (activo) setRecepcionesEnriquecidas(data);
         })
-        .catch((error) => console.error("Error actualizando recepciones:", error));
+        .catch((error) => console.error("Error actualizando recepciones:", error))
+        .finally(() => {
+          if (activo) setCargandoListadoRecepciones(false);
+        });
     }, 120);
     return () => {
       activo = false;
       window.clearTimeout(temporizador);
     };
-  }, [recepcionesEquipo, ordenesTrabajoStore]);
-
-  // Años disponibles para el filtro (derivados de recepcionesEquipo)
-  const aniosDisponibles = useMemo(() => {
-    const set = new Set<string>();
-    recepcionesEquipo.forEach((rec) => {
-      if (rec.fechaRecepcion) {
-        set.add(new Date(rec.fechaRecepcion).getFullYear().toString());
-      }
-    });
-    return Array.from(set).sort((a, b) => Number(b) - Number(a));
   }, [recepcionesEquipo]);
 
-  // Clientes únicos para filtro
-  const clientesUnicos = useMemo(() => {
+  // El endpoint enriquecido ya contiene la fecha usada por la lista.
+  const aniosDisponibles = useMemo(() => {
     const set = new Set<string>();
-    recepcionesEnriquecidas.forEach((r) => {
-      if (r.clienteNombre) set.add(r.clienteNombre);
+    recepcionesEnriquecidas.forEach((recepcion) => {
+      const anio = recepcion.fecha?.slice(0, 4);
+      if (anio) set.add(anio);
     });
-    return Array.from(set);
+    return Array.from(set).sort((a, b) => Number(b) - Number(a));
   }, [recepcionesEnriquecidas]);
+
+  const { filtrados: recepcionesPorClienteYCotizacion, controles: filtrosComerciales } =
+    useFiltrosClienteCotizacion(recepcionesEnriquecidas, referenciaComercialRecepcion);
 
   // Tarifas disponibles para autocomplete
   const tarifasDisponibles = tarifasStore || [];
 
-  // Cotizaciones y órdenes para datalist en el formulario
+  // Cotizaciones para sincronizar los detalles visibles por unidad.
   const cotizaciones = useMemo(() => cotizacionesStore ?? [], [cotizacionesStore]);
-  const ordenesTrabajo = ordenesTrabajoStore || [];
 
 
 
   // --- Filtrado de recepciones ---
   const recepcionesFiltradas = useMemo(() => {
-    return recepcionesEnriquecidas.filter((r) => {
-      if (filtroCliente && !r.clienteNombre.toLowerCase().includes(filtroCliente.toLowerCase())) {
-        return false;
-      }
+    return recepcionesPorClienteYCotizacion.filter((r) => {
       if (filtroDia) {
         return r.fecha === filtroDia;
       }
@@ -1154,24 +1061,19 @@ useEffect(() => {
       const coincideMes = filtroMes === "all" || mes === filtroMes;
       return coincideAnio && coincideMes;
     });
-  }, [recepcionesEnriquecidas, filtroCliente, filtroDia, filtroAnio, filtroMes]);
+  }, [recepcionesPorClienteYCotizacion, filtroDia, filtroAnio, filtroMes]);
 
   // --- Funciones del formulario ---
   const handleUpdateGeneral = useCallback((field: string, value: string | boolean) => {
     setFormulario((prev) => ({
       ...prev,
+      ...(field === "solicitante" && { idCliente: undefined }),
       [field]: value,
     }));
   }, []);
-
-  const handleUpdateCliente = useCallback((idCliente: number | null) => {
-    setFormulario((prev) => ({
-      ...prev,
-      idCliente,
-      clienteNombre:
-        clientesStore.find((c) => c.idCliente === idCliente)?.razonSocial ?? "",
-    }));
-  }, [clientesStore]);
+  const seleccionarSolicitante = useCallback((cliente?: SolicitanteRecepcion) => {
+    setFormulario((prev) => ({ ...prev, idCliente: cliente?.idCliente, solicitante: cliente?.razonSocial ?? "" }));
+  }, []);
 
   const handleFilaChange = useCallback(
     (index: number, propiedad: keyof FilaInstrumento, valor: FilaInstrumento[keyof FilaInstrumento]) => {
@@ -1179,10 +1081,22 @@ useEffect(() => {
         const instrumentos = [...prev.instrumentos];
         const cambios: Partial<FilaInstrumento> = { [propiedad]: valor };
         if (propiedad === "instrumento") {
-          const tarifas = (tarifasStore ?? []).filter((t) => t.estado === "ACTIVO" && t.Instrumento.trim().toLowerCase() === String(valor).trim().toLowerCase());
-          const tipos = [...new Set(tarifas.map((t) => t.tipoServicio))];
-          cambios.tipoServicio = tipos.length === 1 ? tipos[0] : "";
-          cambios.idTarifaSeleccionada = tarifas.length === 1 ? tarifas[0].idTarifa : undefined;
+          const activas = (tarifasStore ?? []).filter((tarifa) => tarifa.estado === "ACTIVO");
+          const elegida = activas.find((tarifa) => opcionTarifaRecepcion(tarifa) === textoUnaLineaRecepcion(String(valor)));
+          const coincidencias = elegida ? [elegida] : activas.filter((tarifa) =>
+            claveInstrumentoRecepcion(tarifa.Instrumento) === claveInstrumentoRecepcion(String(valor)));
+          const tipos = tiposServicioRecepcion(coincidencias.map((tarifa) => tarifa.tipoServicio));
+          if (elegida) cambios.instrumento = elegida.Instrumento;
+          cambios.tipoServicio = tipos.length === 1 ? coincidencias[0].tipoServicio : "";
+          cambios.idTarifaSeleccionada = coincidencias.length === 1 ? coincidencias[0].idTarifa : undefined;
+        }
+        if (propiedad === "tipoServicio") {
+          const coincidencias = tarifasStore.filter((tarifa) => tarifa.estado === "ACTIVO" &&
+            claveInstrumentoRecepcion(tarifa.Instrumento) === claveInstrumentoRecepcion(instrumentos[index].instrumento) &&
+            claveServicioRecepcion(tarifa.tipoServicio) === claveServicioRecepcion(String(valor)));
+          const seleccionada = coincidencias.find((tarifa) => tarifa.idTarifa === instrumentos[index].idTarifaSeleccionada);
+          cambios.idTarifaSeleccionada = seleccionada?.idTarifa ??
+            (coincidencias.length === 1 ? coincidencias[0].idTarifa : undefined);
         }
         instrumentos[index] = { ...instrumentos[index], ...cambios } as FilaInstrumento;
         return { ...prev, instrumentos };
@@ -1196,31 +1110,23 @@ useEffect(() => {
       ...prev,
       instrumentos: [...prev.instrumentos, crearFilaInstrumentoVacia()],
     }));
-    showToast("➕ Nueva fila de instrumento añadida.");
+    showToast("Instrumento agregado al formulario. Consolida la recepción para actualizar la cotización y la OT.");
   }, [showToast]);
 
   const eliminarFilaInstrumento = useCallback(
     (index: number) => {
       const fila = formulario.instrumentos[index];
 
-      // Si el instrumento ya existe en BD, se abre el modal de versionado
-      // (el mismo de Cotizaciones) para capturar el motivo del soft delete.
       if (fila?.idInstrumento && recepcionActual?.idRecepcion) {
-        const mapeados: QuoteItem[] = formulario.instrumentos
-          .filter((_, i) => i !== index)
-          .map((inst) => ({
-            id: Number(inst.idInstrumento ?? 0) || Math.floor(Math.random() * 1e9),
-            tipoServicio: "",
-            magnitud: "",
-            instrumento: inst.instrumento || "",
-            norma: "N/A",
-            cantidad: 1,
-            valorUnitario: 0,
-            lugarCalibracion: "Laboratorio",
-          }));
-        setDeleteModalItems(mapeados);
-        setDeleteInstrumento({ idInstrumento: fila.idInstrumento, index });
-        setDeleteVersionOpen(true);
+        setMotivoRetiro("");
+        setObservacionesRetiro("");
+        setErrorRetiro("");
+        setRetiro({
+          tipo: "instrumento",
+          idInstrumento: fila.idInstrumento,
+          nombre: fila.instrumento,
+          identificador: fila.estampilla || fila.serie,
+        });
         return;
       }
 
@@ -1236,232 +1142,9 @@ useEffect(() => {
     [formulario.instrumentos, recepcionActual, showToast]
   );
 
-  // --- Confirmación del soft delete (motivo capturado en el VersionModal) ---
-  const confirmarEliminarInstrumento = useCallback(
-    async (auditForm: cambiospayload) => {
-      if (!deleteInstrumento || !recepcionActual?.idRecepcion) return;
-      if (formulario.instrumentos.length <= 1) {
-        showToast("⚠️ No se puede eliminar el último instrumento activo de una recepción.");
-        return;
-      }
-
-      setIsDeleting(true);
-      try {
-        const res = await eliminarInstrumentoRecepcionConMotivo(
-          recepcionActual.idRecepcion,
-          deleteInstrumento.idInstrumento,
-          {
-            descripcion: auditForm.descripcion,
-            aprobo: auditForm.aprobo,
-            observaciones: auditForm.observaciones ?? null,
-          }
-        );
-        if (!res.ok) {
-          showToast(res.error || "No se pudo desactivar el instrumento.");
-          return;
-        }
-        showToast("🗑️ Instrumento desactivado (soft delete) y cotización versionada.");
-
-        setFormulario((prev) => {
-          if (prev.instrumentos.length <= 1) {
-            return prev;
-          }
-          const filtrados = prev.instrumentos.filter(
-            (_, idx) => idx !== deleteInstrumento.index
-          );
-          return { ...prev, instrumentos: filtrados };
-        });
-
-        // Refrescar datos de trazabilidad
-        setTableLoading("recepciones_equipo", true);
-        try {
-          const data = await getInitialData();
-          mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-          mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-          mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-        } finally {
-          setTableLoading("recepciones_equipo", false);
-        }
-      } finally {
-        setIsDeleting(false);
-        setDeleteVersionOpen(false);
-        setDeleteInstrumento(null);
-        setDeleteModalItems([]);
-      }
-    },
-    [deleteInstrumento, recepcionActual, formulario.instrumentos.length, showToast, mergeTable, setTableLoading]
-  );
-
-  // --- Operaciones de ítems dentro del VersionModal (solo contexto) ---
-  const agregarFilaModal = useCallback((_target: "create" | "modal") => {
-    setDeleteModalItems((prev) => [
-      ...prev,
-      {
-        id: Math.floor(Math.random() * 1e9),
-        tipoServicio: "",
-        magnitud: "",
-        instrumento: "",
-        norma: "N/A",
-        cantidad: 1,
-        valorUnitario: 0,
-        lugarCalibracion: "Laboratorio",
-      },
-    ]);
-  }, []);
-
-  const eliminarFilaModal = useCallback(
-    (idParaEliminar: number, _target: "create" | "modal") => {
-      setDeleteModalItems((prev) => prev.filter((f) => f.id !== idParaEliminar));
-    },
-    []
-  );
-
-  const manejarCambioModalFila = useCallback(
-    <K extends keyof QuoteItem>(
-      index: number,
-      propiedad: K,
-      valor: QuoteItem[K],
-      _target: "create" | "modal"
-    ) => {
-      setDeleteModalItems((prev) => {
-        const actualizados = [...prev];
-        actualizados[index] = { ...actualizados[index], [propiedad]: valor } as QuoteItem;
-        return actualizados;
-      });
-    },
-    []
-  );
-
-  // --- Cargar una recepción existente para editar ---
-  const cargarRecepcion = useCallback(
-    (recepcion: RecepcionEquipoModel) => {
-      setSelectedRecepcionId(recepcion.codigo || `REC-${recepcion.idRecepcion}`);
-      // Mapear a formulario
-      const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
-      const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
-      const clienteVinculado =
-        recepcion.cotizacion?.cliente ?? recepcion.ordenTrabajo?.cliente ?? null;
-      // Instrumentos
-     const instrumentos = (recepcion.instrumentos || []).map((det) => {
-        // Parseamos el JSON asumiendo que tiene la nueva estructura { entrada: {}, salida: {} }
-        // Se usa 'as any' o una interfaz específica si la tienes definida para det.estadoIBC
-        const estadoIBC = det.estadoIBC as {
-          entrada?: Record<string, boolean | null>;
-          salida?: Record<string, boolean | null>;
-        } | null;
-        const detallesCotizacion = cotizaciones.find((cotizacion) => cotizacion.idCotizacion === recepcion.idCotizacion)?.detalles ?? recepcion.cotizacion?.detalles ?? [];
-        const detalleCotizacion = (det.idUnidad
-          ? detallesCotizacion.find((detalle) => detalle.idUnidades.includes(det.idUnidad!))
-          : undefined) ?? detallesCotizacion.find((detalle) => detalle.equipoDescripcion.trim().toLowerCase() === det.instrumento.trim().toLowerCase());
-        
-        return {
-          id: generarIdUnico(),
-          idInstrumento: det.idInstrumento,
-          idUnidad: det.idUnidad,
-          calibracionIniciada: det.calibracionIniciada ?? false,
-          item: det.item ?? null,
-          instrumento: det.instrumento || "",
-          tipoServicio: detalleCotizacion?.tipoServicio || "",
-          marca: det.marca || "",
-          modelo: det.modelo || "",
-          serie: det.serie || "",
-          codigoInterno: det.codigoInventario || "",
-          resolucion: det.resolucion || "",
-          
-          // 🟢 ASIGNACIÓN CORREGIDA: Mapeamos hacia _in y _out
-          ibcE_in: estadoIBC?.entrada?.E ?? null,
-          ibcT_in: estadoIBC?.entrada?.T ?? null,
-          ibcD_in: estadoIBC?.entrada?.D ?? null,
-          ibcA_in: estadoIBC?.entrada?.A ?? null,
-          
-          ibcE_out: estadoIBC?.salida?.E ?? null,
-          ibcT_out: estadoIBC?.salida?.T ?? null,
-          ibcD_out: estadoIBC?.salida?.D ?? null,
-          ibcA_out: estadoIBC?.salida?.A ?? null,
-          
-          sensorInt: det.sensorInt ?? false,
-          sensorExt: det.sensorExt ?? false,
-          estampilla: det.estampilla || "",
-          observaciones: det.observaciones || "",
-          verificadoExcel: true,
-          observacionesSecretaria: "",
-          idTarifaSeleccionada: undefined,
-        };
-      });
-
-      setFormulario({
-        idCliente: clienteVinculado?.idCliente ?? null,
-        clienteNombre: clienteVinculado?.razonSocial ?? "",
-        solicitante: recepcion.solicitante || "",
-        nombreQuienEntrega: recepcion.nombreEntrega || "",
-        cotizacionCodigo,
-        ordenTrabajoCodigo,
-        sitioCalibracion:
-          recepcion.sitioCalibracion === "CLIENTE"
-            ? "Instalaciones del cliente"
-            : recepcion.sitioCalibracion === "LABORATORIO"
-            ? "Laboratorio permanente"
-            : "",
-        fechaRecepcion: recepcion.fechaRecepcion
-          ? new Date(recepcion.fechaRecepcion).toISOString().split("T")[0]
-          : "",
-        fechaSalida: recepcion.fechaSalida
-          ? new Date(recepcion.fechaSalida).toISOString().split("T")[0]
-          : "",
-        nombreQuienRecibe: recepcion.nombreRecibe || "",
-        nombreQuienEmpaca: recepcion.nombreEmpaca || "",
-        accesorios: recepcion.accesorios || "",
-        pruebasCompletas: recepcion.pruebasCompletas ?? true,
-        observacionesPruebas: recepcion.observacionesPruebas || "",
-        nombreQuienCalibra: recepcion.nombreCalibra || "",
-        nombreQuienRecibeServicio: recepcion.nombreRecibeServicio || "",
-        instrumentos: instrumentos.length > 0 ? instrumentos : [crearFilaInstrumentoVacia()],
-      });
-
-      setRecepcionActual(recepcion);
-      setActaGuardada(false);
-    },
-    [cotizaciones]
-  );
-
-  // --- Inicializar nueva recepción ---
-  const inicializarNuevaRecepcion = useCallback(() => {
-    if (!plantillasCompletas) {
-      showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
-      return;
-    }
-    const hoy = new Date().toISOString().split("T")[0];
-    setSelectedRecepcionId("NUEVA");
-    setFormulario({
-      idCliente: null,
-      clienteNombre: "",
-      solicitante: "",
-      nombreQuienEntrega: "",
-      cotizacionCodigo: "",
-      ordenTrabajoCodigo: "",
-      sitioCalibracion: "",
-      fechaRecepcion: hoy,
-      fechaSalida: "",
-      nombreQuienRecibe: "",
-      nombreQuienEmpaca: "",
-      accesorios: "",
-      pruebasCompletas: true,
-      observacionesPruebas: "",
-      nombreQuienCalibra: "",
-      nombreQuienRecibeServicio: "",
-      instrumentos: [crearFilaInstrumentoVacia()],
-    });
-    setRecepcionActual(null);
-    setActaGuardada(false);
-    showToast("📋 Nueva recepción creada.");
-  }, [showToast, plantillasCompletas]);
-
-  // --- Volver a la lista ---
   const volverALista = useCallback(() => {
     setSelectedRecepcionId(null);
     setFormulario({
-      idCliente: null,
-      clienteNombre: "",
       solicitante: "",
       nombreQuienEntrega: "",
       cotizacionCodigo: "",
@@ -1482,15 +1165,171 @@ useEffect(() => {
     setActaGuardada(false);
   }, []);
 
+
+  // --- Cargar una recepción existente para editar ---
+  const cargarRecepcion = useCallback(
+    async (recepcionLista: RecepcionEquipoModel) => {
+      setSelectedRecepcionId(recepcionLista.codigo || `REC-${recepcionLista.idRecepcion}`);
+      setRecepcionActual(null);
+      setCargandoRecepcion(true);
+      let recepcion: RecepcionEquipoModel;
+      try {
+        recepcion = await getRecepcionPorId(recepcionLista.idRecepcion);
+      } catch (error) {
+        console.error('No se pudo cargar la recepción seleccionada:', error);
+        setSelectedRecepcionId(null);
+        showToast('❌ No se pudo cargar la recepción completa. Intenta de nuevo.');
+        setCargandoRecepcion(false);
+        return;
+      }
+      // Mapear a formulario
+      const cotizacionCodigo = recepcion.cotizacion?.codigo || "";
+      const ordenTrabajoCodigo = recepcion.ordenTrabajo?.codigo || "";
+      // Instrumentos
+     const instrumentos = (recepcion.instrumentos || []).map((det) => {
+        // Parseamos el JSON asumiendo que tiene la nueva estructura { entrada: {}, salida: {} }
+        // Se usa 'as any' o una interfaz específica si la tienes definida para det.estadoIBC
+        const estadoIBC = det.estadoIBC as {
+          entrada?: Record<string, boolean | null>;
+          salida?: Record<string, boolean | null>;
+          E?: boolean | null; T?: boolean | null; D?: boolean | null; A?: boolean | null;
+        } | null;
+        const sitio = recepcion.sitioCalibracion ?? "LABORATORIO";
+        const detallesCotizacion = (recepcion.cotizacion?.detalles ??
+          cotizaciones.find((cotizacion) => cotizacion.idCotizacion === recepcion.idCotizacion)?.detalles ?? [])
+          .filter((detalle) => (detalle.sitio ?? "LABORATORIO") === sitio);
+        const porNombre = detallesCotizacion.filter((detalle) =>
+          detalle.equipoDescripcion.trim().toLowerCase() === det.instrumento.trim().toLowerCase());
+        const porUnidad = det.idUnidad
+          ? detallesCotizacion.find((detalle) => detalle.idUnidades?.includes(det.idUnidad!))
+          : undefined;
+        const detalleCotizacion = porUnidad ?? (porNombre.length === 1 ? porNombre[0] : undefined);
+
+        return {
+          id: generarIdUnico(),
+          idInstrumento: det.idInstrumento,
+          idUnidad: det.idUnidad,
+          calibracionIniciada: det.calibracionIniciada ?? false,
+          certificadoAprobado: det.certificadoAprobado ?? false,
+          item: det.item ?? null,
+          instrumento: det.instrumento || "",
+          tipoServicio: detalleCotizacion?.tipoServicio || "",
+          marca: det.marca || "",
+          modelo: det.modelo || "",
+          serie: det.serie || "",
+          codigoInterno: det.codigoInventario || "",
+          resolucion: det.resolucion || "",
+          
+          // 🟢 ASIGNACIÓN CORREGIDA: Mapeamos hacia _in y _out
+          ibcE_in: estadoIBC?.entrada?.E ?? estadoIBC?.E ?? null,
+          ibcT_in: estadoIBC?.entrada?.T ?? estadoIBC?.T ?? null,
+          ibcD_in: estadoIBC?.entrada?.D ?? estadoIBC?.D ?? null,
+          ibcA_in: estadoIBC?.entrada?.A ?? estadoIBC?.A ?? null,
+          
+          ibcE_out: estadoIBC?.salida?.E ?? null,
+          ibcT_out: estadoIBC?.salida?.T ?? null,
+          ibcD_out: estadoIBC?.salida?.D ?? null,
+          ibcA_out: estadoIBC?.salida?.A ?? null,
+          
+          sensorInt: det.sensorInt ?? false,
+          sensorExt: det.sensorExt ?? false,
+          estampilla: det.estampilla || "",
+          observaciones: det.observaciones || "",
+          verificadoExcel: true,
+          observacionesSecretaria: "",
+          idTarifaSeleccionada: undefined,
+        };
+      });
+
+      setFormulario({
+        solicitante: recepcion.solicitante || "",
+        nombreQuienEntrega: recepcion.nombreEntrega || "",
+        cotizacionCodigo,
+        ordenTrabajoCodigo,
+        sitioCalibracion:
+          recepcion.sitioCalibracion === "CLIENTE"
+            ? "Instalaciones del cliente"
+            : recepcion.sitioCalibracion === "LABORATORIO"
+            ? "Laboratorio permanente"
+            : recepcion.sitioCalibracion === "INTERNO_USC" ? "Interno USC" : "",
+        fechaRecepcion: recepcion.fechaRecepcion
+          ? new Date(recepcion.fechaRecepcion).toISOString().split("T")[0]
+          : "",
+        fechaSalida: recepcion.fechaSalida
+          ? new Date(recepcion.fechaSalida).toISOString().split("T")[0]
+          : "",
+        nombreQuienRecibe: recepcion.nombreRecibe || "",
+        nombreQuienEmpaca: recepcion.nombreEmpaca || "",
+        accesorios: recepcion.accesorios || "",
+        pruebasCompletas: recepcion.pruebasCompletas ?? true,
+        observacionesPruebas: recepcion.observacionesPruebas || "",
+        nombreQuienCalibra: recepcion.nombreCalibra || "",
+        nombreQuienRecibeServicio: recepcion.nombreRecibeServicio || "",
+        instrumentos: instrumentos.length > 0 ? instrumentos : [crearFilaInstrumentoVacia()],
+      });
+
+      setRecepcionActual(recepcion);
+      setActaGuardada(false);
+      setCargandoRecepcion(false);
+    },
+    [cotizaciones, showToast]
+  );
+
+  // --- Inicializar nueva recepción ---
+  const inicializarNuevaRecepcion = useCallback(() => {
+    if (!plantillasCompletas) {
+      showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
+      return;
+    }
+    const hoy = new Date().toISOString().split("T")[0];
+    setSelectedRecepcionId("NUEVA");
+    setFormulario({
+      solicitante: "",
+      nombreQuienEntrega: "",
+      cotizacionCodigo: "",
+      ordenTrabajoCodigo: "",
+      sitioCalibracion: "",
+      fechaRecepcion: hoy,
+      fechaSalida: "",
+      nombreQuienRecibe: "",
+      nombreQuienEmpaca: "",
+      accesorios: "",
+      pruebasCompletas: true,
+      observacionesPruebas: "",
+      nombreQuienCalibra: "",
+      nombreQuienRecibeServicio: "",
+      instrumentos: [crearFilaInstrumentoVacia()],
+    });
+    setRecepcionActual(null);
+    setActaGuardada(false);
+    setCargandoSolicitantes(true);
+    void obtenerSolicitantesDeRecepcion()
+      .then(setSolicitantes)
+      .catch(() => showToast("No se pudieron cargar los solicitantes. Vuelva a abrir el formulario para intentar de nuevo."))
+      .finally(() => setCargandoSolicitantes(false));
+  }, [showToast, plantillasCompletas]);
+
+  // --- Volver a la lista ---
   // --- Mutación: Guardar recepción ---
 const handleGenerarActa = useCallback(async () => {
     if (!plantillasCompletas) {
       showToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
       return;
     }
+    const altaIndependiente = selectedRecepcionId === "NUEVA" &&
+      !formulario.cotizacionCodigo.trim() && !formulario.ordenTrabajoCodigo.trim();
+    if (altaIndependiente && !formulario.idCliente) {
+      showToast("Seleccione un solicitante registrado para guardar la recepción.");
+      return;
+    }
+    const filaSinInstrumento = formulario.instrumentos.findIndex((fila) => !fila.instrumento.trim());
+    if (filaSinInstrumento >= 0) {
+      showToast(`Selecciona el instrumento de la fila ${filaSinInstrumento + 1} o retira esa fila antes de consolidar.`);
+      return;
+    }
     // 🟢 1. EVALUACIÓN NO BLOQUEANTE (Soft Validation)
     // Verificamos si la cabecera tiene lo mínimo
-    const cabeceraLista = !!(formulario.nombreQuienEntrega && formulario.fechaRecepcion);
+    const cabeceraLista = Boolean(formulario.fechaRecepcion);
 
     // Verificamos si TODOS los instrumentos cumplen las reglas
     const instrumentosValidos = formulario.instrumentos.length > 0 && formulario.instrumentos.every((inst) => {
@@ -1519,14 +1358,10 @@ const handleGenerarActa = useCallback(async () => {
       ? "ENTREGADO"
       : "RECIBIDO";
 
-    // Feedback visual para el usuario
-    if (estadoCalculado === "ENTREGADO") {
-      showToast("✅ Salida completa. La recepción quedará cerrada como ENTREGADO.");
-    } else if (cumpleRequisitosCompletos) {
-      showToast("✅ Recepción guardada. Puedes completar la salida en otro momento.");
-    } else {
-      showToast("⚠️ Faltan datos (ETDA o básicos). Se guardará el avance como BORRADOR.");
-    }
+    const habilitaAsignacion = cabeceraLista && formulario.instrumentos.some((inst) =>
+      Boolean(inst.estampilla?.trim() && !/^TEMP-/i.test(inst.estampilla.trim())) &&
+      [inst.ibcE_in, inst.ibcT_in, inst.ibcD_in, inst.ibcA_in].every((valor) => typeof valor === "boolean")
+    );
 
     try {
       // 🟢 2. CONSTRUCCIÓN DEL PAYLOAD
@@ -1534,17 +1369,17 @@ const handleGenerarActa = useCallback(async () => {
         // Indicador dinámico para tu Backend
         estado: estadoCalculado, 
         isNueva: selectedRecepcionId === "NUEVA",
-        idCliente: formulario.idCliente,
-        
+        codigoRecepcionActual: recepcionActual?.codigo,
         // Cabecera
         solicitante: formulario.solicitante,
+        idCliente: altaIndependiente ? formulario.idCliente : undefined,
         nombreEntrega: formulario.nombreQuienEntrega || undefined,
         cotizacionCodigo: formulario.cotizacionCodigo || undefined,
         ordenTrabajoCodigo: formulario.ordenTrabajoCodigo || undefined,
         sitioCalibracion: formulario.sitioCalibracion,
         fechaRecepcion: formulario.fechaRecepcion,
         fechaSalida: formulario.fechaSalida || undefined,
-        nombreRecibe: nombreUsuarioSesion || formulario.nombreQuienRecibe || undefined,
+        nombreRecibe: formulario.nombreQuienRecibe || nombreUsuarioSesion || undefined,
         nombreEmpaca: formulario.nombreQuienEmpaca || undefined,
         accesorios: formulario.accesorios || undefined,
         pruebasCompletas: formulario.pruebasCompletas,
@@ -1556,8 +1391,10 @@ const handleGenerarActa = useCallback(async () => {
         instrumentos: formulario.instrumentos.map((inst) => ({
           idLocal: inst.id,
           idInstrumento: inst.idInstrumento,
-          instrumento: inst.instrumento,
+          idUnidad: inst.idUnidad,
+          instrumento: inst.instrumento.trim(),
           tipoServicio: inst.tipoServicio || undefined,
+          idTarifa: inst.idTarifaSeleccionada,
           marca: inst.marca || undefined,
           modelo: inst.modelo || undefined,
           serie: inst.serie || undefined,
@@ -1586,7 +1423,6 @@ const handleGenerarActa = useCallback(async () => {
         })),
       };
 
-      console.log("📤 Payload a enviar al backend:", payload);
 
       // 🟢 3. LLAMADA AL SERVER ACTION (crear o actualizar según el modo)
       setGuardando(true);
@@ -1599,21 +1435,44 @@ const handleGenerarActa = useCallback(async () => {
         throw new Error(response.error || "Fallo al persistir en el servidor");
       }
 
-      setActaGuardada(true);
-      showToast(response.message || "✅ Recepción guardada correctamente.");
-
-      // Refrescar la tabla global de recepciones (fusionando, sin pisar tiempo real)
-      setTableLoading("recepciones_equipo", true);
-      try {
-        const data = await getInitialData();
-        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-        mergeTable("clientes", data.clientes as ClienteModel[]);
-        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-        mergeTable("tarifas", data.tarifas as TarifaModel[]);
-      } finally {
-        setTableLoading("recepciones_equipo", false);
+      if (response.data) {
+        const guardada = response.data;
+        setRecepcionActual(guardada);
+        setFormulario((anterior) => ({
+          ...anterior,
+          nombreQuienRecibe: guardada.nombreRecibe ?? anterior.nombreQuienRecibe,
+          cotizacionCodigo: guardada.cotizacion?.codigo ?? anterior.cotizacionCodigo,
+          ordenTrabajoCodigo: guardada.ordenTrabajo?.codigo ?? anterior.ordenTrabajoCodigo,
+          instrumentos: anterior.instrumentos.map((fila, indice) => {
+            const persistido = guardada.instrumentos?.find((unidad) =>
+              fila.idInstrumento != null ? unidad.idInstrumento === fila.idInstrumento : unidad.item === indice + 1,
+            );
+            const detalle = guardada.cotizacion?.detalles?.find((linea) =>
+              persistido?.idUnidad && linea.idUnidades?.includes(persistido.idUnidad),
+            );
+            return persistido ? {
+              ...fila,
+              idInstrumento: persistido.idInstrumento,
+              idUnidad: persistido.idUnidad,
+              item: persistido.item,
+              tipoServicio: detalle?.tipoServicio ?? fila.tipoServicio,
+              idTarifaSeleccionada: undefined,
+            } : fila;
+          }),
+        }));
+        if (esNueva) setSelectedRecepcionId(String(guardada.idRecepcion));
       }
+      setActaGuardada(true);
+      showToast(response.data && !response.data.idOrdenTrabajo
+        ? response.message || "Recepción guardada. La OT está pendiente de aprobación."
+        : habilitaAsignacion && !cumpleRequisitosCompletos
+        ? "Recepción guardada. Puedes asignar los instrumentos con estampilla e IBC de entrada completos."
+        : estadoCalculado === "ENTREGADO"
+          ? "Salida registrada como entregada."
+          : response.message || "Recepción guardada correctamente.");
+
+      // Actualizar los datos vigentes después de guardar.
+      await recargarVinculados();
 
       // Si era nueva, lo sacamos a la lista después de guardar
       if (esNueva) {
@@ -1628,7 +1487,7 @@ const handleGenerarActa = useCallback(async () => {
     } finally {
       setGuardando(false);
     }
-  }, [formulario, selectedRecepcionId, recepcionActual, nombresTecnicosAsignados, showToast, volverALista, mergeTable, setTableLoading, nombreUsuarioSesion, plantillasCompletas]);
+  }, [formulario, selectedRecepcionId, recepcionActual, nombresTecnicosAsignados, showToast, volverALista, recargarVinculados, nombreUsuarioSesion, plantillasCompletas]);
 
   // --- Trazabilidad: cargar historial de cambios de la cotización ---
   const abrirHistorial = useCallback(async () => {
@@ -1645,38 +1504,51 @@ const handleGenerarActa = useCallback(async () => {
     }
   }, [recepcionActual, showToast]);
 
-  // --- Soft delete de la recepción completa ---
-  const confirmarEliminarRecepcion = useCallback(async () => {
-    if (!recepcionActual?.idRecepcion || !deleteRecepcionMotivo.trim()) return;
+  const confirmarRetiro = useCallback(async () => {
+    if (!retiro || !recepcionActual?.idRecepcion || !motivoRetiro.trim() || isDeleting) return;
+    const idRecepcion = recepcionActual.idRecepcion;
+    const datos = {
+      descripcion: motivoRetiro.trim(),
+      aprobo: nombreUsuarioSesion || "Sistema",
+      observaciones: observacionesRetiro.trim() || null,
+    };
     setIsDeleting(true);
+    setErrorRetiro("");
     try {
-      const res = await eliminarRecepcion(recepcionActual.idRecepcion, {
-        descripcion: deleteRecepcionMotivo.trim(),
-        aprobo: nombreUsuarioSesion || "Sistema",
-        observaciones: null,
-      });
+      const res = retiro.tipo === "instrumento"
+        ? await eliminarInstrumentoRecepcionConMotivo(idRecepcion, retiro.idInstrumento, datos)
+        : await eliminarRecepcion(idRecepcion, datos);
       if (!res.ok) {
-        showToast(res.error || "No se pudo desactivar la recepción.");
+        setErrorRetiro(res.error || "No se pudo confirmar el retiro.");
         return;
       }
-      showToast("🗑️ Recepción desactivada (soft delete).");
-      setDeleteRecepcionOpen(false);
-      setDeleteRecepcionMotivo("");
 
-      setTableLoading("recepciones_equipo", true);
-      try {
-        const data = await getInitialData();
-        mergeTable("recepciones_equipo", data.recepciones as RecepcionEquipoModel[]);
-        mergeTable("cotizaciones", data.cotizaciones as CotizacionModel[]);
-        mergeTable("ordenes_trabajo", data.ordenes as OrdenTrabajoModel[]);
-      } finally {
-        setTableLoading("recepciones_equipo", false);
+      setRetiro(null);
+      showToast(res.message || (retiro.tipo === "instrumento" ? "Instrumento retirado." : "Recepción desactivada."));
+      if (retiro.tipo === "recepcion" || res.grupoDesactivado) {
+        volverALista();
+      } else {
+        setFormulario((prev) => ({
+          ...prev,
+          instrumentos: prev.instrumentos.filter((fila) => fila.idInstrumento !== retiro.idInstrumento),
+        }));
+        try {
+          const actualizada = await getRecepcionPorId(idRecepcion);
+          setRecepcionActual(actualizada);
+          setFormulario((prev) => ({
+            ...prev,
+            cotizacionCodigo: actualizada.cotizacion?.codigo ?? prev.cotizacionCodigo,
+            ordenTrabajoCodigo: actualizada.ordenTrabajo?.codigo ?? prev.ordenTrabajoCodigo,
+          }));
+        } catch (error) {
+          console.error("No se pudo recargar la recepción después del retiro:", error);
+        }
       }
-      volverALista();
+      await recargarVinculados();
     } finally {
       setIsDeleting(false);
     }
-  }, [recepcionActual, deleteRecepcionMotivo, nombreUsuarioSesion, showToast, mergeTable, setTableLoading, volverALista]);
+  }, [retiro, recepcionActual, motivoRetiro, observacionesRetiro, isDeleting, nombreUsuarioSesion, showToast, recargarVinculados, volverALista]);
 
   // ============================================================
   // RENDER
@@ -1687,31 +1559,6 @@ const handleGenerarActa = useCallback(async () => {
       <ToastNotification message={toast} />
       <PlantillasIncompletasBanner estado={estadoPlantillas} />
 
-      <VersionModal
-        usu_rol={nombreUsuarioSesion || "no hay"}
-        isOpen={isDeleteVersionOpen}
-        onClose={() => {
-          setDeleteVersionOpen(false);
-          setDeleteInstrumento(null);
-          setDeleteModalItems([]);
-        }}
-        modalItems={deleteModalItems}
-        modalDescuento={0}
-        setModalDescuento={() => {}}
-        modalViaticos={0}
-        setModalViaticos={() => {}}
-        agregarFila={agregarFilaModal}
-        eliminarFila={eliminarFilaModal}
-        manejarCambioFila={manejarCambioModalFila}
-        calculateTotal={calculateTotal}
-        formatCurrency={formatCurrency}
-        saveNewVersion={confirmarEliminarInstrumento}
-        isSaving={isDeleting}
-        tarifasOptions={tarifasOptions}
-        getMagnitudesByTipo={getMagnitudesByTipo}
-        getInstrumentosByMagnitudAndTipo={getInstrumentosByMagnitudAndTipo}
-      />
-
       <HeaderSection
         selectedRecepcionId={selectedRecepcionId}
         onBack={volverALista}
@@ -1721,13 +1568,11 @@ const handleGenerarActa = useCallback(async () => {
         // --- VISTA DE LISTA ---
         <div className="flex flex-col gap-5">
           <FilterBar
-            filtroCliente={filtroCliente}
+            filtrosComerciales={filtrosComerciales}
             filtroAnio={filtroAnio}
             filtroMes={filtroMes}
             filtroDia={filtroDia}
-            clientesUnicos={clientesUnicos}
             aniosDisponibles={aniosDisponibles}
-            onClienteChange={setFiltroCliente}
             onAnioChange={(anio) => {
               setFiltroAnio(anio);
               setFiltroDia("");
@@ -1741,7 +1586,7 @@ const handleGenerarActa = useCallback(async () => {
           />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {loadingRecepciones ? (
+            {cargandoListadoRecepciones ? (
               [1, 2, 3].map((n) => (
                 <div key={n} className="h-40 rounded-2xl bg-slate-200 animate-pulse" />
               ))
@@ -1763,11 +1608,17 @@ const handleGenerarActa = useCallback(async () => {
       ) : (
         // --- VISTA DE FORMULARIO ---
         <div className="flex flex-col gap-5">
+          {cargandoRecepcion ? (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800" role="status" aria-live="polite">
+              Cargando los datos completos de la recepción… No edites ni guardes hasta que termine.
+            </div>
+          ) : (
+          <>
           {recepcionActual && (
             <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white shadow-sm px-4 py-2.5">
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                 {esEdicionAtada
-                  ? "Edición atada a OT — campos raíz bloqueados"
+                  ? "Edición de recepción vinculada · campos de referencia bloqueados"
                   : `Editando recepción ${recepcionActual.codigo}`}
               </span>
               <div className="flex items-center gap-2">
@@ -1779,7 +1630,12 @@ const handleGenerarActa = useCallback(async () => {
                 </button>
                 {puedeRegistrar && (
                 <button
-                  onClick={() => { setDeleteRecepcionMotivo(""); setDeleteRecepcionOpen(true); }}
+                  onClick={() => {
+                    setMotivoRetiro("");
+                    setObservacionesRetiro("");
+                    setErrorRetiro("");
+                    setRetiro({ tipo: "recepcion" });
+                  }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 cursor-pointer border-none"
                 >
                   <Trash2 size={14} /> Eliminar
@@ -1793,22 +1649,20 @@ const handleGenerarActa = useCallback(async () => {
              isNew={selectedRecepcionId === "NUEVA"}
             bloqueado={esEdicionAtada}
             nombreRecibeBloqueado
-            idCliente={formulario.idCliente}
-            clienteNombre={formulario.clienteNombre}
             solicitante={formulario.solicitante}
+            idCliente={formulario.idCliente}
             nombreQuienEntrega={formulario.nombreQuienEntrega}
             cotizacionCodigo={formulario.cotizacionCodigo}
             ordenTrabajoCodigo={formulario.ordenTrabajoCodigo}
             sitioCalibracion={formulario.sitioCalibracion}
             fechaRecepcion={formulario.fechaRecepcion}
             fechaSalida={formulario.fechaSalida}
-            nombreQuienRecibe={nombreUsuarioSesion || formulario.nombreQuienRecibe}
+            nombreQuienRecibe={formulario.nombreQuienRecibe || nombreUsuarioSesion}
             nombreQuienEmpaca={formulario.nombreQuienEmpaca}
-            clientes={clientesStore || []}
-            cotizaciones={cotizaciones}
-            ordenesTrabajo={ordenesTrabajo}
+            solicitantes={solicitantes}
+            cargandoSolicitantes={cargandoSolicitantes}
+            onSeleccionarSolicitante={seleccionarSolicitante}
             onUpdateGeneral={handleUpdateGeneral}
-            onUpdateCliente={handleUpdateCliente}
           />
 
           <TablaInstrumentos
@@ -1834,6 +1688,8 @@ const handleGenerarActa = useCallback(async () => {
             onGenerarActa={handleGenerarActa}
             guardando={guardando}
           />
+          </>
+          )}
         </div>
       )}
 
@@ -1880,38 +1736,74 @@ const handleGenerarActa = useCallback(async () => {
         </div>
       )}
 
-      {deleteRecepcionOpen && (
+      {retiro && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl border border-slate-100 p-6">
-            <div className="text-sm font-bold text-slate-700 mb-2">
-              Desactivar Recepción {recepcionActual?.codigo}
-            </div>
-            <p className="text-xs text-slate-500 mb-3">
-              Esta acción desactivará la recepción (soft delete). Es obligatorio indicar el motivo.
-            </p>
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="retiro-recepcion-titulo"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void confirmarRetiro();
+            }}
+            className="w-full max-w-md max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl border border-slate-100 p-6"
+          >
+            <h2 id="retiro-recepcion-titulo" className="text-sm font-bold text-slate-700 mb-2">
+              {retiro.tipo === "instrumento" ? "Retirar instrumento" : `Desactivar recepción ${recepcionActual?.codigo ?? ""}`}
+            </h2>
+            {retiro.tipo === "instrumento" && (
+              <p className="text-xs text-slate-600 mb-4">
+                <strong>{retiro.nombre}</strong>{retiro.identificador ? ` · ${retiro.identificador}` : ""}
+                <br />
+                Al confirmar, se actualizarán la recepción, la OT y la cotización vinculadas.
+              </p>
+            )}
+            <label htmlFor="motivo-retiro" className="block mb-1 text-xs font-bold text-slate-700">
+              Motivo del retiro
+            </label>
             <textarea
-              value={deleteRecepcionMotivo}
-              onChange={(e) => setDeleteRecepcionMotivo(e.target.value)}
+              id="motivo-retiro"
+              value={motivoRetiro}
+              onChange={(event) => setMotivoRetiro(event.target.value)}
               rows={3}
-              placeholder="Motivo del borrado..."
+              required
+              disabled={isDeleting}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-rose-400 resize-none"
             />
+            {retiro.tipo === "instrumento" && (
+              <>
+                <label htmlFor="observaciones-retiro" className="block mt-3 mb-1 text-xs font-bold text-slate-700">
+                  Observaciones (opcional)
+                </label>
+                <textarea
+                  id="observaciones-retiro"
+                  value={observacionesRetiro}
+                  onChange={(event) => setObservacionesRetiro(event.target.value)}
+                  rows={2}
+                  disabled={isDeleting}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs outline-none focus:border-rose-400 resize-none"
+                />
+              </>
+            )}
+            {errorRetiro && <p role="alert" className="mt-2 text-xs text-rose-700">{errorRetiro}</p>}
             <div className="flex justify-end gap-2 mt-4">
               <button
-                onClick={() => setDeleteRecepcionOpen(false)}
-                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setRetiro(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-bold hover:bg-slate-50 disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
-                onClick={confirmarEliminarRecepcion}
-                disabled={isDeleting || !deleteRecepcionMotivo.trim()}
+                type="submit"
+                disabled={isDeleting || !motivoRetiro.trim()}
                 className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-50"
               >
-                {isDeleting ? "Desactivando..." : "Confirmar eliminación"}
+                {isDeleting ? "Guardando..." : retiro.tipo === "instrumento" ? "Confirmar retiro" : "Confirmar desactivación"}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>

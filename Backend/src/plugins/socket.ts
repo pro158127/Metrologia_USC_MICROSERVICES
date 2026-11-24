@@ -20,15 +20,23 @@ async function socketPluginHandler(fastify: FastifyInstance) {
 
   // Autenticación por JWT en el handshake: el token debe venir en auth.token.
   // Se verifica contra AUTH_SECRET (mismo secreto de @fastify/jwt y del frontend).
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token as string | undefined;
       if (!token) {
         return next(new Error('No autenticado: falta token en el handshake.'));
       }
-      const payload = fastify.jwt.verify(token) as { sub?: string };
-      if (!payload?.sub) {
+      const payload = fastify.jwt.verify(token) as { sub?: string; sessionVersion?: number };
+      if (!payload?.sub || !Number.isFinite(payload.sessionVersion)) {
         return next(new Error('Token inválido: sin subject.'));
+      }
+      const idUsuario = Number(payload.sub);
+      const usuario = await fastify.prisma.usuarios.findUnique({
+        where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
+        select: { ESTADO: true, elminado: true, UPDATE_AT: true },
+      });
+      if (!usuario || !usuario.ESTADO || usuario.elminado || (usuario.UPDATE_AT?.getTime() ?? 0) !== payload.sessionVersion) {
+        return next(new Error('Sesión invalidada. Inicia sesión nuevamente.'));
       }
       (socket as any).data = { userId: String(payload.sub) };
       next();

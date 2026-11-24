@@ -264,6 +264,10 @@ model SeguimientoComercial {
   resultado      String?    @map("RESULTADO")
   idUsuario      Int?       @map("ID_USUARIO_FK")
   createdAt      DateTime   @default(now()) @map("CREATED_AT")
+  origen         String     @default("MANUAL") @map("ORIGEN")
+  eliminadoAt    DateTime?  @map("ELIMINADO_AT")
+  eliminadoPor   Int?       @map("ELIMINADO_POR")
+  eliminacionMotivo String? @map("ELIMINACION_MOTIVO")
 
   cotizacion     Cotizacion @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
   usuario        Usuario?   @relation(fields: [idUsuario], references: [idUsuario])
@@ -423,6 +427,7 @@ model OrdenTrabajoDetalle {
   @@map("orden_trabajo_detalles")
 }
 
+/// Active receipt uniqueness by linked OT/site or pending quote/site is enforced by the SQL migration uq_recepcion_vigente_*.
 model RecepcionEquipo {
   idRecepcion          Int                      @id @default(autoincrement()) @map("ID_RECEPCION")
   codigo               String                   @unique @map("CODIGO_RECEPCION")
@@ -494,7 +499,7 @@ model Certificado {
   idCertificado Int                @id @default(autoincrement()) @map("ID_CERTIFICADO")
   codigo        String             @unique @map("CODIGO_CERTIFICADO")
   idCalibracion Int                @unique @map("ID_CALIBRACION_FK")
-  idDocumento   Int                @map("ID_DOCUMENTO_FK")
+  idDocumento   Int                @unique @map("ID_DOCUMENTO_FK")
   estadoRevision   String    @default("PENDIENTE_REVISION") @map("ESTADO_REVISION")
   motivoRechazo    String?   @map("MOTIVO_RECHAZO")
   idRevisor        Int?      @map("ID_REVISOR_FK")
@@ -521,7 +526,7 @@ model Documento {
   idPlantilla     Int?                    @map("ID_PLANTILLA_FK")
   ordenPagoId    Int?
   ordenPago      OrdenTrabajo? @relation("OrdenPago", fields: [ordenPagoId], references: [idOrdenTrabajo])
-  certificados    Certificado[]
+  certificado     Certificado?
   clienteRut      Cliente?                @relation("ClienteRut")
   chunksIA        DocumentChunk[]
   cotizacion      Cotizacion?             @relation(fields: [idCotizacion], references: [idCotizacion], onDelete: Cascade)
@@ -661,4 +666,5 @@ enum ProveedorAlmacenamiento {
 enum sitio_calibracion {
   LABORATORIO
   CLIENTE
+  INTERNO_USC
 }

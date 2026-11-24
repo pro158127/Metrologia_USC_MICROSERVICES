@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 // services/certificatePdf.service.ts
 // Lógica de generación de certificados PDF desacoplada del ciclo HTTP.
 // Es consumida tanto por el worker asíncrono (producción) como por rutas internas.
@@ -7,7 +8,7 @@ import {
   AreaBoxDTO,
   WatermarkAreaDTO,
 } from './pdf-stamper.service.js';
-import { getObjectBuffer, uploadBuffer } from '../lib/minioClient.js';
+import { deleteObject, getObjectBuffer, uploadBuffer } from '../lib/minioClient.js';
 import type { CertificateComposeJobData } from '../lib/queue/queue.js';
 
 const GENERATED_PREFIX = 'certificados-generados/';
@@ -115,7 +116,8 @@ export async function generarCertificadoFinal(
   prisma: PrismaClient,
   certificadoId: number,
   selloId?: number,
-  usuarioId?: number
+  usuarioId?: number,
+  revisionEsperada?: string,
 ) {
   const cert = await prisma.certificados.findUnique({
     where: { ID_CERTIFICADO: certificadoId },
@@ -139,6 +141,13 @@ export async function generarCertificadoFinal(
   if (!cert.documentos?.RUTA_URL) {
     throw new Error(`El certificado ${certificadoId} no tiene documento de entrada`);
   }
+  const revision = cert.REVISADO_AT?.toISOString();
+  if (cert.ESTADO_REVISION !== 'APROBADO' || (revisionEsperada && revision !== revisionEsperada)) {
+    return { skipped: true, motivo: 'La revisión dejó de estar vigente' };
+  }
+  if (cert.documentos.RUTA_URL.startsWith(GENERATED_PREFIX)) {
+    return { skipped: true, outputKey: cert.documentos.RUTA_URL, motivo: 'El PDF de la revisión ya está sellado' };
+  }
 
   const detalle = cert.calibraciones?.recepcion_equipo_detalles;
   const ot = detalle?.recepciones_equipo?.ordenes_trabajo;
@@ -159,13 +168,7 @@ export async function generarCertificadoFinal(
     : await seleccionarPlantillaSello(prisma, tipoServicio);
 
   if (!plantilla || !plantilla.TEMPLATE_PDF_KEY) {
-    // Sin plantilla configurada no se puede sellar; se conserva el documento original.
-    return {
-      outputKey: cert.documentos.RUTA_URL,
-      selloId: null,
-      skipped: true,
-      motivo: 'No hay plantilla de sello configurada',
-    };
+    throw new Error('La plantilla de sello no está disponible. El certificado aún requiere sellado.');
   }
 
   const documentArea = (plantilla.DOCUMENT_AREA as unknown as AreaBoxDTO) ?? {
@@ -196,18 +199,36 @@ export async function generarCertificadoFinal(
   });
 
   const outputName = `${cert.CODIGO_CERTIFICADO}.pdf`;
-  const outputKey = `${GENERATED_PREFIX}${outputName}`;
+  const outputKey = `${GENERATED_PREFIX}${randomUUID()}/${outputName}`;
   await uploadBuffer(outputKey, Buffer.from(result.bytes), 'application/pdf', {
     originalName: outputName,
   });
 
   const resolvedUser = usuarioId ?? cert.ID_REVISOR_FK ?? 1;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.documentos.update({
-      where: { ID_DOCUMENTO: cert.ID_DOCUMENTO_FK },
-      data: { RUTA_URL: outputKey, MIME_TYPE: 'application/pdf', PROVEEDOR: 'AWS_S3' },
+  const publicado = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "ID_CERTIFICADO" FROM certificados WHERE "ID_CERTIFICADO" = ${certificadoId} FOR UPDATE`;
+    const actual = await tx.certificados.findUnique({
+      where: { ID_CERTIFICADO: certificadoId },
+      select: { ESTADO_REVISION: true, REVISADO_AT: true, ID_DOCUMENTO_FK: true },
     });
+    if (actual?.ESTADO_REVISION !== 'APROBADO' ||
+        actual.REVISADO_AT?.toISOString() !== revision ||
+        actual.ID_DOCUMENTO_FK !== cert.ID_DOCUMENTO_FK) return false;
+    const documento = await tx.documentos.updateMany({
+      where: { ID_DOCUMENTO: cert.ID_DOCUMENTO_FK, RUTA_URL: cert.documentos.RUTA_URL },
+      data: {
+        RUTA_URL: outputKey,
+        MIME_TYPE: 'application/pdf',
+        PROVEEDOR: 'AWS_S3',
+        ID_COTIZACION_FK: null,
+        ID_ORDEN_TRABAJO_FK: null,
+        ID_RECEPCION_FK: null,
+        ID_PLANTILLA_FK: null,
+        ordenPagoId: null,
+      },
+    });
+    if (!documento.count) return false;
 
     const last = await tx.version_documentos.findFirst({
       where: { ID_DOCUMENTO_FK: cert.ID_DOCUMENTO_FK },
@@ -228,7 +249,14 @@ export async function generarCertificadoFinal(
       where: { ID_CERTIFICADO: certificadoId },
       data: { ID_PLANTILLA_SELLO_FK: plantilla.ID_PLANTILLA_SELLO },
     });
+    return true;
   });
+  if (!publicado) {
+    await deleteObject(outputKey).catch((error) => {
+      console.warn('[cert-pdf-worker] No se pudo retirar un PDF de una revisión obsoleta', { outputKey, error });
+    });
+    return { skipped: true, motivo: 'El documento cambió antes de publicar el sello' };
+  }
 
   return {
     outputKey,

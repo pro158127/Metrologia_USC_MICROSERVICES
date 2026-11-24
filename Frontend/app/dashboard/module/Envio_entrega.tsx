@@ -4,7 +4,8 @@
 // ============================================================
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   Send,
   Eye,
@@ -17,10 +18,12 @@ import {
   Clock,
   Paperclip,
 } from "lucide-react";
-import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import {
   getDocumentosEnvioCotizacion,
+  obtenerListadoEnvios,
+  type CotizacionListaEnvio,
   subirComprobanteCotizacion,
   enviarCertificadosCotizacion,
   type DocumentosEnvioCotizacion,
@@ -87,15 +90,17 @@ const GestionPanel: React.FC<{
   onRefresh: () => void;
   onOpenOt: (id: number) => void;
 }> = ({ idCotizacion, codigoCotizacion, onClose, onToast, onRefresh, onOpenOt }) => {
-  const documentosRealtime = useDbTable("documentos");
-  const certificadosRealtime = useDbTable("certificados");
-  const ordenesRealtime = useDbTable("ordenes_trabajo");
+  const revision = useRevisionTablas(
+    "documentos", "version_documentos", "certificados", "ordenes_trabajo", "recepciones_equipo", "facturas",
+  );
   const [docs, setDocs] = useState<DocumentosEnvioCotizacion | null>(null);
   const [cargando, setCargando] = useState(true);
   const [subiendo, setSubiendo] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [firmando, setFirmando] = useState(false);
   const [viewer, setViewer] = useState<{ url: string | null; titulo: string } | null>(null);
+  const [correoCorregido, setCorreoCorregido] = useState<string | null>(null);
+  const [confirmarNoRecibido, setConfirmarNoRecibido] = useState(false);
   const { can } = usePermissions();
   const puedeMarcarPagada = can("entrega_y_envio", "marcar_ot_pagada");
   const puedeEnviarCertificados = can("entrega_y_envio", "enviar_certificados_lotes");
@@ -108,7 +113,7 @@ const GestionPanel: React.FC<{
     if (cargando) return;
     const timer = window.setTimeout(recargar, 150);
     return () => window.clearTimeout(timer);
-  }, [documentosRealtime, certificadosRealtime, ordenesRealtime, cargando, recargar]);
+  }, [revision, cargando, recargar]);
 
   useEffect(() => {
     let activo = true;
@@ -175,21 +180,37 @@ const GestionPanel: React.FC<{
 
   const handleEnviar = useCallback(async () => {
     setEnviando(true);
-    const res = await enviarCertificadosCotizacion(idCotizacion);
+    const res = await enviarCertificadosCotizacion(idCotizacion, correoCorregido?.trim() || undefined, confirmarNoRecibido);
     setEnviando(false);
+    setConfirmarNoRecibido(false);
     if (!res.ok) {
       onToast(`❌ ${res.error ?? "No se pudo enviar."}`);
+      recargar();
       return;
     }
     onToast(`✅ ${res.message ?? "Certificados enviados."}`);
     recargar();
     onRefresh();
-  }, [idCotizacion, onToast, recargar, onRefresh]);
+  }, [idCotizacion, correoCorregido, confirmarNoRecibido, onToast, recargar, onRefresh]);
 
   const todosAprobados = docs?.todosAprobados ?? false;
   const entregaCompleta = docs?.entregaCompleta ?? false;
   const tieneComprobante = (docs?.comprobantes?.length ?? 0) > 0;
-  const puedeEnviar = todosAprobados && tieneComprobante && !!docs?.correo;
+  const selladoPendiente = docs?.selladoPendiente ?? [];
+  const ultimoCorreo = docs?.ultimoCorreo;
+  const confirmacionPendiente = ultimoCorreo?.estado === "RESULTADO_INCIERTO";
+  const envioPendiente = ultimoCorreo?.estado === "PENDIENTE" || ultimoCorreo?.estado === "EN_PROCESO";
+  useEffect(() => {
+    if (!confirmacionPendiente && !envioPendiente) return;
+    const timer = window.setInterval(recargar, 5000);
+    return () => window.clearInterval(timer);
+  }, [confirmacionPendiente, envioPendiente, recargar]);
+  const correoDestino = correoCorregido ?? (
+    ultimoCorreo?.estado === "ENVIADO" ? ultimoCorreo.destinatario : docs?.correo
+  ) ?? "";
+  const puedeEnviar = todosAprobados && selladoPendiente.length === 0 && tieneComprobante &&
+    !envioPendiente && (!confirmacionPendiente || confirmarNoRecibido) &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoDestino.trim());
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-900/40">
@@ -258,9 +279,15 @@ const GestionPanel: React.FC<{
                 }`}
               >
                 {entregaCompleta
-                  ? "La salida de todos los instrumentos quedó registrada. La recepción está cerrada."
-                  : `Salida pendiente en Recepciones: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}. Puede completarse después del envío y no lo bloquea.`}
+                  ? "Todas las recepciones están en Entregado. El proceso finaliza al confirmar el pago y el envío de certificados."
+                  : `Recepción pendiente de completar: ${(docs?.entregasPendientes ?? []).join(", ") || "complete los datos de salida"}. Puede completarse después del envío y no lo bloquea.`}
               </div>
+
+              {selladoPendiente.length > 0 && (
+                <p className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800" role="status">
+                  PDF sellado pendiente de publicación · {selladoPendiente.join(", ")}
+                </p>
+              )}
 
               {/* Certificados */}
               <section>
@@ -368,6 +395,31 @@ const GestionPanel: React.FC<{
 
               {/* Enviar */}
               {puedeEnviarCertificados && (
+                <div className="space-y-2">
+                  {ultimoCorreo?.error && (
+                    <p role="status" className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                      {ultimoCorreo.destinatario} · {ultimoCorreo.error}
+                    </p>
+                  )}
+                  {confirmacionPendiente && (
+                    <label className="flex items-center gap-2 text-xs text-slate-700">
+                      <input type="checkbox" checked={confirmarNoRecibido}
+                        onChange={(event) => setConfirmarNoRecibido(event.target.checked)} disabled={enviando} />
+                      Confirmé con el destinatario que no recibió el correo.
+                    </label>
+                  )}
+                  <label className="block text-xs font-semibold text-slate-600" htmlFor="correo-envio-certificados">
+                    Correo para certificados
+                  </label>
+                  <input
+                    id="correo-envio-certificados"
+                    type="email"
+                    value={correoDestino}
+                    onChange={(event) => setCorreoCorregido(event.target.value)}
+                    disabled={enviando}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    placeholder="correo@ejemplo.com"
+                  />
                 <button
                   onClick={handleEnviar}
                   disabled={!puedeEnviar || enviando}
@@ -378,8 +430,10 @@ const GestionPanel: React.FC<{
                   }`}
                 >
                   {enviando ? <RefreshCw size={15} className="animate-spin" /> : <Send size={15} />}
-                  {enviando ? "Enviando..." : "Enviar certificados al cliente"}
+                  {enviando || envioPendiente ? "Enviando..." : ultimoCorreo?.estado === "FALLIDO"
+                    ? "Reintentar envío" : ultimoCorreo?.estado === "ENVIADO" ? "Confirmar despacho" : "Enviar certificados al cliente"}
                 </button>
+                </div>
               )}
             </>
           )}
@@ -403,15 +457,34 @@ const GestionPanel: React.FC<{
 // -----------------------------------------------------------------------------
 
 export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }) {
-  const ordenes = useDbTable("ordenes_trabajo");
-  const clientes = useDbTable("clientes");
-  const { loadTable } = useDbActions();
-  const loadingEnvio = useDbLoading("ordenes_trabajo");
+  const revision = useRevisionTablas(
+    "ordenes_trabajo", "orden_trabajo_detalles", "recepciones_equipo",
+    "recepcion_equipo_detalles", "calibraciones", "certificados", "clientes", "cotizaciones",
+  );
+  const [listado, setListado] = useState<CotizacionListaEnvio[]>([]);
+  const [loadingEnvio, setLoadingEnvio] = useState(true);
+  useModuleSplashReady("entrega", !loadingEnvio);
+  const [errorListado, setErrorListado] = useState(false);
+  const [recarga, setRecarga] = useState(0);
 
   useEffect(() => {
-    void loadTable("ordenes_trabajo", true);
-    void loadTable("clientes", true);
-  }, [loadTable]);
+    let activo = true;
+    const timer = window.setTimeout(() => {
+      obtenerListadoEnvios().then((datos) => {
+        if (!activo) return;
+        setListado(datos);
+        setErrorListado(false);
+      }).catch(() => {
+        if (activo) setErrorListado(true);
+      }).finally(() => {
+        if (activo) setLoadingEnvio(false);
+      });
+    }, 150);
+    return () => {
+      activo = false;
+      window.clearTimeout(timer);
+    };
+  }, [revision, recarga]);
 
   const [busqueda, setBusqueda] = useState<string>("");
   const [gestion, setGestion] = useState<{ idCotizacion: number; codigoCotizacion: string } | null>(null);
@@ -422,59 +495,10 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
     setTimeout(() => setToast(""), 4000);
   }, []);
 
-  // Agrupa hijas por cotización; el grupo aparece cuando TODAS están en Certificado_aprobado.
-  const grupos = useMemo(() => {
-    const hijas = ordenes.filter((o) => o.sitioCalibracion != null && o.vigente !== false);
-    const map = new Map<number, typeof hijas>();
-    for (const h of hijas) {
-      if (h.idCotizacion == null) continue;
-      const lista = map.get(h.idCotizacion) ?? [];
-      lista.push(h);
-      map.set(h.idCotizacion, lista);
-    }
-    return Array.from(map.entries())
-      .map(([idCotizacion, hs]) => {
-        const master = ordenes.find(
-          (o) => o.idCotizacion === idCotizacion && o.sitioCalibracion == null
-        );
-        const cliente =
-          clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.razonSocial ??
-          hs[0]?.cliente?.razonSocial ??
-          "—";
-        const todosAprobados = hs.every((h) => h.estado === "Certificado_aprobado");
-        return {
-          idCotizacion,
-          codigoCotizacion: hs[0]?.cotizacion?.codigo ?? "—",
-          masterCodigo: master?.codigo ?? "—",
-          cliente,
-          correo:
-            hs[0]?.correoCertificado ??
-            clientes.find((c) => c.idCliente === hs[0]?.idCliente)?.correo ??
-            "—",
-          totalHijas: hs.length,
-          todosAprobados,
-          fecha: hs[0]?.createdAt,
-        };
-      })
-      .filter((g) => g.todosAprobados)
-      .filter((g) => {
-        if (!busqueda) return true;
-        const q = busqueda.toLowerCase();
-        return (
-          g.cliente.toLowerCase().includes(q) ||
-          g.codigoCotizacion.toLowerCase().includes(q) ||
-          g.masterCodigo.toLowerCase().includes(q)
-        );
-      });
-  }, [ordenes, clientes, busqueda]);
-
-  const ordenesHijasVigentes = useMemo(
-    () => ordenes.filter((ot) => ot.sitioCalibracion != null && ot.vigente !== false),
-    [ordenes]
-  );
-  const ordenesPendientesAprobacion = useMemo(
-    () => ordenesHijasVigentes.filter((ot) => ot.estado !== "Certificado_aprobado"),
-    [ordenesHijasVigentes]
+  const textoBusqueda = busqueda.trim().toLowerCase();
+  const grupos = listado.filter((grupo) =>
+    [grupo.cliente, grupo.codigoCotizacion, grupo.masterCodigo].some((valor) =>
+      valor.toLowerCase().includes(textoBusqueda)),
   );
 
   return (
@@ -534,18 +558,11 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
             ) : grupos.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
-                  {busqueda.trim()
+                  {errorListado
+                    ? "No se pudo consultar el listado de envíos."
+                    : textoBusqueda
                     ? "No hay cotizaciones que coincidan con la búsqueda."
-                    : ordenesHijasVigentes.length === 0
-                    ? "No hay órdenes de trabajo hijas vigentes para enviar."
-                    : ordenesPendientesAprobacion.length === 0
-                    ? "No se encontraron cotizaciones listas. Actualiza la lista o valida que sus OT estén vigentes y asociadas a una cotización."
-                    : `${ordenesPendientesAprobacion.length} de ${ordenesHijasVigentes.length} órdenes aún no tienen todos sus certificados aprobados.`}
-                  {!busqueda.trim() && ordenesPendientesAprobacion.length > 0 && (
-                    <div className="mt-2 text-[10px] font-mono text-slate-400">
-                      {ordenesPendientesAprobacion.slice(0, 5).map((ot) => `${ot.codigo}: ${ot.estado ?? "sin estado"}`).join(" · ")}
-                    </div>
-                  )}
+                    : "No hay cotizaciones con todos los certificados aprobados pendientes de envío."}
                 </td>
               </tr>
             ) : (
@@ -554,9 +571,9 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
                   <td className="px-4 py-3.5 font-mono font-bold text-[#5680F9]">{g.codigoCotizacion}</td>
                   <td className="px-4 py-3.5 font-mono text-slate-500">{g.masterCodigo}</td>
                   <td className="px-4 py-3.5 font-semibold text-slate-700">{g.cliente}</td>
-                  <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">{g.correo}</td>
+                  <td className="px-4 py-3.5 font-mono text-slate-500 truncate max-w-[200px]">{g.correo ?? "—"}</td>
                   <td className="px-4 py-3.5 text-slate-600">{g.totalHijas}</td>
-                  <td className="px-4 py-3.5 text-slate-400 font-mono">{formatFecha(g.fecha as string)}</td>
+                  <td className="px-4 py-3.5 text-slate-400 font-mono">{formatFecha(g.fecha)}</td>
                   <td className="px-4 py-3.5">
                     <button
                       onClick={() => setGestion({ idCotizacion: g.idCotizacion, codigoCotizacion: g.codigoCotizacion })}
@@ -583,7 +600,7 @@ export function MainRendererenv({ onOpenOt }: { onOpenOt: (id: number) => void }
           codigoCotizacion={gestion.codigoCotizacion}
           onClose={() => setGestion(null)}
           onToast={showToast}
-          onRefresh={() => loadTable("ordenes_trabajo", true)}
+          onRefresh={() => setRecarga((anterior) => anterior + 1)}
           onOpenOt={onOpenOt}
         />
       )}

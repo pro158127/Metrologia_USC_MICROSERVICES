@@ -20,7 +20,7 @@ export interface DetalleInput {
   normaTecnica?: string;
   cantidad: number;
   valorUnitario: number;
-  sitio?: "LABORATORIO" | "CLIENTE";
+  sitio?: "LABORATORIO" | "CLIENTE" | "INTERNO_USC";
 }
 
 export interface CrearCotizacionInput {
@@ -67,7 +67,7 @@ export type QuoteItem = {
   norma: string;
   cantidad: number;
   valorUnitario: number;
-  lugarCalibracion: "Laboratorio" | "Sitio";
+  lugarCalibracion: "Laboratorio" | "Sitio" | "Interno USC";
 };
 
 export type TarifaOption = {
@@ -119,6 +119,7 @@ export type CotizacionVista = {
   montoTotal: number;
   estado: Estados;
   createdAt: Date | string;
+  fechaVencimiento?: Date | string;
   updatedAt: Date | string | null;
   viaticos: number;
   descuento: number;
@@ -131,6 +132,7 @@ export type CotizacionVista = {
   } | null;
   historialEstados: HistorialEstadoCotizacionModel[];
   historial_cambio : HistorialCambioItem[],
+  seguimientosComerciales?: EventoSeguimientoCotizacion[];
 };
 
 // ============================================================
@@ -201,7 +203,7 @@ export interface QuotationListTableProps {
   filtered: CotizacionVista[];
   setSelectedQuotation: (c: CotizacionVista | null) => void;
   formatCurrency: (v: number) => string;
-  onEstadoChange: (id: number, nuevoEstado: Estados) => void;
+  onEstadoChange: (id: number, nuevoEstado: Estados, codigo: string) => void;
   updatingId: number | null;
 }
 
@@ -237,7 +239,6 @@ export interface CreateQuotationWizardProps {
   setViaticos: (v: number) => void;
   calculateTotal: (items: QuoteItem[], desc: number, viat: number) => number;
   formatCurrency: (val: number) => string;
-  showToast: (msg: string) => void;
   setView: (v: ViewCotizacion) => void;
   guardarCotizacion: (estado: Estados) => Promise<void>;
   isSaving: boolean;
@@ -262,11 +263,22 @@ export interface HistorialCambioItem {
   updatedAt: string | Date;
 }
 
+export interface EventoSeguimientoCotizacion {
+  id: number;
+  tipo: string;
+  descripcion: string;
+  fecha: string | Date;
+  resultado: string | null;
+  origen: string;
+  usuario: string | null;
+}
+
 // Props del componente Modal
 export interface ModalHistorialCambiosProps {
   isOpen: boolean;
   onClose: () => void;
   codigo_cotizacion: string;
   historial: HistorialCambioItem[];
+  eventosComerciales?: EventoSeguimientoCotizacion[];
   isLoading?: boolean;
 }

@@ -110,6 +110,7 @@ export interface CertificateReviewJobData {
   tipo: 'certificado';
   certificadoId: number;
   selloId?: number;
+  revision?: string;
   usuarioId?: number;
   tipo_entry?: 'test' | 'prod';
 }
@@ -131,9 +132,11 @@ export function getCertificatePdfQueue(): Queue {
   return certificatePdfQueue;
 }
 
-export interface ReportesJobData {
+export type ReportesJobData = {
+  tipo?: 'consolidado';
   formato: 'pdf' | 'excel';
   usuarioId: number;
+  snapshotKey?: string;
   filtros: {
     fechaInicio?: string;
     fechaFin?: string;
@@ -141,7 +144,12 @@ export interface ReportesJobData {
     cliente?: string;
     tecnico?: string;
   };
-}
+} | {
+  tipo: 'trazabilidad_factura';
+  numeroFactura: string;
+  usuarioId: number;
+  snapshotKey?: string;
+};
 
 export function getReportesQueue(): Queue {
   if (!reportesQueue) {
@@ -244,6 +252,9 @@ export interface EmailJobData {
   id_cotizacion?: number;
   modulo_origen?: string;
   tabla_origen?: string;
+  expira_en?: number;
+  codigo_verificacion?: { namespace: string; entidad: string };
+  version_credencial?: number;
 }
 export interface ImportarOTEPayload {
   s3KeyTemp: string;        // La ruta temporal del archivo subido por el cliente
@@ -258,7 +269,9 @@ export interface ImportarOTEPayload {
 export function getEmailQueue(): Queue {
   if (!emailQueue) {
     emailQueue = new Queue<EmailJobData>(EMAIL_QUEUE_NAME, {
-      connection: getRedisConnection(),
+      connection: new IORedis(REDIS_URL, {
+        maxRetriesPerRequest: 1, connectTimeout: 5000, commandTimeout: 5000,
+      }),
       defaultJobOptions: {
         attempts: 3, // Reintenta 3 veces si Nodemailer o Outlook fallan
         backoff: { 
@@ -318,6 +331,8 @@ export function getCronQueue(): Queue {
     cronQueue = new Queue<CronJobData>(CRON_QUEUE, {
       connection: getRedisConnection(),
       defaultJobOptions: {
+        attempts: 4,
+        backoff: { type: 'exponential', delay: 15_000 },
         removeOnComplete: { age: 60 * 60 * 24 },
         removeOnFail: { age: 60 * 60 * 24 * 7 },
       },

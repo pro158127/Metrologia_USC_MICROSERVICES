@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
@@ -67,7 +68,6 @@ export default async function facturasRoutes(fastify: FastifyInstance) {
               RUTA_URL: archivo.rutaUrl,
               MIME_TYPE: archivo.mimeType || 'application/pdf',
               PROVEEDOR: 'AWS_S3',
-              ID_ORDEN_TRABAJO_FK: idOrdenTrabajo ?? null,
             },
           });
           idDocumento = documento.ID_DOCUMENTO;
@@ -100,6 +100,11 @@ export default async function facturasRoutes(fastify: FastifyInstance) {
         });
 
         return factura;
+      }).catch((error) => {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new AppError(409, 'Ya existe una factura con este número o documento.');
+        }
+        throw error;
       });
 
       return { ok: true as const, data: facturaRawToDtoSchema.parse(resultado) };

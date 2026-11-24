@@ -1,24 +1,25 @@
 'use client';
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { Plus, Search, Eye } from "lucide-react";
+import { obtenerPrecioVigente } from "@/app/lib/vigencia-tarifa";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { AlertTriangle, Plus, Search, Eye } from "lucide-react";
 import CatalogTableView from "./componentes/compoenete_cotizacion/tartifas";
 import { AiAgentWidget } from "./componentes/AI_MODULE/AiAgentWidget";
 import { ItemsTable, VersionModal } from "./componentes/compoenete_cotizacion/VersionModal";
 import { useDbTable, useDbActions, useDbLoading } from "@/app/componets/tables_recharge";
 import {
-  obtenerTodasLasCotizaciones,
   crearCotizacion,
   actualizarCotizacion,
   cambiarEstadoCotizacion,
   obtenerEnviosCorreoCotizacion,
   reintentarEnvioCorreoCotizacion,
+  obtenerTrazabilidadComercialCotizacion,
   type EnvioCorreoCotizacion,
   
 } from "@/app/action_module/cotizacion";
 
 import { Estados } from "@/tipos/enums";
-import type { ClienteModel, CotizacionModel, HistorialEstadoCotizacionModel } from "@/tipos/entidades";
+import type { ClienteModel, HistorialEstadoCotizacionModel } from "@/tipos/entidades";
 import type {
   QuoteItem,
   TarifaOption,
@@ -38,12 +39,22 @@ import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import { usePlantillasOperativas } from "@/app/lib/usePlantillasOperativas";
 import { PlantillasIncompletasBanner } from "@/app/dashboard/components/PlantillasIncompletasBanner";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 
 // ==========================================
 // Tipos y Estilos
 // ==========================================
 
 // Mapeo de colores para todos los estados del enum
+function tieneRevisionRecepcion(cotizacion: CotizacionVista): boolean {
+  const revision = cotizacion.historial_cambio.reduce<CotizacionVista["historial_cambio"][number] | undefined>((ultima, cambio) => {
+    if (!cambio.descripcion.startsWith("Revisión pendiente desde Recepción · ") &&
+        !cambio.descripcion.startsWith("Revisión de Recepción consolidada · ")) return ultima;
+    return !ultima || Number(cambio.numeroVersion.slice(1)) > Number(ultima.numeroVersion.slice(1)) ? cambio : ultima;
+  }, undefined);
+  return revision?.descripcion.startsWith("Revisión pendiente desde Recepción · ") ?? false;
+}
+
 const estadoStyle: Record<string, { bg: string; color: string; border: string }> = {
   BORRADOR:       { bg: "#FFFBEB", color: "#D97706", border: "#FDE68A" },
   ENVIADA:        { bg: "#EFF6FF", color: "#2563EB", border: "#BFDBFE" },
@@ -245,8 +256,6 @@ const QuotationListTable = ({
   updatingId,
 }: QuotationListTableProps) => {
   const { can } = usePermissions();
-  const puedeGestionarEstado =
-    can("cotizaciones", "aprobar_rechazar") || can("cotizaciones", "enviar_al_cliente");
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] overflow-x-auto">
       <table className="w-full text-left text-xs">
@@ -259,17 +268,34 @@ const QuotationListTable = ({
         </thead>
         <tbody>
           {filtered.map((c) => {
-            const posiblesTransiciones = transicionesValidas[c.estado] || [];
+            const posiblesTransiciones = (transicionesValidas[c.estado] || []).filter((estado) =>
+              estado === Estados.ENVIADA ? can("cotizaciones", "enviar_al_cliente")
+                : estado === Estados.EN_SEGUIMIENTO ? can("cotizaciones", "crear_editar")
+                  : can("cotizaciones", "aprobar_rechazar"),
+            );
             return (
               <tr key={c.idCotizacion} className="border-b border-slate-200 hover:bg-slate-50 transition-colors group">
-                <td className="py-3 px-4 font-mono font-bold text-slate-700">{c.codigo}</td>
+                <td className="py-3 px-4 font-mono font-bold text-slate-700">
+                  {c.codigo}
+                  {tieneRevisionRecepcion(c) && (
+                    <button
+                      type="button"
+                      className="ml-2 inline-flex rounded p-1 text-amber-700 hover:bg-amber-100"
+                      onClick={() => setSelectedQuotation(c)}
+                      title="Revisar cambios de Recepción"
+                      aria-label="Revisar cambios de Recepción"
+                    >
+                      <AlertTriangle size={14} aria-hidden="true" />
+                    </button>
+                  )}
+                </td>
                 <td className="py-3 px-4 text-slate-600 font-medium">{c.cliente?.razonSocial || "N/A"}</td>
                 <td className="py-3 px-4 font-mono font-bold text-slate-700">{formatCurrency(c.montoTotal)}</td>
                 <td className="py-3 px-4">
-                  {puedeGestionarEstado && posiblesTransiciones.length > 0 ? (
+                  {posiblesTransiciones.length > 0 ? (
                     <select
                       value={c.estado}
-                      onChange={(e) => onEstadoChange(c.idCotizacion, e.target.value as Estados)}
+                      onChange={(e) => onEstadoChange(c.idCotizacion, e.target.value as Estados, c.codigo)}
                       disabled={updatingId === c.idCotizacion}
                       className="px-2 py-1 rounded-full text-[10px] font-bold border bg-transparent focus:outline-none focus:ring-1 focus:ring-[#5680F9] disabled:opacity-60"
                       style={{
@@ -298,7 +324,12 @@ const QuotationListTable = ({
                     </span>
                   )}
                 </td>
-                <td className="py-3 px-4 text-slate-500">{new Date(c.createdAt).toLocaleDateString("es-CO")}</td>
+                <td className="py-3 px-4 text-slate-500">
+                  {new Date(c.createdAt).toLocaleDateString("es-CO")}
+                  {c.fechaVencimiento && c.estado === Estados.ENVIADA && (
+                    <div className="text-xs">Vence el {new Date(c.fechaVencimiento).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })}</div>
+                  )}
+                </td>
                 <td className="py-3 px-4">
                   <button
                     onClick={() => setSelectedQuotation(c)}
@@ -336,10 +367,6 @@ const QuotationDetailView = ({
   const puedeReintentarCorreo = can("cotizaciones", "crear_editar");
   const [correos, setCorreos] = useState<Record<number, string>>({});
 
-  useEffect(() => {
-    setCorreos(Object.fromEntries(enviosCorreo.map((envio) => [envio.id, envio.destinatario])));
-  }, [enviosCorreo]);
-
   return (
     <div className="rounded-2xl border border-slate-100 bg-white shadow-[0_4px_20px_-4px_rgba(15,23,42,0.04)] p-6 mt-6 animate-in slide-in-from-bottom-2 duration-200">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -361,6 +388,20 @@ const QuotationDetailView = ({
           </button>
         </div>
       </div>
+
+      {tieneRevisionRecepcion(selectedQuotation) && (
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <AlertTriangle size={16} className="shrink-0" aria-hidden="true" />
+          <div>
+            <p>Recepción cambió los instrumentos. Revisa las cantidades y confirma el sitio de calibración de cada línea antes de consolidar.</p>
+            {puedeVersionar && (
+              <button type="button" onClick={openVersionModal} className="mt-2 font-bold underline">
+                Revisar y generar versión
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {selectedQuotation.estado === "APROBADA" && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
@@ -389,9 +430,16 @@ const QuotationDetailView = ({
           <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Detalle de Ítems</div>
           <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
             {selectedQuotation.detalles?.map((det) => (
-              <div key={det.idDetalle} className="p-2 bg-white rounded-lg border border-slate-200 text-xs flex justify-between">
-                <span>{det.equipoDescripcion} ({det.magnitud})</span>
-                <span className="font-mono font-bold">{formatCurrency(Number(det.valorTotal))}</span>
+              <div key={det.idDetalle} className="p-2 bg-white rounded-lg border border-slate-200 text-xs flex justify-between gap-3">
+                <div className="min-w-0">
+                  <div>{det.equipoDescripcion} ({det.magnitud})</div>
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    {det.sitio === "CLIENTE" ? "Instalaciones del cliente" : det.sitio === "INTERNO_USC" ? "Interno USC" : "Laboratorio permanente"}
+                    {" · "}{det.tipoServicio}
+                  </div>
+                  <div className="text-[11px] text-slate-500">{det.cantidad} × {formatCurrency(det.valorUnitario)}</div>
+                </div>
+                <span className="shrink-0 font-mono font-bold">{formatCurrency(det.valorTotal)}</span>
               </div>
             ))}
           </div>
@@ -471,7 +519,6 @@ const CreateQuotationWizard = ({
   setViaticos,
   calculateTotal,
   formatCurrency,
-  showToast,
   setView,
   guardarCotizacion,
   isSaving,
@@ -630,6 +677,7 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
   onClose,
   codigo_cotizacion,
   historial,
+  eventosComerciales = [],
   isLoading = false,
 }) => {
   if (!isOpen) return null;
@@ -711,6 +759,26 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
           </table>
         </div>
 
+        <section className="mt-4 rounded-xl border border-slate-200 p-3">
+          <h4 className="text-xs font-bold uppercase tracking-wide text-slate-600">Trazabilidad comercial y eventos automáticos</h4>
+          {eventosComerciales.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-400">No hay gestiones ni eventos registrados.</p>
+          ) : (
+            <ul className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+              {eventosComerciales.map((evento) => (
+                <li key={evento.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs">
+                  <div className="flex flex-wrap justify-between gap-2 text-slate-500">
+                    <span className="font-semibold">{evento.tipo} · {evento.origen === "SISTEMA" ? "Automático" : "Manual"}</span>
+                    <time>{new Date(evento.fecha).toLocaleString("es-CO")}</time>
+                  </div>
+                  <p className="mt-1 text-slate-700">{evento.descripcion}</p>
+                  {evento.resultado && <p className="mt-1 text-slate-500">Resultado: {evento.resultado}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
         {/* Pie del Modal */}
         <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-4">
           <span className="text-xs text-slate-400 font-mono">
@@ -732,14 +800,30 @@ export const ModalHistorialCambios: React.FC<ModalHistorialCambiosProps> = ({
 // COMPONENTE PRINCIPAL
 // ==========================================
 
-import { HistorialCambioItem } from "@/tipos/cotizacion";
 export default function Cotizaciones() {
 
-  const cotizacionesStore = useDbTable("cotizaciones") as unknown as CotizacionVista[];
+  const cotizaciones = useDbTable("cotizaciones");
+  const cotizacionesStore = useMemo<CotizacionVista[]>(() => cotizaciones.map((cotizacion) => ({
+    ...cotizacion,
+    montoTotal: Number(cotizacion.montoTotal ?? 0),
+    descuento: Number(cotizacion.descuento ?? 0),
+    viaticos: Number(cotizacion.viaticos ?? 0),
+    detalles: (cotizacion.detalles ?? []).map((detalle) => ({
+      ...detalle,
+      valorUnitario: Number(detalle.valorUnitario ?? 0),
+      valorTotal: Number(detalle.valorTotal ?? 0),
+    })),
+    historialEstados: cotizacion.historialEstados ?? [],
+    historial_cambio: cotizacion.Historiacambios ?? [],
+    seguimientosComerciales: cotizacion.seguimientosComerciales ?? [],
+  })), [cotizaciones]);
   const usuarios = useDbTable("usuarios");
   const tarifasStore = useDbTable("tarifas");
   const loadingCotizaciones = useDbLoading("cotizaciones");
-  const { loadTable, mergeTable, setTableLoading } = useDbActions();
+  const loadingTarifas = useDbLoading("tarifas");
+  const loadingClientes = useDbLoading("clientes");
+  const loadingUsuarios = useDbLoading("usuarios");
+  const { loadTable } = useDbActions();
 
   const [view, setView] = useState<ViewCotizacion>("list");
   const [search, setSearch] = useState("");
@@ -751,7 +835,25 @@ export default function Cotizaciones() {
   const [items, setItems] = useState<QuoteItem[]>([]);
   const [descuento, setDescuento] = useState<number>(0);
   const [viaticos, setViaticos] = useState<number>(0);
-  const [selectedQuotation, setSelectedQuotation] = useState<CotizacionVista | null>(null);
+  const [idCotizacionAbierta, setIdCotizacionAbierta] = useState<number | null>(null);
+  const [historialAbierto, setHistorialAbierto] = useState(false);
+  const [eventosComerciales, setEventosComerciales] = useState<CotizacionVista["seguimientosComerciales"]>([]);
+  const [cargandoEventosComerciales, setCargandoEventosComerciales] = useState(false);
+  const selectedQuotation = cotizacionesStore.find((cotizacion) => cotizacion.idCotizacion === idCotizacionAbierta) ?? null;
+  const selectedQuotationId = selectedQuotation?.idCotizacion;
+  useEffect(() => {
+    if (!historialAbierto || selectedQuotationId == null) return;
+    let vigente = true;
+    const timer = window.setTimeout(() => { if (vigente) setCargandoEventosComerciales(true); }, 0);
+    obtenerTrazabilidadComercialCotizacion(selectedQuotationId)
+      .then((eventos) => { if (vigente) setEventosComerciales(eventos); })
+      .catch(() => { if (vigente) setEventosComerciales([]); })
+      .finally(() => { if (vigente) setCargandoEventosComerciales(false); });
+    return () => { vigente = false; window.clearTimeout(timer); };
+  }, [historialAbierto, selectedQuotationId]);
+  const idCotizacionCorreo = useRef<number | null>(null);
+  const solicitudCorreo = useRef(0);
+  const [codigoBorrador, setCodigoBorrador] = useState<string | null>(null);
   const [enviosCorreo, setEnviosCorreo] = useState<EnvioCorreoCotizacion[]>([]);
   const [cargandoEnviosCorreo, setCargandoEnviosCorreo] = useState(false);
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
@@ -759,10 +861,10 @@ export default function Cotizaciones() {
   const [modalDescuento, setModalDescuento] = useState<number>(0);
   const [modalViaticos, setModalViaticos] = useState<number>(0);
   const [toast, setToast] = useState("");
-  const [isOpenTable,setOpenTable]=useState(false)
   const [rejectTargetId, setRejectTargetId] = useState<number | null>(null);
   const [rejectMotivo, setRejectMotivo] = useState("");
-  const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
+  const { estado: estadoPlantillas, cargando: cargandoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
+  useModuleSplashReady("cotizaciones", !loadingCotizaciones && !loadingTarifas && !loadingClientes && !loadingUsuarios && !cargandoPlantillas);
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
@@ -772,64 +874,21 @@ export default function Cotizaciones() {
   // ==========================================
   // FUNCIONES DE CARGA DESDE EL SERVIDOR
   // ==========================================
-  const cargarCotizaciones = useCallback(async () => {
-    setTableLoading("cotizaciones", true);
-    try {
-      const response = await obtenerTodasLasCotizaciones();
-      if (response.ok && Array.isArray(response.data)) {
-        const parse_data: CotizacionVista[] = response.data.map((c) => ({
-          idCotizacion: c.idCotizacion,
-          codigo: c.codigo,
-          idCliente: c.idCliente,
-          montoTotal: Number(c.montoTotal ?? 0),
-          estado: c.estado,
-          createdAt: c.createdAt,
-          updatedAt: c.updatedAt,
-          viaticos: Number(c.viaticos ?? 0),
-          descuento: Number(c.descuento ?? 0),
-          motivoRechazo: c.motivoRechazo ?? null,
-          detalles: (c.detalles ?? []).map((d) => ({
-            idDetalle: d.idDetalle,
-            idCotizacion: d.idCotizacion,
-            equipoDescripcion: d.equipoDescripcion,
-            tipoServicio: d.tipoServicio,
-            magnitud: d.magnitud,
-            normaTecnica: d.normaTecnica,
-            cantidad: d.cantidad,
-            valorUnitario: Number(d.valorUnitario),
-            valorTotal: Number(d.valorTotal),
-            sitio: d.sitio ?? null,
-          })),
-          cliente: {
-            idCliente: c.idCliente,
-            razonSocial: c.cliente?.razonSocial ?? null,
-            correo: c.cliente?.correo ?? null,
-          },
-          historialEstados: c.historialEstados,
-          historial_cambio:c.Historiacambios,
-          
-        }));
-
-        mergeTable("cotizaciones", parse_data as unknown as CotizacionModel[]);
-      }
-    } finally {
-      setTableLoading("cotizaciones", false);
-    }
-  }, [mergeTable, setTableLoading]);
+  const cargarCotizaciones = useCallback(() => loadTable("cotizaciones", true), [loadTable]);
 
   // Tarifas derivadas del store (sin estado local ni fallback mock)
   const tarifasOptions: TarifaOption[] = useMemo(() => {
-    return (tarifasStore ?? []).map((t) => {
-      const historial = t.historial || [];
-      const activo = historial.find((h) => !h.fechaFin) || historial[0];
-      const precio = activo ? Number(activo.precioU) : 0;
-      return {
+    return (tarifasStore ?? []).flatMap((t) => {
+      if (t.estado !== "ACTIVO") return [];
+      const activo = obtenerPrecioVigente(t.historial ?? []);
+      if (!activo) return [];
+      return [{
         tipoServicio: t.tipoServicio || "ACREDITADO",
         magnitud: t.magnitud || "",
         instrumento: t.Instrumento || "Genérico",
         norma: t.Norma || "N/A",
-        precio,
-      };
+        precio: Number(activo.precioU),
+      }];
     });
   }, [tarifasStore]);
 
@@ -869,35 +928,60 @@ export default function Cotizaciones() {
     setTimeout(() => setToast(""), 3000);
   }, []);
 
-  const cargarEnviosCorreo = useCallback(async (idCotizacion: number) => {
-    setCargandoEnviosCorreo(true);
+  const cargarEnviosCorreo = useCallback(async (idCotizacion: number, silencioso = false) => {
+    const solicitud = ++solicitudCorreo.current;
+    if (!silencioso) setCargandoEnviosCorreo(true);
     try {
       const response = await obtenerEnviosCorreoCotizacion(idCotizacion);
-      if (response.ok && Array.isArray(response.data)) setEnviosCorreo(response.data);
-      else setEnviosCorreo([]);
+      if (solicitud === solicitudCorreo.current) {
+        if (response.ok && Array.isArray(response.data)) setEnviosCorreo(response.data);
+        else if (!silencioso) showToast(response.error ?? "No se pudo consultar el historial de correos.");
+      }
+    } catch {
+      if (solicitud === solicitudCorreo.current && !silencioso) {
+        showToast("No se pudo consultar el historial de correos.");
+      }
     } finally {
-      setCargandoEnviosCorreo(false);
+      if (solicitud === solicitudCorreo.current) setCargandoEnviosCorreo(false);
     }
-  }, []);
+  }, [showToast]);
 
+  const hayCorreosPendientes = enviosCorreo.some((envio) => ["PENDIENTE", "EN_PROCESO"].includes(envio.estado));
   useEffect(() => {
-    const id = selectedQuotation?.idCotizacion;
-    if (!id) {
-      setEnviosCorreo([]);
-      return;
-    }
-    void cargarEnviosCorreo(id);
-  }, [selectedQuotation?.idCotizacion, cargarEnviosCorreo]);
+    if (idCotizacionAbierta === null || !hayCorreosPendientes) return;
+    let activo = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const consultar = async () => {
+      await cargarEnviosCorreo(idCotizacionAbierta, true);
+      if (activo) timer = setTimeout(consultar, 3000);
+    };
+    timer = setTimeout(consultar, 3000);
+    return () => { activo = false; clearTimeout(timer); };
+  }, [idCotizacionAbierta, hayCorreosPendientes, cargarEnviosCorreo]);
+
+  const setSelectedQuotation = useCallback((cotizacion: CotizacionVista | null) => {
+    const id = cotizacion?.idCotizacion ?? null;
+    setHistorialAbierto(false);
+    setIdCotizacionAbierta(id);
+    if (id === idCotizacionCorreo.current) return;
+
+    idCotizacionCorreo.current = id;
+    solicitudCorreo.current += 1;
+    setEnviosCorreo([]);
+    if (id === null) setCargandoEnviosCorreo(false);
+    else void cargarEnviosCorreo(id);
+  }, [cargarEnviosCorreo]);
 
   const handleReintentarCorreo = useCallback(async (idEnvio: number, correo: string) => {
     if (!selectedQuotation) return;
-    const response = await reintentarEnvioCorreoCotizacion(selectedQuotation.idCotizacion, idEnvio, correo);
+    const idCotizacion = selectedQuotation.idCotizacion;
+    const response = await reintentarEnvioCorreoCotizacion(idCotizacion, idEnvio, correo);
     if (!response.ok) {
       showToast(`❌ ${response.error ?? 'No se pudo reintentar el correo.'}`);
       return;
     }
     showToast(`📨 Reenvío programado a ${response.data?.destinatario}. La aprobación y los documentos se conservan.`);
-    await cargarEnviosCorreo(selectedQuotation.idCotizacion);
+    if (idCotizacionCorreo.current === idCotizacion) await cargarEnviosCorreo(idCotizacion);
   }, [selectedQuotation, showToast, cargarEnviosCorreo]);
 
   const handleNuevaCotizacion = useCallback(() => {
@@ -917,8 +1001,9 @@ export default function Cotizaciones() {
       norma: d.normaTecnica || "N/A",
       cantidad: d.cantidad,
       valorUnitario: Number(d.valorUnitario),
-      lugarCalibracion: (d.sitio === "CLIENTE" ? "Sitio" : "Laboratorio") as QuoteItem["lugarCalibracion"],
+      lugarCalibracion: (d.sitio === "CLIENTE" ? "Sitio" : d.sitio === "INTERNO_USC" ? "Interno USC" : "Laboratorio") as QuoteItem["lugarCalibracion"],
     }));
+    setCodigoBorrador(selectedQuotation.codigo);
     setModalItems(mapeados);
     setModalDescuento(selectedQuotation.descuento || 0);
     setModalViaticos(selectedQuotation.viaticos || 0);
@@ -970,7 +1055,7 @@ export default function Cotizaciones() {
           normaTecnica: i.norma,
           cantidad: i.cantidad,
           valorUnitario: i.valorUnitario,
-          sitio: i.lugarCalibracion === "Sitio" ? "CLIENTE" : "LABORATORIO",
+          sitio: i.lugarCalibracion === "Sitio" ? "CLIENTE" : i.lugarCalibracion === "Interno USC" ? "INTERNO_USC" : "LABORATORIO",
         })),
       });
 
@@ -989,7 +1074,7 @@ export default function Cotizaciones() {
     }
   }, [idClienteSeleccionado, viaticos, descuento, items, showToast, cargarCotizaciones, plantillasCompletas]);
 
-  const handleEstadoChange = useCallback(async (id: number, nuevoEstado: Estados) => {
+  const handleEstadoChange = useCallback(async (id: number, nuevoEstado: Estados, codigo: string) => {
     if (nuevoEstado === Estados.RECHAZADA) {
       setRejectTargetId(id);
       setRejectMotivo("");
@@ -997,9 +1082,9 @@ export default function Cotizaciones() {
     }
     setUpdatingId(id);
     try {
-      const res = await cambiarEstadoCotizacion(id, nuevoEstado);
+      const res = await cambiarEstadoCotizacion(id, nuevoEstado, undefined, codigo);
       if (res.ok) {
-        showToast(`✅ Estado actualizado a ${nuevoEstado}`);
+        showToast(nuevoEstado === Estados.ENVIADA ? "Cotización en cola para enviar al cliente." : `✅ Estado actualizado a ${nuevoEstado}`);
         cargarCotizaciones(); // refrescar para obtener historial actualizado
       } else {
         showToast(`❌ Error: ${res.error}`);
@@ -1052,6 +1137,7 @@ export default function Cotizaciones() {
     try {
       const res = await actualizarCotizacion({
         idCotizacion: selectedQuotation.idCotizacion,
+        codigo: codigoBorrador ?? undefined,
         viaticos: modalViaticos,
         descuento: modalDescuento,
         detalles: modalItems.map((i) => ({
@@ -1062,23 +1148,27 @@ export default function Cotizaciones() {
           normaTecnica: i.norma,
           cantidad: i.cantidad,
           valorUnitario: i.valorUnitario,
-          sitio: i.lugarCalibracion === "Sitio" ? "CLIENTE" : "LABORATORIO",
+          sitio: i.lugarCalibracion === "Sitio" ? "CLIENTE" : i.lugarCalibracion === "Interno USC" ? "INTERNO_USC" : "LABORATORIO",
         })),
         cambios:_auditForm
       });
 
       if (res.ok) {
-        showToast(`✅ Versión actualizada para cotización #${selectedQuotation.codigo}`);
+        showToast(`Versión guardada para ${res.data?.codigo ?? selectedQuotation.codigo}.`);
         setIsVersionModalOpen(false);
         setSelectedQuotation(null);
-        cargarCotizaciones();
+        await Promise.all([
+          cargarCotizaciones(),
+          loadTable("ordenes_trabajo", true),
+          loadTable("recepciones_equipo", true),
+        ]);
       } else {
         showToast(`❌ Error al actualizar: ${res.error}`);
       }
     } finally {
       setIsSaving(false);
     }
-  }, [selectedQuotation, modalViaticos, modalDescuento, modalItems, showToast, cargarCotizaciones]);
+  }, [selectedQuotation, codigoBorrador, modalViaticos, modalDescuento, modalItems, showToast, cargarCotizaciones, setSelectedQuotation, loadTable]);
 
   const agregarFila = useCallback((target: "create" | "modal") => {
     const nuevaFila: QuoteItem = {
@@ -1226,30 +1316,6 @@ const manejarCambioFila = useCallback(<K extends keyof QuoteItem>(
   // ==========================================
 
 
-const historial_talble: HistorialCambioItem[] = useMemo(() => {
-  // 1. Retornamos un arreglo vacío en lugar de 'null' para cumplir con el tipo HistorialCambioItem[]
-  if (!isOpenTable) return [];
-
-  // 2. flatMap aplanarás los arrays de historial_cambio de todas las cotizaciones
-  return cotizacionesStore.flatMap((cotizacion) => {
-    return (cotizacion.historial_cambio || []).map((item): HistorialCambioItem => ({
-      id: item.id,
-      numeroVersion: item.numeroVersion,
-      fechaCambio: item.fechaCambio,
-      descripcion: item.descripcion,
-      observaciones: item.observaciones ?? null,
-      aprobo: item.aprobo,
-      idCotizacion: cotizacion.idCotizacion, // O item.idCotizacion si ya viene dentro del item
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-    }));
-  });
-}, [isOpenTable, cotizacionesStore]);
-
-
-
-
-
   return (
     <div className="module-page" style={{ position: "relative" }}>
       <ToastNotification toast={toast} />
@@ -1324,7 +1390,8 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
 
           {selectedQuotation && (
             <QuotationDetailView
-            onopentable={()=>setOpenTable(true)}
+              key={selectedQuotation.idCotizacion}
+              onopentable={() => setHistorialAbierto(true)}
               selectedQuotation={selectedQuotation}
               openVersionModal={openVersionModal}
               setSelectedQuotation={setSelectedQuotation}
@@ -1354,7 +1421,6 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
           setViaticos={setViaticos}
           calculateTotal={calculateTotal}
           formatCurrency={formatCurrency}
-          showToast={showToast}
           setView={setView}
           guardarCotizacion={guardarCotizacion}
           isSaving={isSaving}
@@ -1367,7 +1433,18 @@ const historial_talble: HistorialCambioItem[] = useMemo(() => {
       )}
 
       {view === "catalog" && <CatalogTableView />}
-      <ModalHistorialCambios codigo_cotizacion={selectedQuotation?.codigo??""}historial={historial_talble} isOpen={isOpenTable}onClose={()=>setOpenTable(false)} />
+      {view === "list" && historialAbierto && selectedQuotation && (
+        <ModalHistorialCambios
+          codigo_cotizacion={selectedQuotation.codigo}
+          historial={selectedQuotation.historial_cambio.filter(
+            (cambio) => cambio.idCotizacion === selectedQuotation.idCotizacion,
+          )}
+          eventosComerciales={eventosComerciales}
+          isLoading={cargandoEventosComerciales}
+          isOpen={historialAbierto}
+          onClose={() => setHistorialAbierto(false)}
+        />
+      )}
 
       {rejectTargetId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">

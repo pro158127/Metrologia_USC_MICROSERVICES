@@ -134,6 +134,10 @@ export type Warning = {
 export type Instrument = Omit<OrdenTrabajoDetalleBase, "idOrdenTrabajo" | "idDetalle"> & {
   /** Identificador temporal solo para la UI (row key). */
   id: string;
+  idUnidad?: string | null;
+  listoParaAsignar?: boolean;
+  calibracionIniciada?: boolean;
+  certificadoCreado?: boolean;
 };
 
 /** Vista resumida de una OT para Kanban/Lista, alineada a `OrdenTrabajo`. */
@@ -244,7 +248,6 @@ export interface HeaderSectionProps {
   setViewMode: (mode: ViewMode) => void;
   onBack: () => void;
   totalOTs: number;
-  warnings?: Warning[];
 }
 
 export interface OrderAlertsBannerProps {
@@ -266,6 +269,8 @@ export interface StaffAssignmentSectionProps {
   estadoActual: EstadoOrden;
   // 🟢 Actualizar la firma de la función aquí también
   onAssignTechnician: (idUsuario: number, id_instrumento: string | number) => void;
+  onSaveAssignments: () => void;
+  saving: boolean;
 }
 export interface InstrumentosTableProps {
   instrumentDrafts: Instrument[];
@@ -274,10 +279,8 @@ export interface InstrumentosTableProps {
     field: K,
     value: Instrument[K]
   ) => void;
-  onAddInstrument: () => void;
-  onRemoveInstrument: (id: string) => void;
   excedioLimite: boolean;
-  tarifas: TarifaOptionBase[];
+  readOnly?: boolean;
 }
 
 export interface OrderFormRCM05Props {
@@ -296,8 +299,6 @@ export interface OrderFormRCM05Props {
   ) => void;
   technicians: Tecnico[];
   saveOrderEdits: () => void;
-  onAddInstrument: () => void;
-  onRemoveInstrument: (id: string) => void;
   tarifas: TarifaOptionBase[];
 }
 
@@ -318,6 +319,7 @@ export interface FieldProps {
   type?: string;
   list?: string;
   className?: string;
+  readOnly?: boolean;
 }
 
 export interface KanbanBoardViewProps {
@@ -325,7 +327,6 @@ export interface KanbanBoardViewProps {
   collapsedColumns: Partial<Record<EstadoOrden, boolean>>;
   toggleColumnCollapse: (key: EstadoOrden) => void;
   onOpenOT: (ot: Partial<OTBase>) => void;
-  warnigs?: Warning[];
 }
 
 export interface ListViewTableProps {
@@ -356,6 +357,9 @@ export interface OTasiignemet {
   // 🟢 Permitir string (para los UUIDs) o number (para la BD)
   id_instrumento: string | number; 
   instrumento: string;
+  listoParaAsignar: boolean;
+  calibracionIniciada: boolean;
+  certificadoCreado: boolean;
 }
 export interface Tecnico {
   idUsuario: number;

@@ -45,6 +45,7 @@ services:
     image: redis:7-alpine
     container_name: metrologia_redis
     restart: always
+    command: ["redis-server", "--save", "60 1", "--appendonly", "${REDIS_APPENDONLY:-no}", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
     ports:
       - "6379:6379"
     volumes:
@@ -123,7 +124,9 @@ services:
     build: { context: ./Backend, dockerfile: DockerFile.backend }
     working_dir: /workspace/Backend
     restart: unless-stopped
-    command: sh -c "cd /workspace/Backend && pnpm worker:documentos"
+    init: true
+    stop_grace_period: 90s
+    command: ["node", "--import", "tsx", "src/workers/documentos.worker.ts"]
     environment:
       <<: *backend-env
     volumes:
@@ -140,7 +143,9 @@ services:
   worker_datos:
     build: { context: ./Backend, dockerfile: DockerFile.backend }
     working_dir: /workspace/Backend
-    command: sh -c "cd /workspace/Backend && pnpm worker:plantillas"
+    init: true
+    stop_grace_period: 90s
+    command: ["node", "--import", "tsx", "src/workers/plantillas.worker.ts"]
     restart: unless-stopped
     deploy:
       resources:
@@ -162,7 +167,9 @@ services:
   worker_cron:
     build: { context: ./Backend, dockerfile: DockerFile.backend }
     working_dir: /workspace/Backend
-    command: sh -c "cd /workspace/Backend && pnpm worker:cron"
+    init: true
+    stop_grace_period: 90s
+    command: ["node", "--import", "tsx", "src/workers/cron.worker.ts"]
     restart: unless-stopped
     environment:
       <<: *backend-env

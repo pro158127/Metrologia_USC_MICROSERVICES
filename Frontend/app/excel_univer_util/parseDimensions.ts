@@ -3,7 +3,7 @@
 const MIN_ROW_COUNT = 100;
 const MIN_COLUMN_COUNT = 26;
 
-export function getActualDimensions(cellData: Record<number, Record<number, any>>) {
+export function getActualDimensions(cellData: Record<number, Record<number, unknown>>) {
   const rowIndices = Object.keys(cellData).map(Number);
 
   if (rowIndices.length === 0) {

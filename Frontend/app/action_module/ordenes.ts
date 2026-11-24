@@ -23,6 +23,35 @@ export interface DatosInicialesOrdenes {
   version: DocumentoModel[];
 }
 
+export async function obtenerTecnicosOrdenes(): Promise<{ idUsuario: number; nombreCompleto: string }[]> {
+  return fastifyRequest(await auth(), '/api/v1/ordenes/tecnicos');
+}
+
+export async function obtenerOrdenesListado(): Promise<OrdenTrabajoModel[]> {
+  return fastifyRequest(await auth(), '/api/v1/ordenes/listado');
+}
+
+export interface CotizacionImportable {
+  idCotizacion: number;
+  codigo: string;
+  cliente: string;
+  createdAt: string;
+  estado: 'APROBADA';
+  equiposContados: number;
+  otsExistentes: { id: number; codigo: string; version: number | null; estado: string | null }[];
+}
+
+export async function obtenerCotizacionesImportables(options: { page: number; busqueda?: string }) {
+  const session = await auth();
+  const params = new URLSearchParams({ page: String(options.page), limit: '20' });
+  if (options.busqueda?.trim()) params.set('busqueda', options.busqueda.trim());
+  return fastifyRequest<{
+    ok: true;
+    data: CotizacionImportable[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  }>(session, `/api/v1/ordenes/cotizaciones-importables?${params.toString()}`);
+}
+
 export async function obtenerDatosIniciales(): Promise<DatosInicialesOrdenes> {
   try {
     const session = await auth();
@@ -32,30 +61,11 @@ export async function obtenerDatosIniciales(): Promise<DatosInicialesOrdenes> {
     );
   } catch (error) {
     console.error('Error cargando datos iniciales:', error);
-    // Devuelve arreglos vacíos explícitos en lugar de undefined o lanzar throw
-    return {
-      ordenes: [],
-      clientes: [],
-      usuarios: [],
-      roles: [],
-      tarifas: [],
-      version: [],
-    };
+    throw error;
   }
 }
 
-import {CotizacionVinculable,ImportarOTPayload,RespuestaWorkerJob,PollingJobStatus} from "@/tipos/importaciones"
-
-export async function obtenerCotizacionesVinculables(): Promise<CotizacionVinculable[]> {
-  try {
-    const session = await auth();
-    // Este endpoint debería retornar las cotizaciones aprobadas/enviadas que no tienen OT
-    return await fastifyRequest<CotizacionVinculable[]>(session, '/api/v1/cotizaciones/sin-ot');
-  } catch (error) {
-    console.error('Error cargando cotizaciones vinculables:', error);
-    return [];
-  }
-}
+import {ImportarOTPayload,RespuestaWorkerJob,PollingJobStatus} from "@/tipos/importaciones"
 
 // 2. Enviar la orden al Worker
 export async function procesarImportacionOTAction(payload: ImportarOTPayload): Promise<RespuestaWorkerJob> {
@@ -69,9 +79,9 @@ export async function procesarImportacionOTAction(payload: ImportarOTPayload): P
         body: payload,
       }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error enviando OT al worker:', error);
-    return { ok: false, error: error.message };
+    return { ok: false, error: error instanceof Error ? error.message : 'Error de conexión con el servidor' };
   }
 }
 
@@ -80,7 +90,7 @@ export async function consultarEstadoJobAction(idJob: string): Promise<PollingJo
   try {
     const session = await auth();
     return await fastifyRequest<PollingJobStatus>(session, `/api/v1/jobs/${idJob}`);
-  } catch (error) {
+  } catch {
     return { status: 'FAILED', data: { error: 'Error de red consultando el Job' } };
   }
 }
@@ -107,10 +117,21 @@ export interface InstrumentoConsolidar {
 }
 
 export interface ConsolidarOtPayload {
+  codigoActual?: string;
+  observaciones?: string | null;
+  razonSocialCert: string | null;
+  nitCert: string | null;
+  correoCertificados: string | null;
+  direccionCert: string | null;
+  ciudadCert: string | null;
+  correoFactura: string | null;
   responsableUsc: string | null;
   fechaDiligenciamiento: string | null;
-  requiereAnexo: string;
-  observacionesGenerales: string | null;
+  fechaLimiteFacturacion?: string | null;
+  fechaCalibracion?: string | null;
+  horaCalibracion?: string | null;
+  personaContactar?: string | null;
+  telefonoCalibracion?: string | null;
   lugarCalibracion: string;
   estadoOrden: string;
   instrumentos: InstrumentoConsolidar[];
@@ -120,11 +141,11 @@ export interface ConsolidarOtPayload {
 export async function consolidarOrdenTrabajoAction(
   idOt: string | number,
   payload: ConsolidarOtPayload
-): Promise<RespuestaWorkerJob> {
+): Promise<RespuestaWorkerJob & { codigo?: string; responsable?: string | null }> {
   try {
     const session = await auth();
     // Enviamos el PUT al endpoint de Fastify que creamos anteriormente
-    return await fastifyRequest<RespuestaWorkerJob>(
+    return await fastifyRequest<RespuestaWorkerJob & { codigo?: string; responsable?: string | null }>(
       session,
       `/api/v1/ordenes/${idOt}/consolidar`,
       {
@@ -132,8 +153,11 @@ export async function consolidarOrdenTrabajoAction(
         body: payload,
       }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error consolidando OT:', error);
-    return { ok: false, error: error.message || 'Error de conexión con el servidor' };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Error de conexión con el servidor',
+    };
   }
 }

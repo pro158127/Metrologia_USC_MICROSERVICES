@@ -5,8 +5,10 @@ type Tx = Prisma.TransactionClient;
 /** True only when every current OT has paid, sent certificates and completed receipts. */
 export async function cotizacionListaParaSeguimiento(tx: Tx, idCotizacion: number): Promise<boolean> {
   const ots = await tx.ordenes_trabajo.findMany({
-    where: { ID_COTIZACION_FK: idCotizacion, SITIO_CALIBRACION: { not: null }, VIGENTE: true },
+    where: { ID_COTIZACION_FK: idCotizacion, VIGENTE: true },
     select: {
+      ID_ORDEN_TRABAJO: true,
+      ID_OT_PADRE_FK: true,
       estado: true,
       estado_pago: true,
       recepciones_equipo: {
@@ -16,7 +18,9 @@ export async function cotizacionListaParaSeguimiento(tx: Tx, idCotizacion: numbe
     },
   });
 
-  return ots.length > 0 && ots.every((ot) =>
+  const maestras = new Set(ots.map((ot) => ot.ID_OT_PADRE_FK));
+  const operativas = ots.filter((ot) => !maestras.has(ot.ID_ORDEN_TRABAJO));
+  return operativas.length > 0 && operativas.every((ot) =>
     ot.estado === 'Certificado_enviado' &&
     ot.estado_pago === 'PAGADO' &&
     ot.recepciones_equipo.length > 0 &&
@@ -38,10 +42,11 @@ export async function cerrarSeguimientoSiCompleto(
   });
   if (!cotizacion || cotizacion.ESTADO !== 'APROBADA') return false;
 
-  await tx.cotizaciones.update({
-    where: { ID_COTIZACION: idCotizacion },
+  const cierre = await tx.cotizaciones.updateMany({
+    where: { ID_COTIZACION: idCotizacion, ESTADO: 'APROBADA' },
     data: { ESTADO: 'EN_SEGUIMIENTO' },
   });
+  if (cierre.count !== 1) return false;
   await tx.historial_estado_cotizacion.create({
     data: {
       ID_COTIZACION_FK: idCotizacion,
@@ -58,6 +63,7 @@ export async function cerrarSeguimientoSiCompleto(
       DESCRIPCION: `Cierre de entrega completado para la cotización ${cotizacion.CODIGO_COTIZACION}.`,
       RESULTADO: 'ENTREGA_COMPLETA',
       ID_USUARIO_FK: idUsuario,
+      ORIGEN: 'SISTEMA',
     },
   });
   return true;

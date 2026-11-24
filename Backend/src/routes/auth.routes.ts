@@ -3,12 +3,14 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { AppError } from '../lib/errors.js';
 import { hashPassword, verifyPassword } from '../services/password.service.js';
 import {
+  cancelarCodigoNoEncolado,
   generarCodigo,
   guardarCodigo,
   permitirSolicitud,
   verificarCodigo,
 } from '../services/recovery.service.js';
-import { getEmailQueue } from '../lib/queue/queue.js';
+import { registrarCorreoPendiente } from '../services/email-delivery.service.js';
+import { protegerContenidoCorreo } from '../services/contenido-correo.service.js';
 import {
   loginBodySchema,
   recuperarContrasenaBodySchema,
@@ -43,45 +45,56 @@ export default async function authRoutes(fastify: FastifyInstance) {
         throw new AppError(401, 'Usuario no encontrado', 'user_not_found');
       }
 
-      if (user.intentos >= 3 || user.ESTADO === false) {
+      if (user.intentos >= 3 || user.ESTADO === false || user.elminado) {
         throw new AppError(401, 'Usuario bloqueado o inactivo', 'user_blocked_or_inactive');
       }
 
       const passwordMatch = await verifyPassword(user.contrase_a, password);
-      if (!passwordMatch) {
-        const nuevosIntentos = user.intentos + 1;
-        if (nuevosIntentos >= 3) {
-          await fastify.prisma.usuarios.update({
-            where: { ID_USUARIO_AUTO_INCREMENT: user.ID_USUARIO_AUTO_INCREMENT },
-            data: { intentos: nuevosIntentos, ESTADO: false },
+      const idUsuario = user.ID_USUARIO_AUTO_INCREMENT;
+      const resultadoLogin = await fastify.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "ID_USUARIO_AUTO_INCREMENT" FROM usuarios WHERE "ID_USUARIO_AUTO_INCREMENT" = ${idUsuario} FOR UPDATE`;
+        const actual = await tx.usuarios.findUnique({
+          where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
+          select: { intentos: true, ESTADO: true, elminado: true, contrase_a: true, UPDATE_AT: true },
+        });
+        if (!actual?.ESTADO || actual.elminado || actual.intentos >= 3 ||
+            actual.contrase_a !== user.contrase_a ||
+            actual.UPDATE_AT?.getTime() !== user.UPDATE_AT?.getTime()) {
+          return 'inactivo';
+        }
+        if (!passwordMatch) {
+          const intentos = actual.intentos + 1;
+          const bloqueado = intentos >= 3;
+          await tx.usuarios.update({
+            where: { ID_USUARIO_AUTO_INCREMENT: idUsuario },
+            data: { intentos, ...(bloqueado && { ESTADO: false, UPDATE_AT: new Date() }) },
           });
+          return bloqueado ? 'bloqueado' : 'incorrecto';
+        }
+        if (actual.intentos > 0) {
+          await tx.usuarios.update({ where: { ID_USUARIO_AUTO_INCREMENT: idUsuario }, data: { intentos: 0 } });
+        }
+        return 'ok';
+      });
 
-          await fastify.prisma.notificaciones.create({
+      if (resultadoLogin === 'bloqueado') {
+        fastify.io.in(`user_room_${idUsuario}`).disconnectSockets(true);
+        await fastify.prisma.notificaciones.create({
             data: {
               ID_USUARIO_FK: 1,
-              MENSAJE: `La cuenta del usuario ${user.CORREO_INSTITUCION} ha sido bloqueada tras 5 intentos fallidos de contraseña. IP de origen: ${ip ?? 'n/a'}`,
+              MENSAJE: `La cuenta del usuario ${user.CORREO_INSTITUCION} ha sido bloqueada tras 3 intentos fallidos de contraseña. IP de origen: ${ip ?? 'n/a'}`,
               MODULO: 'Sistema',
               NIVEL_PRIORIDAD: 'ALTA',
               VISTO: false,
             },
-          });
-
-          throw new AppError(401, 'Usuario bloqueado', 'user_blocked_now');
-        }
-
-        await fastify.prisma.usuarios.update({
-          where: { ID_USUARIO_AUTO_INCREMENT: user.ID_USUARIO_AUTO_INCREMENT },
-          data: { intentos: nuevosIntentos },
-        });
-
-        throw new AppError(401, 'Credenciales inválidas', 'invalid_credentials');
+        }).catch((error) => request.log.error({ err: error, idUsuario }, 'No se pudo notificar el bloqueo de cuenta'));
+        throw new AppError(401, 'Usuario bloqueado', 'user_blocked_now');
       }
-
-      if (user.intentos > 0) {
-        await fastify.prisma.usuarios.update({
-          where: { ID_USUARIO_AUTO_INCREMENT: user.ID_USUARIO_AUTO_INCREMENT },
-          data: { intentos: 0 },
-        });
+      if (resultadoLogin === 'inactivo') {
+        throw new AppError(401, 'La cuenta o las credenciales cambiaron. Intente iniciar sesión de nuevo.', 'user_blocked_or_inactive');
+      }
+      if (resultadoLogin === 'incorrecto') {
+        throw new AppError(401, 'Credenciales inválidas', 'invalid_credentials');
       }
 
       return {
@@ -91,6 +104,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
           CORREO_INSTITUCION: user.CORREO_INSTITUCION,
           NOMBRE_ROL: user.roles.NOMBRE_ROL,
           PERMISOS_JSON: user.roles.PERMISOS_JSON,
+          UPDATE_AT: user.UPDATE_AT,
         }),
       };
     }
@@ -106,38 +120,35 @@ export default async function authRoutes(fastify: FastifyInstance) {
     },
     async (request) => {
       const { email } = request.body;
-
-      const usuario = await fastify.prisma.usuarios.findFirst({
-        where: { CORREO_INSTITUCION: email },
-        select: {
-          ID_USUARIO_AUTO_INCREMENT: true,
-          NOMBRE_COMPLETO: true,
-          CORREO_INSTITUCION: true,
-        },
-      });
+      const entidad = email.toLowerCase();
+      const puedeEnviar = await permitirSolicitud('recuperar', entidad);
 
       // Solo se procede si el correo existe; la respuesta es genérica para
-      // no revelar si la cuenta está registrada (anti-enumeración).
-      if (usuario) {
-        if (!(await permitirSolicitud('recuperar', email.toLowerCase()))) {
-          throw new AppError(
-            429,
-            'Demasiadas solicitudes. Espera un minuto e inténtalo de nuevo.',
-            'too_many_requests'
-          );
-        }
-
+      // no revelar si la cuenta está registrada (anti-enumeración). El límite
+      // se aplica también a direcciones desconocidas y la respuesta no cambia.
+      if (puedeEnviar) {
+        const usuario = await fastify.prisma.usuarios.findFirst({
+          where: { CORREO_INSTITUCION: email },
+          select: {
+            ID_USUARIO_AUTO_INCREMENT: true,
+            NOMBRE_COMPLETO: true,
+            CORREO_INSTITUCION: true,
+          },
+        });
+        if (!usuario) return { success: true as const };
         const codigo = generarCodigo();
-        await guardarCodigo('recuperar', email.toLowerCase(), codigo);
+        const expira = await guardarCodigo('recuperar', entidad, codigo);
 
         try {
-          await getEmailQueue().add('codigo_recuperacion', {
+          await registrarCorreoPendiente(fastify.prisma, {
             to: usuario.CORREO_INSTITUCION,
             subject: 'Código de recuperación de acceso - Metrología USC',
             template_type: 'codigo_recuperacion',
             context_data: {
               nombre: usuario.NOMBRE_COMPLETO,
-              codigo,
+              ...protegerContenidoCorreo('codigo', codigo, {
+                expira_en: expira, codigo_verificacion: { namespace: 'recuperar', entidad },
+              }),
             },
             id_registro: usuario.ID_USUARIO_AUTO_INCREMENT,
             notificar_usuario_id: usuario.ID_USUARIO_AUTO_INCREMENT,
@@ -147,6 +158,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
           });
         } catch (mailError) {
           fastify.log.error(mailError);
+          await cancelarCodigoNoEncolado('recuperar', entidad, codigo).catch((err) =>
+            request.log.warn({ err }, 'No se pudo cancelar el código que no quedó programado'));
         }
       }
 
@@ -184,10 +197,18 @@ export default async function authRoutes(fastify: FastifyInstance) {
       }
 
       const contrasenaHasheada = await hashPassword(nuevaContrasena);
-      await fastify.prisma.usuarios.update({
-        where: { ID_USUARIO_AUTO_INCREMENT: usuario.ID_USUARIO_AUTO_INCREMENT },
-        data: { contrase_a: contrasenaHasheada, intentos: 0, ESTADO: true },
+      const cambio = await fastify.prisma.usuarios.updateMany({
+        where: {
+          ID_USUARIO_AUTO_INCREMENT: usuario.ID_USUARIO_AUTO_INCREMENT,
+          UPDATE_AT: usuario.UPDATE_AT,
+          contrase_a: usuario.contrase_a,
+          elminado: false,
+          ESTADO: usuario.ESTADO,
+        },
+        data: { contrase_a: contrasenaHasheada, intentos: 0, ESTADO: true, UPDATE_AT: new Date() },
       });
+      if (!cambio.count) throw new AppError(409, 'La cuenta cambió durante la recuperación. Solicite un nuevo código.');
+      fastify.io.in(`user_room_${usuario.ID_USUARIO_AUTO_INCREMENT}`).disconnectSockets(true);
 
       await fastify.prisma.audit_logs.create({
         data: {

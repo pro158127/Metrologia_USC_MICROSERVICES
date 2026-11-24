@@ -684,6 +684,7 @@ export const reportesCertificadoDtoSchema = z.object({
   nit: z.string(),
   tecnico: z.string(),
   ot: z.string(),
+  cotizacion: z.string().nullable().optional(),
   fecha: z.string().nullable(),
   rutaUrl: z.string().nullable(),
   tipoServicio: z.string().nullable(),
@@ -715,6 +716,7 @@ export const reportesKpisDtoSchema = z.object({
 
 export const reportesDataSchema = z.object({
   kpis: reportesKpisDtoSchema,
+  series: z.array(z.object({ mes: z.string(), interno: z.number(), externo: z.number(), tasa: z.number() })),
   certificados: z.array(reportesCertificadoDtoSchema),
   tecnicos: z.array(reportesTecnicoDtoSchema),
   trazabilidad: z.array(reportesTrazabilidadDtoSchema),
@@ -734,6 +736,12 @@ export const exportarReporteBodySchema = z.object({
 });
 export type ExportarReporteBody = z.infer<typeof exportarReporteBodySchema>;
 
+export const reporteTrazabilidadFacturaBodySchema = z.object({
+  numeroFactura: z.string().trim().min(1, 'Escribe el número de factura.').max(80),
+});
+
+export const reporteDescargaQuerySchema = z.object({ formato: z.enum(['pdf', 'excel']).optional() });
+
 export const reporteJobParamsSchema = z.object({ jobId: z.string().min(1) });
 
 export const respuestaExportacionEncoladaSchema = z.object({
@@ -746,6 +754,11 @@ export const respuestaReporteJobSchema = z.object({
   data: z.object({
     status: z.string(),
     url: z.string().nullable(),
+    archivos: z.object({ pdf: z.string().nullable(), excel: z.string().nullable() }).optional(),
+    resumen: z.object({
+      factura: z.string(), cliente: z.string(), fecha: z.string().nullable(), valor: z.number(),
+      ots: z.string(), equipos: z.number(), cert: z.string().nullable(),
+    }).optional(),
     error: z.string().nullable(),
   }),
 });

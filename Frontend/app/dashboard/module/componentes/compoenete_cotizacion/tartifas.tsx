@@ -1,36 +1,34 @@
 'use client';
-import { toast, Toaster } from "sonner";
-import React, { useEffect, useState, useMemo } from "react";
+import { obtenerPrecioVigente, precioEnVigencia } from '@/app/lib/vigencia-tarifa';
 import {
-  Plus,
-  Edit3,
-  Power,
-  Search,
-  X,
-  Save,
-  History,
-  Calendar,
-  Filter,
- Upload
-} from "lucide-react";
-import { useDbTable, useDbActions } from "@/app/componets/tables_recharge";
-import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import {
-  obtenerTodasLasTarifas,
-  crearTarifa,
-  actualizarPrecioTarifa,
-  cambiarEstadoTarifa,
-  TarifaModel,
-  actulzar_tarifa,
+actulzar_tarifa,
+cambiarEstadoTarifa,
+crearTarifa,
+TarifaModel
 } from "@/app/action_module/tarifas";
+import { useDbActions,useDbTable } from "@/app/componets/tables_recharge";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
 import type {
-  PriceRecord,
-  CatalogItem,
-  CatalogHeaderControlsProps,
-  PriceHistoryModalProps,
-  CatalogFormModalProps,
-  CatalogRowProps,
+CatalogFormModalProps,
+CatalogHeaderControlsProps,
+CatalogItem,
+CatalogRowProps,
+PriceHistoryModalProps
 } from "@/tipos/tarifas";
+import {
+Calendar,
+Edit3,
+Filter,
+History,
+Plus,
+Power,
+Save,
+Search,
+Upload,
+X
+} from "lucide-react";
+import React,{ useEffect,useMemo,useState } from "react";
+import { toast } from "sonner";
 
 const formatCurrency = (val: number) => {
   return new Intl.NumberFormat("es-CO", {
@@ -43,10 +41,8 @@ const formatCurrency = (val: number) => {
 // ----------------------------------------------------------------------
 // Componentes Hijos
 // ----------------------------------------------------------------------
-import { consolidarTarifas } from "@/app/action_module/template";
-import { consultar_outputshema } from "@/app/action_module/template";
-import { MapeoConfigTarifas } from "backend/src/routes/plantillas.schemas";
-import { MappingConfig } from "@/tipos/plantillas";
+import { consolidarTarifas, consultarEstadoJob, consultar_outputshema } from "@/app/action_module/template";
+import type { MapeoConfigTarifas, MappingConfig } from "@/tipos/plantillas";
 const CatalogHeaderControls = ({
   searchTerm,
   setSearchTerm,
@@ -57,50 +53,81 @@ const CatalogHeaderControls = ({
   magnitudesDisponibles,
   tiposServicioDisponibles,
   onOpenCreate,
+  onTarifasImportadas,
 }: CatalogHeaderControlsProps) => {
   const { can } = usePermissions();
   const puedeGestionar = can("cotizaciones", "gestionar_catalogo_tarifas");
 
-const handleButton_tarifas = async () => {
-    try {
-      const schema = await consultar_outputshema('cotizacion');
-      if(!schema.response.success || !schema.response.data.MAPPING_CONFIG){
-        console.error("Error: No se encontró la configuración de mapeo para cotización");
-        return;
-      }
-      console.log("esta aqio ")
-      console.log(schema.response.data.MAPPING_CONFIG,"CONFIGURACION DE MAPEOS",schema)
-      const toparse = (schema.response.data.MAPPING_CONFIG || {}) as MappingConfig;
-      
-      const tablaTarifas = toparse.mappings.tables.find((e) => e.key === "tabla_tarifas");
-      
-      const parse: MapeoConfigTarifas = {
-        columnas: {
-          instrumento: tablaTarifas?.columns.find((i) => i.key === "instrumentos")?.column ?? 'sin definir',
-          magnitud: tablaTarifas?.columns.find((i) => i.key === "magnitud")?.column ?? 'sin definir',
-          norma: tablaTarifas?.columns.find((i) => i.key === "norma_guia_tecnica")?.column ?? 'sin definir',
-          tipoServicio: tablaTarifas?.columns.find((i) => i.key === "tipo_servicio")?.column ?? 'sin definir',
-        },
-        filaEncabezados: tablaTarifas?.star_header ?? 0,
-        filaInicialDatos: tablaTarifas?.startRow ?? 0,
-        // CORRECCIÓN AQUÍ: === en lugar de =
-        columnasPrecios: tablaTarifas?.columns.find((e) => e.key === "columnas_precios")?.columnsList
-      };
-      console.log(parse,"aqAUQIIEOW")
-      const action = await consolidarTarifas(1, parse);
-      console.log("Tarifas consolidadas:", action);
+  const [importando, setImportando] = useState(false);
 
+  const importarTarifas = async () => {
+    setImportando(true);
+    const toastId = toast.loading("Importando tarifas desde la plantilla de Cotización…");
+    try {
+      const { response } = await consultar_outputshema("cotizacion");
+      const version = response.data;
+      const config = version.MAPPING_CONFIG as MappingConfig | null;
+      const tabla = config?.mappings?.tables?.find((item) => item.key === "tabla_tarifas");
+
+      if (!tabla?.startRow || !tabla.star_header) {
+        throw new Error("Configura las filas de encabezados y de inicio de la tabla de tarifas en la plantilla.");
+      }
+
+      const columnas = new Map(tabla.columns.map((columna) => [columna.key, columna]));
+      const instrumento = columnas.get("instrumentos")?.column;
+      const magnitud = columnas.get("magnitud")?.column;
+      const norma = columnas.get("norma_guia_tecnica")?.column;
+      const tipoServicio = columnas.get("tipo_servicio")?.column;
+      const columnasPrecios = columnas.get("columnas_precios")?.columnsList;
+
+      if (!instrumento || !magnitud || !tipoServicio || !columnasPrecios?.length) {
+        throw new Error("Completa las columnas de instrumento, magnitud, tipo de servicio y precios en la plantilla.");
+      }
+
+      const mapeo: MapeoConfigTarifas = {
+        columnas: { instrumento, magnitud, tipoServicio, ...(norma && { norma }) },
+        filaEncabezados: tabla.star_header,
+        filaInicialDatos: tabla.startRow,
+        columnasPrecios,
+      };
+      const versionId = version.ID_VERSION_PLANTILLA;
+      const resultado = await consolidarTarifas(versionId, mapeo);
+      if (!resultado.success) {
+        throw new Error(resultado.error || "No se pudo iniciar la importación de tarifas.");
+      }
+
+      for (let intento = 0; intento < 150; intento += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const estado = await consultarEstadoJob(versionId);
+        if (!estado.success || !estado.data) {
+          throw new Error(estado.error || "No se pudo consultar el estado de la importación.");
+        }
+        if (estado.data.estado === "ERROR") {
+          throw new Error(estado.data.errorLog || "El worker no pudo importar las tarifas.");
+        }
+        if (estado.data.estado === "COMPLETADO") {
+          const actualizado = await onTarifasImportadas();
+          if (!actualizado) {
+            toast.warning("Tarifas importadas. No se pudo recargar el catálogo.", { id: toastId });
+            return;
+          }
+          toast.success(estado.data.errorLog || "Importación de tarifas completada.", { id: toastId });
+          return;
+        }
+      }
+
+      toast.info("La importación sigue en proceso. Consulta el estado de la plantilla.", { id: toastId });
     } catch (error) {
-      console.error("Error al importar tarifas:", error);
-      return { success: false, error: error instanceof Error ? error.message : "Error desconocido" };
+      toast.error(error instanceof Error ? error.message : "No se pudieron importar las tarifas.", { id: toastId });
+    } finally {
+      setImportando(false);
     }
   };
-
 
   return (
     <div className="flex flex-col space-y-4 px-6 py-5 border-b border-slate-100 bg-slate-50/50">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
-  
+
   {/* Sección de Texto */}
   <div>
     <div className="flex items-center gap-2">
@@ -114,23 +141,17 @@ const handleButton_tarifas = async () => {
 
   {/* Sección de Acciones: Agrupadas en su propio flex-container */}
   <div className="flex items-center gap-2 self-end sm:self-auto">
-    
+
     {/* Botón Secundario (Importar) */}
     {puedeGestionar && (
     <button
-      onClick={async ()=>{const  v=handleButton_tarifas();
-        const res=await v
-        if(res && !res.success){
-          toast.error(res.error || "Error desconocido al importar tarifas")
-        }
-        else{
-          toast.success("Importación de tarifas iniciada correctamente. Se notificará al finalizar el proceso.")
-        }
-      }}
-      className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap"
+      type="button"
+      onClick={importarTarifas}
+      disabled={importando}
+      className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs rounded-xl shadow-sm transition active:scale-95 cursor-pointer whitespace-nowrap disabled:opacity-50"
     >
       <Upload size={15} />
-      <span>Importar tarifas</span>
+      <span>{importando ? "Importando…" : "Importar tarifas"}</span>
     </button>
     )}
 
@@ -144,7 +165,7 @@ const handleButton_tarifas = async () => {
       <span>Nuevo Ítem</span>
     </button>
     )}
-    
+
   </div>
 </div>
 
@@ -226,7 +247,7 @@ const PriceHistoryModal = ({
 
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
             {item.historialPrecios.map((record) => {
-              const isCurrent = !record.fechaFin;
+              const isCurrent = precioEnVigencia(record);
               return (
                 <div
                   key={record.idHistorial}
@@ -243,10 +264,10 @@ const PriceHistoryModal = ({
                     <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
                       <Calendar size={10} />
                       <span>
-                        {new Date(record.fechaInicio).toLocaleDateString("es-CO")} —{" "}
+                        {new Date(record.fechaInicio).toLocaleDateString("es-CO", { timeZone: "UTC" })} —{" "}
                         {record.fechaFin
-                          ? new Date(record.fechaFin).toLocaleDateString("es-CO")
-                          : "Vigente actual"}
+                          ? new Date(record.fechaFin).toLocaleDateString("es-CO", { timeZone: "UTC" })
+                          : "Sin fecha de fin"}
                       </span>
                     </div>
                   </div>
@@ -288,8 +309,9 @@ const CatalogFormModal = ({
 
   // Al abrir el modal, precargar datos
   useEffect(() => {
+    const timer = window.setTimeout(() => {
     if (initialData) {
-      const historialVigente = initialData.historialPrecios?.find(h => !h.fechaFin);
+      const historialVigente = obtenerPrecioVigente(initialData.historialPrecios ?? []);
       setFormData({
         idTarifa: initialData.idTarifa,
         instrumento: initialData.instrumento,
@@ -317,6 +339,8 @@ const CatalogFormModal = ({
         norma: "",
       });
     }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [initialData, isOpen, today]);
 
   if (!isOpen) return null;
@@ -491,7 +515,7 @@ const CatalogRow = ({
       </td>
       <td className="px-4 py-3 align-top text-slate-600">{item.magnitud}</td>
       <td className="px-4 py-3 align-top text-slate-600">{item.norma || "N/A"}</td>
-      <td className="px-4 py-3 align-top font-mono text-slate-700">{formatCurrency(item.precioVigente)}</td>
+      <td className="px-4 py-3 align-top font-mono text-slate-700">{obtenerPrecioVigente(item.historialPrecios) ? formatCurrency(item.precioVigente) : "Sin precio vigente"}</td>
       <td className="px-4 py-3 align-top">
         <button
           type="button"
@@ -545,7 +569,7 @@ const CatalogRow = ({
 // ----------------------------------------------------------------------
 export const CatalogTableView = () => {
   const tarifas = useDbTable("tarifas");
-  const { mergeTable, loadTable, setTableLoading } = useDbActions();
+  const { loadTable } = useDbActions();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedMagnitud, setSelectedMagnitud] = useState("TODAS");
   const [selectedTipoServicio, setSelectedTipoServicio] = useState("TODOS");
@@ -561,7 +585,7 @@ export const CatalogTableView = () => {
         (a, b) => new Date(b.fechaInicio).getTime() - new Date(a.fechaInicio).getTime()
       );
 
-      const historialActivo = historialOrdenado.find((h) => !h.fechaFin) || historialOrdenado[0];
+      const historialActivo = obtenerPrecioVigente(historialOrdenado);
       const precioVigente = historialActivo ? Number(historialActivo.precioU ?? 0) : 0;
 
       return {
@@ -584,17 +608,7 @@ export const CatalogTableView = () => {
     });
   };
 
-  const recargarTarifas = async () => {
-    setTableLoading("tarifas", true);
-    try {
-      const res = await obtenerTodasLasTarifas();
-      if (res.ok && res.data) {
-        mergeTable("tarifas", res.data as unknown as TarifaModel[]);
-      }
-    } finally {
-      setTableLoading("tarifas", false);
-    }
-  };
+  const recargarTarifas = () => loadTable("tarifas", true);
 
   useEffect(() => {
     loadTable("tarifas");
@@ -637,6 +651,13 @@ export const CatalogTableView = () => {
       const fechaFin = formData.fechaFin || undefined;
 
       if (selectedItem) {
+        const precioAnterior = obtenerPrecioVigente(selectedItem.historialPrecios);
+        const inicioAnterior = precioAnterior ? new Date(precioAnterior.fechaInicio).toISOString().slice(0, 10) : undefined;
+        const finAnterior = precioAnterior?.fechaFin ? new Date(precioAnterior.fechaFin).toISOString().slice(0, 10) : undefined;
+        const cambioPrecio = precioAnterior
+          ? selectedItem.precioVigente !== formData.precioVigente || inicioAnterior !== fechaInicio || finAnterior !== fechaFin
+          : Number(formData.precioVigente) > 0;
+
         // Editar: usar actulzar_tarifa
         const res = await actulzar_tarifa({
           idTarifa: selectedItem.idTarifa,
@@ -644,9 +665,7 @@ export const CatalogTableView = () => {
           tipoServicio: formData.tipoServicio, // ya viene calculado
           instrumento: formData.instrumento,
           norma: formData.norma,
-          precioVigente: formData.precioVigente,
-          fechaInicio: fechaInicio,
-          fechaFin: fechaFin,
+          ...(cambioPrecio && { precioVigente: formData.precioVigente, fechaInicio, fechaFin }),
         });
 
         if (res.ok) {
@@ -703,6 +722,7 @@ export const CatalogTableView = () => {
         setSelectedTipoServicio={setSelectedTipoServicio}
         magnitudesDisponibles={magnitudesDisponibles}
         tiposServicioDisponibles={tiposServicioDisponibles}
+        onTarifasImportadas={recargarTarifas}
         onOpenCreate={() => {
           setSelectedItem(null);
           setIsFormOpen(true);

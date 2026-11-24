@@ -11,7 +11,7 @@ import { cacheService } from "@/app/lib/cache/chacheService";
  */
 function ejecutarWorkerExcel(absolutePath: string, documentId: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const workerPath = path.join(process.cwd(), "app", "lib", "Workers", "excelParse.worker.js");
+    const workerPath = path.join(process.cwd(), "app", "lib", "Workers", "excelParse.worker.mjs");
 
     const worker = new Worker(workerPath, {
       workerData: { absolutePath, documentId },

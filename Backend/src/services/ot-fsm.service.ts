@@ -1,8 +1,8 @@
 // services/ot-fsm.service.ts
 // Máquina de estados finitos para Órdenes de Trabajo (EstadoOT).
 // Las transiciones automáticas se derivan de los datos reales (recepción,
-// asignación, estampillas y certificados aprobados). El avance es monotónico:
-// `evaluarTransicionesOT` nunca retrocede un estado.
+// asignación, estampillas y certificados aprobados). Una OT aprobada puede
+// reabrirse si cambia su conjunto de instrumentos antes del envío.
 import { Prisma, EstadoOT } from '@prisma/client';
 import { AppError } from '../lib/errors.js';
 
@@ -41,29 +41,6 @@ function parseEstadoIbc(raw: Prisma.JsonValue | null | undefined): EstadoIbcNorm
   return { entrada, salida };
 }
 
-/**
- * Información del instrumento "llena", ignorando `numero_estampilla` (ESTAMPILLA)
- * y `numero_inventario` (CODIGO_INVENTARIO).
- */
-export function instrumentoRecepcionCompleto(det: {
-  INSTRUMENTO?: string | null;
-  MARCA?: string | null;
-  MODELO?: string | null;
-  SERIE?: string | null;
-  CODIGO_INVENTARIO?: string | null;
-  RESOLUCION?: string | null;
-}): boolean {
-  const requeridos = [
-    det.INSTRUMENTO,
-    det.MARCA,
-    det.MODELO,
-    det.SERIE,
-    det.CODIGO_INVENTARIO,
-    det.RESOLUCION,
-  ];
-  return requeridos.every((v) => v != null && String(v).trim() !== '');
-}
-
 function entradaIbcCompleta(raw: Prisma.JsonValue | null | undefined): boolean {
   const { entrada } = parseEstadoIbc(raw);
   return ['E', 'T', 'D', 'A'].every((key) => typeof entrada[key] === 'boolean');
@@ -75,7 +52,7 @@ export interface ResultadoFSM {
   actualizado: boolean;
   condiciones: {
     recepcionOk: boolean;
-    todosConTecnico: boolean;
+    algunInstrumentoListo: boolean;
     algunaCalibracionYEstampilla: boolean;
     algunCertificadoAprobado: boolean;
     todosCertificadosAprobados: boolean;
@@ -85,28 +62,41 @@ export interface ResultadoFSM {
 
 type PrismaTx = Prisma.TransactionClient;
 
-const nombreLleno = (v: string | null | undefined): boolean =>
-  v != null && String(v).trim() !== '';
+export function cabeceraRecepcionLista(recepcion: {
+  FECHA_RECEPCION?: Date | null;
+  NOMBRE_ENTREGA?: string | null;
+  NOMBRE_RECIBE?: string | null;
+} | null | undefined): boolean {
+  return Boolean(recepcion?.FECHA_RECEPCION && recepcion.NOMBRE_RECIBE?.trim());
+}
 
-const tieneEstampilla = (d: { ESTAMPILLA: string | null }): boolean => {
-  const v = d.ESTAMPILLA;
-  if (v == null || String(v).trim() === '') return false;
-  // Los placeholders heredados `TEMP-*` no cuentan como estampilla real.
-  return !String(v).toUpperCase().startsWith('TEMP-');
-};
+export function instrumentoListoParaAsignar(detalle: {
+  ESTAMPILLA?: string | null;
+  ESTADO_IBC?: Prisma.JsonValue | null;
+}): boolean {
+  const estampilla = detalle.ESTAMPILLA?.trim();
+  return Boolean(estampilla && !/^TEMP-/i.test(estampilla) && entradaIbcCompleta(detalle.ESTADO_IBC));
+}
 
-/**
- * Recalcula y, si corresponde, avanza el estado de la OT según sus datos.
- * Debe invocarse dentro de la misma transacción que mutó recepción/instrumentos.
- *
- * Ciclo de vida (monotónico):
- *   En_recepción            -> cabecera (fecha recepción + entrega + recibe) y ≥1 IBC de entrada.
- *   Asignada                -> recepción OK y todos los instrumentos con técnico.
- *   En_calibración          -> recepción OK y ≥1 instrumento con PDF (calibración) + estampilla.
- *   Certificado_en_revisión -> recepción OK y ≥1 certificado APROBADO.
- *   Certificado_aprobado    -> recepción OK y 100% instrumentos con certificado APROBADO.
- *   Certificado_enviado se asigna explícitamente solo después de confirmar el envío del correo.
- */
+type IdentidadUnidad = { ID_UNIDAD_FK?: string | null; ITEM?: number | null };
+
+export function vincularUnidadRecepcion<T extends IdentidadUnidad>(
+  unidadOT: IdentidadUnidad,
+  recibidos: readonly T[],
+): T | undefined {
+  if (unidadOT.ID_UNIDAD_FK) {
+    const exacto = recibidos.find((detalle) => detalle.ID_UNIDAD_FK === unidadOT.ID_UNIDAD_FK);
+    if (exacto) return exacto;
+  }
+  // Registros previos al ID persistente: usar el ítem si identifica una sola fila
+  // y al menos uno de los dos registros todavía carece de ID.
+  if (unidadOT.ITEM == null) return undefined;
+  const candidatos = recibidos.filter((detalle) => detalle.ITEM === unidadOT.ITEM);
+  const candidato = candidatos.length === 1 ? candidatos[0] : undefined;
+  return candidato && (!unidadOT.ID_UNIDAD_FK || !candidato.ID_UNIDAD_FK) ? candidato : undefined;
+}
+
+/** Avanza con el progreso por unidad. La aprobación sigue exigiendo todas las unidades. */
 export async function evaluarTransicionesOT(
   tx: PrismaTx,
   idOT: number
@@ -116,8 +106,9 @@ export async function evaluarTransicionesOT(
     include: {
       orden_trabajo_detalles: true,
       recepciones_equipo: {
-        where: { VIGENTE: true, activacion: { not: false } },
-        orderBy: { VERSION: 'desc' },
+        where: { VIGENTE: true, activacion: true },
+        orderBy: [{ VERSION: 'desc' }, { ID_RECEPCION: 'desc' }],
+        take: 1,
         include: {
           recepcion_equipo_detalles: {
             where: { OR: [{ activacion: true }, { activacion: null }] },
@@ -139,92 +130,55 @@ export async function evaluarTransicionesOT(
     (d) => d.activacion !== false
   );
 
-  const match = (otDet: { ITEM: number; INSTRUMENTO: string }) => {
-    if (otDet.ITEM != null) {
-      const byItem = recDetalles.find((r) => r.ITEM === otDet.ITEM);
-      if (byItem) return byItem;
-    }
-    return recDetalles.find((r) => r.INSTRUMENTO === otDet.INSTRUMENTO) ?? null;
-  };
-
-  const pares = otDetallesActivos.map((otDet) => ({
-    otDet,
-    recDet: match(otDet),
-  }));
-
-  const hayInstrumentos = otDetallesActivos.length > 0;
-
-  const instrumentosRecepcionOk =
-    pares.length > 0 &&
-    pares.every(
-      ({ recDet }) =>
-        recDet != null &&
-        instrumentoRecepcionCompleto(recDet) &&
-        entradaIbcCompleta(recDet.ESTADO_IBC),
-    );
-
+  const pares = otDetallesActivos.map((detalle) => vincularUnidadRecepcion(detalle, recDetalles));
   const recepcionOk =
-    !!recepcion &&
-    recepcion.FECHA_RECEPCION != null &&
-    nombreLleno(recepcion.NOMBRE_ENTREGA) &&
-    nombreLleno(recepcion.NOMBRE_RECIBE) &&
-    hayInstrumentos &&
-    instrumentosRecepcionOk;
+    cabeceraRecepcionLista(recepcion) &&
+    pares.some((detalle) => detalle && entradaIbcCompleta(detalle.ESTADO_IBC));
 
-  const todosConTecnico =
-    hayInstrumentos &&
-    otDetallesActivos.every((d) => d.asignado != null && d.asignado > 0);
+  const recDetallesValidos = pares.filter(
+    (detalle): detalle is NonNullable<typeof detalle> => detalle != null && instrumentoListoParaAsignar(detalle),
+  );
+  const algunInstrumentoListo = recDetallesValidos.length > 0;
 
-  const recDetallesValidos = pares
-    .map((p) => p.recDet)
-    .filter((d): d is NonNullable<typeof d> => d != null);
-
-  const instrumentoIds = recDetallesValidos.map((d) => d.ID_INSTRUMENTO);
+  const instrumentoIds = pares.flatMap((detalle) => detalle ? [detalle.ID_INSTRUMENTO] : []);
 
   const conCalibracion = new Set<number>();
   const conCertificadoAprobado = new Set<number>();
+  const conCertificadoEnRevision = new Set<number>();
   if (instrumentoIds.length > 0) {
-    const [calibraciones, certificadosAprobados] = await Promise.all([
+    const [calibraciones, certificados] = await Promise.all([
       tx.calibraciones.findMany({
         where: { ID_INSTRUMENTO_FK: { in: instrumentoIds } },
         select: { ID_INSTRUMENTO_FK: true },
       }),
       tx.certificados.findMany({
         where: {
-          ESTADO_REVISION: 'APROBADO',
           calibraciones: { ID_INSTRUMENTO_FK: { in: instrumentoIds } },
         },
-        select: { calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
+        select: { ESTADO_REVISION: true, calibraciones: { select: { ID_INSTRUMENTO_FK: true } } },
       }),
     ]);
 
     calibraciones.forEach((c) => conCalibracion.add(c.ID_INSTRUMENTO_FK));
-    certificadosAprobados.forEach((c) => {
-      const idInst = c.calibraciones?.ID_INSTRUMENTO_FK;
-      if (idInst != null) conCertificadoAprobado.add(idInst);
+    certificados.forEach((certificado) => {
+      const idInstrumento = certificado.calibraciones?.ID_INSTRUMENTO_FK;
+      if (idInstrumento == null) return;
+      if (certificado.ESTADO_REVISION === 'APROBADO') conCertificadoAprobado.add(idInstrumento);
+      if (certificado.ESTADO_REVISION === 'PENDIENTE_REVISION') conCertificadoEnRevision.add(idInstrumento);
     });
   }
 
-  const algunaCalibracionYEstampilla = recDetallesValidos.some(
-    (d) => conCalibracion.has(d.ID_INSTRUMENTO) && tieneEstampilla(d)
-  );
-
-  const algunCertificadoAprobado = recDetallesValidos.some((d) =>
-    conCertificadoAprobado.has(d.ID_INSTRUMENTO)
-  );
-
-  const todosCertificadosAprobados =
-    hayInstrumentos &&
-    pares.every(
-      (p) =>
-        p.recDet != null && conCertificadoAprobado.has(p.recDet.ID_INSTRUMENTO)
-    );
+  const algunaCalibracionYEstampilla = recDetallesValidos.some((detalle) =>
+    conCalibracion.has(detalle.ID_INSTRUMENTO));
+  const algunCertificadoAprobado = conCertificadoAprobado.size > 0;
+  const todosCertificadosAprobados = pares.length > 0 && new Set(instrumentoIds).size === pares.length &&
+    pares.every((detalle) => detalle != null && conCertificadoAprobado.has(detalle.ID_INSTRUMENTO));
 
   const pagoRealizado = ot.estado_pago === 'PAGADO';
 
   const condiciones = {
     recepcionOk,
-    todosConTecnico,
+    algunInstrumentoListo,
     algunaCalibracionYEstampilla,
     algunCertificadoAprobado,
     todosCertificadosAprobados,
@@ -233,21 +187,22 @@ export async function evaluarTransicionesOT(
 
   const cumplidos: EstadoOT[] = [];
   if (recepcionOk) cumplidos.push(EstadoOT.En_recepción);
-  if (recepcionOk && todosConTecnico) cumplidos.push(EstadoOT.Asignada);
+  if (recepcionOk && algunInstrumentoListo) cumplidos.push(EstadoOT.Asignada);
   if (recepcionOk && algunaCalibracionYEstampilla) cumplidos.push(EstadoOT.En_calibración);
-  if (recepcionOk && algunCertificadoAprobado) {
+  if (recepcionOk && (algunCertificadoAprobado || conCertificadoEnRevision.size > 0)) {
     cumplidos.push(EstadoOT.Certificado_en_revisión);
   }
-  if (recepcionOk && todosCertificadosAprobados) {
+  if (todosCertificadosAprobados) {
     cumplidos.push(EstadoOT.Certificado_aprobado);
   }
+  const perdioAprobacion = estadoActual === EstadoOT.Certificado_aprobado && !todosCertificadosAprobados;
   const objetivo = cumplidos.reduce(
     (max, e) => (rango(e) > rango(max) ? e : max),
-    estadoActual
+    perdioAprobacion ? EstadoOT.Creada : estadoActual
   );
-  const debeAvanzar = rango(objetivo) > rango(estadoActual);
+  const debeActualizar = objetivo !== estadoActual;
 
-  if (debeAvanzar) {
+  if (debeActualizar) {
     await tx.ordenes_trabajo.update({
       where: { ID_ORDEN_TRABAJO: idOT },
       data: { estado: objetivo },
@@ -256,8 +211,8 @@ export async function evaluarTransicionesOT(
 
   return {
     estadoAnterior: estadoActual,
-    estadoNuevo: debeAvanzar ? objetivo : estadoActual,
-    actualizado: debeAvanzar,
+    estadoNuevo: objetivo,
+    actualizado: debeActualizar,
     condiciones,
   };
 }
@@ -295,37 +250,77 @@ export async function transicionarOT(
   return { estadoAnterior: actual, estadoNuevo: nuevoEstado };
 }
 
-/** Bloquea la asignación de técnico si la OT no pasó recepción o ya está calibrada. */
+/**
+ * La asignación queda abierta después de recepción mientras la unidad no tenga
+ * calibración y no exista certificado para todos los instrumentos de la OT.
+ * El estado de revisión/aprobación del certificado de otra unidad no bloquea.
+ */
 export async function validarAsignacionPermitida(
   tx: Prisma.TransactionClient,
-  idOT: number
+  idOT: number,
+  idDetalle: number
 ): Promise<void> {
   const ot = await tx.ordenes_trabajo.findUnique({
     where: { ID_ORDEN_TRABAJO: idOT },
-    select: { estado: true },
+    select: {
+      estado: true,
+      orden_trabajo_detalles: {
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+        select: { ID_DETALLE: true, ID_UNIDAD_FK: true, ITEM: true },
+      },
+    },
   });
 
   const estado = ot?.estado ?? EstadoOT.Creada;
-  if (estado !== EstadoOT.En_recepción && estado !== EstadoOT.Asignada) {
+  if (!ot || estado === EstadoOT.Creada) {
     throw new AppError(
       409,
-      'Solo se puede asignar o cambiar el técnico después de la recepción y antes de la calibración.'
+      'La asignación se habilita cuando hay un instrumento con estampilla e IBC de entrada completos.'
     );
   }
 
-  const conCalibracion = await tx.calibraciones.findFirst({
-    where: {
+  if (estado === EstadoOT.Certificado_enviado) {
+    throw new AppError(
+      409,
+      'No se puede asignar: los certificados de la OT ya fueron enviados.'
+    );
+  }
+
+  const recepcion = await tx.recepciones_equipo.findFirst({
+    where: { ID_ORDEN_TRABAJO_FK: idOT, VIGENTE: true, activacion: true },
+    orderBy: [{ VERSION: 'desc' }, { ID_RECEPCION: 'desc' }],
+    include: {
       recepcion_equipo_detalles: {
-        recepciones_equipo: { ID_ORDEN_TRABAJO_FK: idOT },
+        where: { OR: [{ activacion: true }, { activacion: null }] },
+        include: { calibraciones: { include: { certificados: true } } },
       },
     },
-    select: { ID_CALIBRACION: true },
   });
 
-  if (conCalibracion) {
-    throw new AppError(
-      409,
-      'No se puede asignar o cambiar el técnico: la orden ya tiene instrumentos calibrados.'
-    );
+  const recibidos = recepcion?.recepcion_equipo_detalles ?? [];
+  const unidades = ot.orden_trabajo_detalles;
+  if (unidades.length > 0 && unidades.every((unidad) =>
+    vincularUnidadRecepcion(unidad, recibidos)?.calibraciones?.certificados != null
+  )) {
+    throw new AppError(409, 'No se puede asignar: todos los instrumentos de la OT ya tienen certificado generado.');
   }
+
+  const unidadOT = unidades.find((unidad) => unidad.ID_DETALLE === idDetalle);
+  const detalle = unidadOT ? vincularUnidadRecepcion(unidadOT, recibidos) : undefined;
+  if (detalle?.calibraciones != null) {
+    throw new AppError(409, 'No se puede cambiar la asignación: este instrumento ya tiene una calibración iniciada.');
+  }
+  if (!cabeceraRecepcionLista(recepcion) || !detalle || !instrumentoListoParaAsignar(detalle)) {
+    throw new AppError(409, 'Completa la estampilla y los cuatro campos del IBC de entrada de este instrumento antes de asignarlo.');
+  }
+}
+export async function bloquearFlujoTecnicoOT(
+  tx: Prisma.TransactionClient,
+  orden: { ID_COTIZACION_FK: number | null; ID_ORDEN_TRABAJO: number } | null | undefined,
+): Promise<void> {
+  if (!orden) return;
+  if (orden.ID_COTIZACION_FK != null) {
+    await tx.$queryRaw`SELECT "ID_COTIZACION" FROM cotizaciones WHERE "ID_COTIZACION" = ${orden.ID_COTIZACION_FK} FOR UPDATE`;
+  }
+  await tx.$queryRaw`SELECT "ID_ORDEN_TRABAJO" FROM ordenes_trabajo WHERE "ID_ORDEN_TRABAJO" = ${orden.ID_ORDEN_TRABAJO} FOR UPDATE`;
 }

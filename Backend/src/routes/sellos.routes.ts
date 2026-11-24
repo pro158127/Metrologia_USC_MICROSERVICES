@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { PDFDocument } from 'pdf-lib';
@@ -8,6 +9,7 @@ import { composeCertificate } from '../services/pdf-stamper.service.js';
 import {
   deleteObject,
   getObjectBuffer,
+  getObjectWithMetadata,
   getSignedObjectUrl,
   uploadBuffer,
 } from '../lib/minioClient.js';
@@ -51,7 +53,7 @@ async function resolverTamanoPagina(
   if (!templatePdfKey) return null;
   try {
     const redis = getRedisConnection();
-    const cacheKey = `${PAGE_SIZE_CACHE_PREFIX}${selloId}`;
+    const cacheKey = `${PAGE_SIZE_CACHE_PREFIX}${selloId}:${templatePdfKey}`;
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached) as { width: number; height: number };
     const buffer = await getObjectBuffer(templatePdfKey);
@@ -168,14 +170,14 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        const buffer = await getObjectBuffer(key);
-        
-        // Determinar el tipo MIME correcto para que el navegador lo renderice
-        const ext = key.split('.').pop()?.toLowerCase();
-        let mime = 'application/octet-stream';
-        if (ext === 'pdf') mime = 'application/pdf';
-        else if (ext === 'png') mime = 'image/png';
-        else if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+        const { buffer, contentType } = await getObjectWithMetadata(key);
+        const extension = key.split('.').pop()?.toLowerCase() ?? '';
+        const mimePorExtension: Record<string, string> = {
+          pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        };
+        const mime = contentType && ALLOWED_MIMETYPES.includes(contentType)
+          ? contentType
+          : (mimePorExtension[extension] ?? 'application/octet-stream');
 
         return reply
           .header('Content-Type', mime)
@@ -229,7 +231,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         
         // ✅ SANITIZACIÓN: Elimina espacios y caracteres especiales
         const originalName = (fileName || 'plantilla.pdf').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\.-]/g, '');
-        templatePdfKey = `${TEMPLATE_PREFIX}${Date.now()}_${originalName}`;
+        templatePdfKey = `${TEMPLATE_PREFIX}${randomUUID()}_${originalName}`;
         
         await uploadBuffer(templatePdfKey, fileBuffer, fileMime, { originalName });
       }
@@ -270,24 +272,19 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
       const { fields, fileBuffer, fileMime, fileName } = await readMultipart(request);
 
       let templatePdfKey = existing.TEMPLATE_PDF_KEY;
+      let uploadedReplacementKey: string | null = null;
       if (fileBuffer) {
         if (!fileMime || !ALLOWED_MIMETYPES.includes(fileMime)) {
-          throw new AppError(415, 'La plantilla base debe ser un PDF (application/pdf)');
+          throw new AppError(415, 'La plantilla base debe ser un PDF o una imagen (PNG/JPG)');
         }
         
         // ✅ SANITIZACIÓN: Elimina espacios y caracteres especiales
         const originalName = (fileName || 'plantilla.pdf').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\.-]/g, '');
-        const newKey = `${TEMPLATE_PREFIX}${Date.now()}_${originalName}`;
+        const newKey = `${TEMPLATE_PREFIX}${randomUUID()}_${originalName}`;
         
         await uploadBuffer(newKey, fileBuffer, fileMime, { originalName });
         templatePdfKey = newKey;
-        if (existing.TEMPLATE_PDF_KEY && existing.TEMPLATE_PDF_KEY !== newKey) {
-          try {
-            await deleteObject(existing.TEMPLATE_PDF_KEY);
-          } catch {
-            // no-op
-          }
-        }
+        uploadedReplacementKey = newKey;
       }
 
       const data: Prisma.plantillas_sellosUpdateInput = {
@@ -295,6 +292,7 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         DESCRIPCION:
           fields.descripcion !== undefined ? fields.descripcion || null : existing.DESCRIPCION,
         TEMPLATE_PDF_KEY: templatePdfKey,
+        UPDATED_AT: new Date(Math.max(Date.now(), existing.UPDATED_AT.getTime() + 1)),
       };
       if (fields.documentArea !== undefined) {
         const parsed = parseJsonField<unknown>(fields.documentArea, null);
@@ -305,10 +303,28 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         data.WATERMARK_AREAS = (parsed as any) ?? Prisma.DbNull;
       }
 
-      const updated = await fastify.prisma.plantillas_sellos.update({
-        where: { ID_PLANTILLA_SELLO: request.params.id },
-        data,
-      });
+      let updated;
+      try {
+        updated = await fastify.prisma.plantillas_sellos.update({
+          where: { ID_PLANTILLA_SELLO: request.params.id, UPDATED_AT: existing.UPDATED_AT },
+          data,
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          if (uploadedReplacementKey) {
+            await deleteObject(uploadedReplacementKey)
+              .catch((err) => request.log.warn({ err }, 'No se pudo retirar el sello descartado'));
+          }
+          throw new AppError(409, 'La plantilla de sello cambió durante la edición. Vuelva a abrirla.');
+        }
+        throw error;
+      }
+      if (uploadedReplacementKey && existing.TEMPLATE_PDF_KEY && existing.TEMPLATE_PDF_KEY !== uploadedReplacementKey) {
+        try { await deleteObject(existing.TEMPLATE_PDF_KEY); } catch { /* conservar el nuevo aunque la limpieza del anterior falle */ }
+      }
+      if (uploadedReplacementKey) {
+        try { await getRedisConnection().del(`${PAGE_SIZE_CACHE_PREFIX}${request.params.id}:${existing.TEMPLATE_PDF_KEY}`); } catch { /* la caché se recalculará al vencer */ }
+      }
 
       return {
         ok: true as const,
@@ -332,9 +348,10 @@ export default async function sellosRoutes(fastify: FastifyInstance) {
         where: { ID_PLANTILLA_SELLO: request.params.id },
       });
       if (!existing) throw new AppError(404, 'Plantilla de sello no encontrada');
-      await fastify.prisma.plantillas_sellos.delete({
-        where: { ID_PLANTILLA_SELLO: request.params.id },
+      const eliminada = await fastify.prisma.plantillas_sellos.deleteMany({
+        where: { ID_PLANTILLA_SELLO: request.params.id, UPDATED_AT: existing.UPDATED_AT },
       });
+      if (!eliminada.count) throw new AppError(409, 'La plantilla de sello cambió. Vuelva a consultarla antes de eliminarla.');
       if (existing.TEMPLATE_PDF_KEY) {
         try {
           await deleteObject(existing.TEMPLATE_PDF_KEY);

@@ -2,8 +2,9 @@ import { FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { hashPassword } from '../services/password.service.js';
-import { generarCodigo, guardarCodigo, permitirSolicitud, verificarCodigo } from '../services/recovery.service.js';
-import { getEmailQueue } from '../lib/queue/queue.js';
+import { cancelarCodigoNoEncolado, generarCodigo, guardarCodigo, permitirSolicitud, verificarCodigo } from '../services/recovery.service.js';
+import { registrarCorreoPendiente } from '../services/email-delivery.service.js';
+import { protegerContenidoCorreo } from '../services/contenido-correo.service.js';
 import {
   confirmarCambioContrasenaBodySchema,
   respuestaOkSchema,
@@ -65,21 +66,29 @@ export default async function perfilRoutes(fastify: FastifyInstance) {
       }
 
       const codigo = generarCodigo();
-      await guardarCodigo(NS_CAMBIO, String(id), codigo);
+      const entidad = String(id);
+      const expira = await guardarCodigo(NS_CAMBIO, entidad, codigo);
 
-      await getEmailQueue().add('cambio_contrasena', {
+      const secreto = protegerContenidoCorreo('codigo', codigo, {
+        expira_en: expira, codigo_verificacion: { namespace: NS_CAMBIO, entidad },
+      });
+      await registrarCorreoPendiente(fastify.prisma, {
         to: usuario.CORREO_INSTITUCION,
         subject: 'Código para cambiar tu contraseña - Metrología USC',
         template_type: 'cambio_contrasena',
         context_data: {
           nombre: usuario.NOMBRE_COMPLETO,
-          codigo,
+          ...secreto,
         },
         id_registro: id,
         notificar_usuario_id: id,
         modulo_origen: 'perfil',
         tabla_origen: 'usuarios',
         tipo_entry: 'prod',
+      }).catch(async () => {
+        await cancelarCodigoNoEncolado(NS_CAMBIO, entidad, codigo).catch((err) =>
+          request.log.warn({ err }, 'No se pudo cancelar el código que no se encoló'));
+        throw new AppError(503, 'No se pudo programar el correo. Solicite un código nuevo.');
       });
 
       return { success: true as const };
@@ -98,6 +107,10 @@ export default async function perfilRoutes(fastify: FastifyInstance) {
     async (request) => {
       const id = Number(request.user?.sub ?? 0);
       const { codigo, nuevaContrasena } = request.body;
+      const sessionVersion = request.user.sessionVersion;
+      if (typeof sessionVersion !== 'number' || !Number.isFinite(sessionVersion)) {
+        throw new AppError(401, 'La sesión no contiene una versión válida.');
+      }
 
       const resultado = await verificarCodigo(NS_CAMBIO, String(id), codigo);
       if (resultado === 'expirado') {
@@ -111,10 +124,17 @@ export default async function perfilRoutes(fastify: FastifyInstance) {
       }
 
       const contrasenaHasheada = await hashPassword(nuevaContrasena);
-      await fastify.prisma.usuarios.update({
-        where: { ID_USUARIO_AUTO_INCREMENT: id },
-        data: { contrase_a: contrasenaHasheada },
+      const cambio = await fastify.prisma.usuarios.updateMany({
+        where: {
+          ID_USUARIO_AUTO_INCREMENT: id,
+          UPDATE_AT: sessionVersion === 0 ? null : new Date(sessionVersion),
+          ESTADO: true,
+          elminado: false,
+        },
+        data: { contrase_a: contrasenaHasheada, UPDATE_AT: new Date() },
       });
+      if (!cambio.count) throw new AppError(409, 'La sesión cambió durante la solicitud. Inicie sesión nuevamente.');
+      fastify.io.in(`user_room_${id}`).disconnectSockets(true);
 
       await fastify.prisma.audit_logs.create({
         data: {

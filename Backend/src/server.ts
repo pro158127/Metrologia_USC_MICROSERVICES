@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import dashboardRoutes from './routes/dashboard.routes.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import auth from './plugins/auth.js';
@@ -70,6 +71,7 @@ async function bootstrap() {
   await fastify.register(errorHandlerPlugin);
 
   // 3. Registro de Rutas
+  await fastify.register(dashboardRoutes);
   await fastify.register(jobsRoutes)
   await fastify.register(internalRoutes); // 🔥 Rutas internas para comunicación con Workers
   await fastify.register(auditRoutes);

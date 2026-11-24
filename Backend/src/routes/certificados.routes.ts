@@ -1,11 +1,12 @@
+import { obtenerBandejaRevision } from '../services/certificados-revision.service.js';
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { EstadoOT } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
 import { assertAnyPermission, assertPermission } from '../lib/permissions.js';
-import { getCertificatePdfQueue } from '../lib/queue/queue.js';
+import type { CertificateReviewJobData } from '../lib/queue/queue.js';
 import { esAcreditado, seleccionarPlantillaSello } from '../services/certificatePdf.service.js';
-import { evaluarTransicionesOT, transicionarOT } from '../services/ot-fsm.service.js';
+import { bloquearFlujoTecnicoOT, evaluarTransicionesOT, transicionarOT, vincularUnidadRecepcion } from '../services/ot-fsm.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { notificarUsuario } from '../services/notificacion.service.js';
 import {
@@ -96,67 +97,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       // hizo él mismo (quien calibra no certifica).
       const idUsuario = Number(request.user?.sub ?? 0);
 
-      const certificados = await fastify.prisma.certificados.findMany({
-        where: idUsuario
-          ? { calibraciones: { ID_TECNICO_FK: { not: idUsuario } } }
-          : {},
-        include: {
-          documentos: true,
-          calibraciones: {
-            include: {
-              usuarios: true,
-              recepcion_equipo_detalles: {
-                include: {
-                  recepciones_equipo: {
-                    include: {
-                      ordenes_trabajo: {
-                        include: { clientes: true, orden_trabajo_detalles: true },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        orderBy: { ID_CERTIFICADO: 'desc' },
-      });
-
-      return certificados.map((cert) => {
-        const cal = cert.calibraciones;
-        const detalle = cal?.recepcion_equipo_detalles;
-        const ot = detalle?.recepciones_equipo?.ordenes_trabajo ?? null;
-        const otDetalle =
-          ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle?.INSTRUMENTO) ??
-          ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle?.ITEM) ??
-          null;
-
-        return {
-          idCertificado: cert.ID_CERTIFICADO,
-          codigo: cert.CODIGO_CERTIFICADO,
-          estadoRevision: cert.ESTADO_REVISION,
-          motivoRechazo: cert.MOTIVO_RECHAZO,
-          idDocumento: cert.ID_DOCUMENTO_FK,
-          rutaUrl: cert.documentos?.RUTA_URL ?? null,
-          mimeType: cert.documentos?.MIME_TYPE ?? 'application/pdf',
-          idPlantillaSello: cert.ID_PLANTILLA_SELLO_FK,
-          idCalibracion: cert.ID_CALIBRACION_FK,
-          idInstrumento: detalle?.ID_INSTRUMENTO ?? null,
-          instrumento: detalle?.INSTRUMENTO ?? '—',
-          estampilla: detalle?.ESTAMPILLA ?? '—',
-          serie: detalle?.SERIE ?? null,
-          marca: detalle?.MARCA ?? null,
-          modelo: detalle?.MODELO ?? null,
-          idOrdenTrabajo: ot?.ID_ORDEN_TRABAJO ?? null,
-          codigoOT: ot?.CODIGO_OT ?? '—',
-          cliente: ot?.clientes?.RAZON_SOCIAL ?? '—',
-          tecnico: cal?.usuarios?.NOMBRE_COMPLETO ?? '—',
-          tipoServicio: otDetalle?.TIPO_SERVICIO ?? null,
-          datosTecnicos: cal?.DATOS_TECNICOS_JSON ?? null,
-          createdAt: cal?.CREATED_AT ?? null,
-          acreditado: esAcreditado(otDetalle?.TIPO_SERVICIO ?? null),
-        };
-      });
+      return obtenerBandejaRevision(fastify.prisma, idUsuario);
     }
   );
 
@@ -182,6 +123,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       const cert = await fastify.prisma.certificados.findUnique({
         where: { ID_CERTIFICADO: idCertificado },
         include: {
+          documentos: { select: { RUTA_URL: true } },
           calibraciones: {
             include: {
               recepcion_equipo_detalles: {
@@ -199,10 +141,8 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
 
       const detalle = cert.calibraciones?.recepcion_equipo_detalles;
       const ot = detalle?.recepciones_equipo?.ordenes_trabajo ?? null;
-      const otDetalle =
-        ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalle?.ITEM) ??
-        ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalle?.INSTRUMENTO) ??
-        null;
+      const otDetalle = detalle && ot ? vincularUnidadRecepcion(detalle,
+          ot.orden_trabajo_detalles.filter((d) => d.activacion !== false)) : null;
 
       const servicioAcreditado = esAcreditado(otDetalle?.TIPO_SERVICIO);
       assertPermission(
@@ -226,16 +166,25 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       }
 
       const actualizado = await fastify.prisma.$transaction(async (tx) => {
-        const upd = await tx.certificados.update({
-          where: { ID_CERTIFICADO: idCertificado },
+        await bloquearFlujoTecnicoOT(tx, ot);
+        const revisadoAt = new Date();
+        const cambio = await tx.certificados.updateMany({
+          where: {
+            ID_CERTIFICADO: idCertificado,
+            ESTADO_REVISION: 'PENDIENTE_REVISION',
+            documentos: { RUTA_URL: cert.documentos.RUTA_URL },
+          },
           data: {
             ESTADO_REVISION: 'APROBADO',
             MOTIVO_RECHAZO: null,
             ID_REVISOR_FK: idUsuario,
-            REVISADO_AT: new Date(),
+            REVISADO_AT: revisadoAt,
             ID_PLANTILLA_SELLO_FK: plantilla?.ID_PLANTILLA_SELLO ?? null,
           },
-          include: { certificado_sellos: true },
+        });
+        if (!cambio.count) throw new AppError(409, 'El certificado cambió durante la revisión. Vuelva a abrirlo.');
+        const upd = await tx.certificados.findUniqueOrThrow({
+          where: { ID_CERTIFICADO: idCertificado }, include: { certificado_sellos: true },
         });
         if (ot) await evaluarTransicionesOT(tx, ot.ID_ORDEN_TRABAJO);
 
@@ -252,24 +201,20 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
           },
         });
 
-        return upd;
-      });
-
-      // Encolar la generación asíncrona del certificado final sellado
-      const job = await getCertificatePdfQueue().add('generar-certificado', {
-        tipo: 'certificado',
-        certificadoId: idCertificado,
-        selloId: plantilla?.ID_PLANTILLA_SELLO,
-        usuarioId: idUsuario,
+        const trabajoId = `certificado-${idCertificado}-${revisadoAt.getTime()}`;
+        const sellado: CertificateReviewJobData = {
+          tipo: 'certificado', certificadoId: idCertificado,
+          selloId: plantilla.ID_PLANTILLA_SELLO, usuarioId: idUsuario, revision: revisadoAt.toISOString(),
+        };
+        await tx.quote.create({ data: { id: trabajoId, data: { sellado: { ...sellado } } } });
+        return { certificado: upd, trabajoId };
       });
 
       return {
         ok: true as const,
-        message: plantilla
-          ? `Certificado aprobado. Plantilla "${plantilla.NOMBRE}" encolada para sellado.`
-          : 'Certificado aprobado. No hay plantilla de sello configurada; se conserva el PDF original.',
-        data: certificadoRawToDtoSchema.parse(actualizado),
-        id_job: job.id,
+        message: `Certificado aprobado. Sellado pendiente con la plantilla "${plantilla.NOMBRE}".`,
+        data: certificadoRawToDtoSchema.parse(actualizado.certificado),
+        id_job: actualizado.trabajoId,
       };
     }
   );
@@ -296,6 +241,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       const cert = await fastify.prisma.certificados.findUnique({
         where: { ID_CERTIFICADO: idCertificado },
         include: {
+          documentos: { select: { RUTA_URL: true } },
           calibraciones: {
             include: {
               recepcion_equipo_detalles: {
@@ -313,10 +259,8 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
 
       const ot = cert.calibraciones?.recepcion_equipo_detalles?.recepciones_equipo?.ordenes_trabajo;
       const detalleRecepcion = cert.calibraciones?.recepcion_equipo_detalles;
-      const detalleOT =
-        ot?.orden_trabajo_detalles.find((d) => d.ITEM === detalleRecepcion?.ITEM) ??
-        ot?.orden_trabajo_detalles.find((d) => d.INSTRUMENTO === detalleRecepcion?.INSTRUMENTO) ??
-        null;
+      const detalleOT = detalleRecepcion && ot ? vincularUnidadRecepcion(detalleRecepcion,
+          ot.orden_trabajo_detalles.filter((d) => d.activacion !== false)) : null;
       assertPermission(
         request,
         'revision',
@@ -327,15 +271,23 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
       const idTecnico = cert.calibraciones?.ID_TECNICO_FK ?? null;
 
       const actualizado = await fastify.prisma.$transaction(async (tx) => {
-        const upd = await tx.certificados.update({
-          where: { ID_CERTIFICADO: idCertificado },
+        await bloquearFlujoTecnicoOT(tx, ot);
+        const cambio = await tx.certificados.updateMany({
+          where: {
+            ID_CERTIFICADO: idCertificado,
+            ESTADO_REVISION: 'PENDIENTE_REVISION',
+            documentos: { RUTA_URL: cert.documentos.RUTA_URL },
+          },
           data: {
             ESTADO_REVISION: 'RECHAZADO',
             MOTIVO_RECHAZO: request.body.descripcion,
             ID_REVISOR_FK: idUsuario,
             REVISADO_AT: new Date(),
           },
-          include: { certificado_sellos: true },
+        });
+        if (!cambio.count) throw new AppError(409, 'El certificado cambió durante la revisión. Vuelva a abrirlo.');
+        const upd = await tx.certificados.findUniqueOrThrow({
+          where: { ID_CERTIFICADO: idCertificado }, include: { certificado_sellos: true },
         });
 
         // Trazabilidad: registrar cada devolución con usuario, fecha y motivo.
@@ -363,6 +315,7 @@ export default async function certificadosRoutes(fastify: FastifyInstance) {
                 DESCRIPCION: `Certificado ${cert.CODIGO_CERTIFICADO} rechazado: ${request.body.descripcion}`,
                 RESULTADO: 'RECHAZADO',
                 ID_USUARIO_FK: idUsuario || null,
+                ORIGEN: 'SISTEMA',
               },
             });
           }

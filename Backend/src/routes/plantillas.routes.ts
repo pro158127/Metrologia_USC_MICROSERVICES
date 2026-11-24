@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import { AppError } from '../lib/errors.js';
@@ -342,44 +343,21 @@ app.post(
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-zA-Z0-9.-]/g, "_");
 
-      const plantilla = await fastify.prisma.plantillas.findUnique({
-        where: { ID_PLANTILLA: idPlantilla },
-        include: {
-          version_plantillas: { orderBy: { VERSION: 'desc' }, take: 1 },
-        },
-      });
-
-      if (!plantilla) {
-        throw new AppError(404, 'Plantilla no encontrada.');
-      }
-
-      const latestVersionRecord = plantilla.version_plantillas[0];
-      const lastVersionNum = latestVersionRecord?.VERSION ?? 0;
-      
-      const isOrphan = latestVersionRecord && latestVersionRecord.ID_DOCUMENTOS_FK === null;
-      const targetVersionNum = isOrphan ? lastVersionNum : lastVersionNum + 1;
-
-      let inputSchema: unknown = null;
+      let inputSchemaRecibido: unknown;
       if (inputSchemaRaw) {
         try {
-          inputSchema = JSON.parse(inputSchemaRaw);
+          inputSchemaRecibido = JSON.parse(inputSchemaRaw);
         } catch {
           throw new AppError(400, 'inputSchema inválido: debe ser un JSON válido.');
         }
-      } else {
-        inputSchema = latestVersionRecord?.INPUT_SCHEMA ?? null;
       }
-
-      if (templateType && typeof inputSchema === 'object' && inputSchema !== null) {
-        (inputSchema as any).templateType = templateType;
-      }
-      asegurarBucketExiste().catch((err) => {
+      await asegurarBucketExiste().catch((err) => {
         request.log.error(err, 'Error al asegurar que el bucket exista');
         throw new AppError(500, 'Error interno al preparar el almacenamiento de archivos.');
       });
 
       // 💡 2. Usamos safeFileName en lugar de fileName para la ruta de S3
-      const s3Key = `documentos/templates/${Date.now()}_${safeFileName}`;
+      const s3Key = `documentos/templates/${randomUUID()}_${safeFileName}`;
       
     const uploadCommand = new PutObjectCommand({
         Bucket: BUCKET_NAME,
@@ -393,6 +371,19 @@ app.post(
       await s3Client.send(uploadCommand);
 
       const createdOrUpdated = await fastify.prisma.$transaction(async (tx) => {
+        const [plantilla] = await tx.$queryRaw<{ ID_PLANTILLA: number }[]>`SELECT "ID_PLANTILLA" FROM plantillas WHERE "ID_PLANTILLA" = ${idPlantilla} FOR UPDATE`;
+        if (!plantilla) throw new AppError(404, 'Plantilla no encontrada.');
+        const latestVersionRecord = await tx.version_plantillas.findFirst({
+          where: { ID_PLANTILLA_FK: idPlantilla },
+          orderBy: [{ VERSION: 'desc' }, { ID_VERSION_PLANTILLA: 'desc' }],
+        });
+        const lastVersionNum = latestVersionRecord?.VERSION ?? 0;
+        const isOrphan = latestVersionRecord && latestVersionRecord.ID_DOCUMENTOS_FK === null;
+        const targetVersionNum = isOrphan ? lastVersionNum : lastVersionNum + 1;
+        let inputSchema = inputSchemaRecibido === undefined ? latestVersionRecord?.INPUT_SCHEMA : inputSchemaRecibido;
+        if (templateType && inputSchema && typeof inputSchema === 'object' && !Array.isArray(inputSchema)) {
+          inputSchema = { ...inputSchema, templateType };
+        }
         const doc = await tx.documentos.create({
           data: {
             NOMBRE: fileName, // 💡 3. Aquí mantenemos el nombre original con tildes para la BD
@@ -434,6 +425,12 @@ app.post(
             },
           });
         }
+      }).catch(async (error) => {
+        if (error instanceof AppError) {
+          await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key }))
+            .catch((err) => request.log.warn({ err, s3Key }, 'No se pudo retirar el archivo de plantilla descartado'));
+        }
+        throw error;
       });
 
       try {
@@ -524,38 +521,37 @@ app.post(
         throw new AppError(400, 'Debe mapearse al menos una columna de precios.'); 
       }
 
-      await fastify.prisma.version_plantillas.update({
-        where: { ID_VERSION_PLANTILLA: versionId },
+      const jobId = randomUUID();
+      const reserva = await fastify.prisma.version_plantillas.updateMany({
+        where: {
+          ID_VERSION_PLANTILLA: versionId,
+          ESTADO: version.ESTADO,
+          JOB_ID: version.JOB_ID,
+          OR: [{ ESTADO: { not: 'PROCESANDO' } }, { JOB_ID: null }],
+        },
         data: {
-          MAPEO_CONFIG: mapeoConfig as any,
+          MAPEO_CONFIG: mapeoConfig as Prisma.InputJsonValue,
           ESTADO: 'PROCESANDO',
+          JOB_ID: jobId,
           ERROR_LOG: null,
           PROCESADO_EN: null,
         },
       });
 
-      const queue = getTarifasQueue();
-      let job;
+      if (!reserva.count) {
+        throw new AppError(409, 'La versión ya se está procesando o su estado cambió. Consulta el estado antes de reintentar.');
+      }
+
       try {
-        job = await queue.add('consolidar-tarifas', {
+        await getTarifasQueue().add('consolidar-tarifas', {
           versionId,
           rutaUrl: version.documentos.RUTA_URL,
           fileName: version.documentos.NOMBRE,
           mapeoConfig,
-        });
-console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la versión ${versionId}`);
-   return reply.code(202).send({
-          success: true,
-          data: {
-            estado: 'PROCESANDO',
-            jobId: job.id ?? null
-          }
-        });
-        
-
+        }, { jobId });
       } catch (error) {
-        await fastify.prisma.version_plantillas.update({
-          where: { ID_VERSION_PLANTILLA: versionId },
+        await fastify.prisma.version_plantillas.updateMany({
+          where: { ID_VERSION_PLANTILLA: versionId, ESTADO: 'PROCESANDO', JOB_ID: jobId },
           data: {
             ESTADO: 'ERROR',
             ERROR_LOG: 'No se pudo encolar el job de consolidación de tarifas.',
@@ -565,7 +561,10 @@ console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la
         throw new AppError(500, 'No se pudo encolar el job de consolidación de tarifas.');
       }
 
-
+      return reply.code(202).send({
+        success: true,
+        data: { estado: 'PROCESANDO', jobId },
+      });
     }
   );
 
@@ -584,9 +583,9 @@ console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la
         throw new AppError(400, 'versionId inválido.');
       }
 
-      const version = await fastify.prisma.version_plantillas.findUnique({
+      let version = await fastify.prisma.version_plantillas.findUnique({
         where: { ID_VERSION_PLANTILLA: versionId },
-        select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true },
+        select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true, JOB_ID: true },
       });
 
       if (!version) {
@@ -594,29 +593,22 @@ console.log(`Job de consolidación de tarifas encolado con ID: ${job.id} para la
       }
 
       if (version.ESTADO === 'PROCESANDO') {
-        const queue = getTarifasQueue();
-        const activos = await queue.getJobs(['waiting', 'active', 'delayed']);
-        const tieneJob = activos.some(
-          (job) => (job.data as any)?.versionId === versionId && (job.data as any)?.mapeoConfig
-        );
-        if (!tieneJob) {
-          const stale = await fastify.prisma.version_plantillas.update({
-            where: { ID_VERSION_PLANTILLA: versionId },
+        const job = version.JOB_ID ? await getTarifasQueue().getJob(version.JOB_ID) : undefined;
+        const estadoJob = await job?.getState();
+        if (!version.JOB_ID || estadoJob === 'failed' || estadoJob === 'completed') {
+          await fastify.prisma.version_plantillas.updateMany({
+            where: { ID_VERSION_PLANTILLA: versionId, ESTADO: 'PROCESANDO', JOB_ID: version.JOB_ID },
             data: {
               ESTADO: 'ERROR',
-              ERROR_LOG: 'Job huérfano: no hay un proceso activo en la cola de tarifas.',
+              ERROR_LOG: job?.failedReason || 'No hay un trabajo activo para esta importación.',
             },
-            select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true },
           });
-          return {
-            success: true as const,
-            data: {
-              estado: stale.ESTADO,
-              errorLog: stale.ERROR_LOG ?? null,
-              procesadoEn: stale.PROCESADO_EN ?? null,
-            },
-          };
         }
+
+        version = await fastify.prisma.version_plantillas.findUniqueOrThrow({
+          where: { ID_VERSION_PLANTILLA: versionId },
+          select: { ESTADO: true, ERROR_LOG: true, PROCESADO_EN: true, JOB_ID: true },
+        });
       }
 
       return {

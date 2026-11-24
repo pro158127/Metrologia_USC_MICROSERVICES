@@ -4,6 +4,7 @@ import json
 import re
 import argparse
 import sys
+from numbers import Real
 
 # 1. Traductor: Convierte letras ("K") a índices (10)
 def letra_a_indice(col_str: str) -> int:
@@ -20,13 +21,25 @@ def extraer_anio(texto):
 
 # 3. Limpiador de dinero
 def parsear_precio(val):
-    if pd.isna(val): return None
-    val_clean = re.sub(r"[^\d\.,]", "", str(val))
-    if not val_clean or not any(c.isdigit() for c in val_clean): return None
-    try:
-        return float(val_clean.replace(',', '.'))
-    except ValueError:
+    if pd.isna(val):
         return None
+    if isinstance(val, Real) and not isinstance(val, bool):
+        return float(val)
+
+    texto = str(val).strip()
+    if "-" in texto or "(" in texto:
+        return None
+    importe = re.sub(r"[^\d.,]", "", texto)
+    if not re.fullmatch(r"\d+(?:[.,]\d+)*", importe):
+        return None
+
+    ultimo_separador = max(importe.rfind(","), importe.rfind("."))
+    if ultimo_separador >= 0 and len(importe) - ultimo_separador - 1 <= 2:
+        entero = re.sub(r"[.,]", "", importe[:ultimo_separador])
+        importe = entero + "." + importe[ultimo_separador + 1:]
+    else:
+        importe = re.sub(r"[.,]", "", importe)
+    return float(importe)
 
 def ejecutar_extraccion(file_path, config, out_file):
     # Leemos la hoja de Excel
@@ -35,7 +48,8 @@ def ejecutar_extraccion(file_path, config, out_file):
     # Asignación de índices
     col_mag = letra_a_indice(config["columnas"]["magnitud"])
     col_inst = letra_a_indice(config["columnas"]["instrumento"])
-    col_norma = letra_a_indice(config["columnas"]["norma"])
+    norma = config["columnas"].get("norma")
+    col_norma = letra_a_indice(norma) if norma else None
     col_tipo_servicio = letra_a_indice(config["columnas"]["tipoServicio"])
     
     # Propagar el bloque (Acreditado / No Acreditado / Magnitud)
@@ -51,6 +65,9 @@ def ejecutar_extraccion(file_path, config, out_file):
         if anio:
             mapa_anios[idx] = anio
             
+    if not mapa_anios:
+        raise ValueError("No se detectó un año en las columnas de precios configuradas.")
+
     resultados = []
     
     for idx in range(fila_datos, len(df)):
@@ -73,13 +90,13 @@ def ejecutar_extraccion(file_path, config, out_file):
         precios = []
         for col_idx, anio in mapa_anios.items():
             precio = parsear_precio(row[col_idx])
-            if precio is not None and precio > 0:
+            if precio is not None and precio >= 0:
                 precios.append({"anio": anio, "precio": round(precio, 2)})
                 
         resultados.append({
             "magnitud": magnitud,
             "instrumento": str(instrumento).strip(),
-            "norma": str(row[col_norma]).strip() if pd.notna(row[col_norma]) else "N/A",
+            "norma": str(row[col_norma]).strip() if col_norma is not None and pd.notna(row[col_norma]) else "N/A",
             "tipoServicio": tipo_servicio,
             "preciosPorAnio": precios
         })

@@ -27,7 +27,7 @@ export const crearClienteBodySchema = z.object({
   observacion: z.string().nullish(),
   tipoCliente: tipoClienteEnum.optional(),
   ciudad: z.string().nullish(),
-  idRutDocumento: z.number().nullish(),
+  idRutDocumento: z.number().int().positive(),
   dirrecion: z.string().nullish(),
 });
 export type CrearClienteBody = z.infer<typeof crearClienteBodySchema>;
@@ -42,7 +42,7 @@ export const actualizarClienteBodySchema = z.object({
   tipoCliente: tipoClienteEnum.optional(),
   dirrecion: z.string().optional(),
   ciudad: z.string().nullish(),
-  idRutDocumento: z.number().nullish(),
+  idRutDocumento: z.number().int().positive().optional(),
 });
 export type ActualizarClienteBody = z.infer<typeof actualizarClienteBodySchema>;
 
@@ -61,6 +61,20 @@ export const crearDocumentoBodySchema = z.object({
   idRecepcion: z.number().nullish(),
   idPlantilla: z.number().nullish(),
   idClienteRut: z.number().nullish(),
+}).superRefine((documento, ctx) => {
+  const relaciones = [
+    documento.idCotizacion,
+    documento.idOrdenTrabajo,
+    documento.idRecepcion,
+    documento.idPlantilla,
+    documento.idClienteRut,
+  ].filter((id) => id != null);
+  if (relaciones.length > 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Un documento solo puede asociarse directamente a una categoría o cliente.',
+    });
+  }
 });
 export type CrearDocumentoBody = z.infer<typeof crearDocumentoBodySchema>;
 

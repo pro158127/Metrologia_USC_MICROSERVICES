@@ -1,23 +1,23 @@
 'use client';
 
-import React, {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
-import { createUniver, LocaleType, mergeLocales } from '@univerjs/presets';
+import type {
+CellSelection,
+HighlightRange,
+UniverAPI,
+UniverSheetHandle,
+UniverSheetProps,
+UniverWorkbook,
+} from '@/tipos/plantillas';
 import { UniverSheetsCorePreset } from '@univerjs/preset-sheets-core';
 import sheetsCoreEnUS from '@univerjs/preset-sheets-core/locales/en-US';
-import type {
-  UniverSheetProps,
-  UniverSheetHandle,
-  UniverAPI,
-  UniverWorkbook,
-  CellSelection,
-  HighlightRange,
-} from '@/tipos/plantillas';
+import { createUniver,LocaleType,mergeLocales } from '@univerjs/presets';
+import {
+forwardRef,
+useEffect,
+useImperativeHandle,
+useRef,
+useState,
+} from 'react';
 
 import '@univerjs/preset-sheets-core/lib/index.css';
 
@@ -36,8 +36,8 @@ function columnToLetter(col: number): string {
 function resolveSheet(workbook: UniverWorkbook, name?: string) {
   if (name) {
     const sheets = workbook.getSheets?.() || [];
-    const match = sheets.find(s => 
-      (typeof s.getSheetName === 'function' && s.getSheetName() === name) || 
+    const match = sheets.find(s =>
+      (typeof s.getSheetName === 'function' && s.getSheetName() === name) ||
       (typeof s.getSheetName === 'function' && s.getSheetName() === name)
     );
     if (match) return match;
@@ -141,27 +141,27 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
 
       try {
         // 💡 1. Intentamos destruirlo preventivamente si el snapshot traía un ID previo que se quedó pegado
-        const snapshotId = (snapshot as any).id || (snapshot as any).unitId;
+        const snapshotId = (snapshot as { id?: string; unitId?: string }).id || (snapshot as { unitId?: string }).unitId;
         if (snapshotId && typeof univerAPI.disposeUnit === 'function') {
-          try { univerAPI.disposeUnit(snapshotId); } catch (e) {}
+          try { univerAPI.disposeUnit(snapshotId); } catch { /* The previous workbook may already be disposed. */ }
         }
 
         // Crear el workbook a partir del snapshot generado en el backend
         currentWorkbook = univerAPI.createWorkbook(
           snapshot as Parameters<UniverAPI['createWorkbook']>[0]
         );
-        
+
         workbookRef.current = currentWorkbook;
         mergeMapRef.current = buildMergeMap(snapshot);
 
         // 2a. Escuchar cambios de selección para emitir la celda/columna elegida
         selectionSubRef.current?.dispose(); // Limpiar global por si acaso
-        
+
         const sub = currentWorkbook.onSelectionChange((selections) => {
         if (!onCellSelectRef.current || !selections?.length) return;
           const first = selections[0];
           const sheet = currentWorkbook!.getActiveSheet?.();
-          
+
           // ✅ CORRECCIÓN: Extracción híbrida del nombre de la hoja
           let sheetName = '';
           if (sheet) {
@@ -188,7 +188,7 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
           };
           onCellSelectRef.current(selection);
         });
-        
+
         currentSelectionSub = sub as { dispose: () => void };
         selectionSubRef.current = currentSelectionSub;
 
@@ -208,8 +208,8 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
         if (currentWorkbook) {
           try {
             // Buscamos el ID en las propiedades comunes del objeto (sin usar getters inexistentes)
-            const unitId = (currentWorkbook as any).id || (currentWorkbook as any).unitId || (currentWorkbook as any)._id;
-            
+            const unitId = currentWorkbook.getId();
+
             // Destruimos la unidad usando la API raíz si el ID existe
             if (unitId && typeof univerAPI.disposeUnit === 'function') {
               univerAPI.disposeUnit(unitId);
@@ -222,7 +222,7 @@ export const UniverSheet = forwardRef<UniverSheetHandle, UniverSheetProps>(
       };
     }, [snapshot]);
 
-    
+
     // 3. API imperativa: resaltar / limpiar mapeos en el canvas
     useImperativeHandle(ref, () => ({
       highlightRanges: (ranges: HighlightRange[]) => {

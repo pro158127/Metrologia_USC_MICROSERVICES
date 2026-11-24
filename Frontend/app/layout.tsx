@@ -1,12 +1,11 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import SessionWrapper from "./componets/session";
-import "./globals.css";
-import { IdleMonitor } from "./componets/timer_session";
-import { DbProvider } from "./componets/tables_recharge";
-import { Toaster } from "sonner";
 import { auth } from "@/app/Login/types/auth"; // 👈 IMPORTANTE: Importa tu función auth de NextAuth v5
-import SocketDebugger from "./componets/debugges_webscoekt ";
+import type { Metadata } from "next";
+import { Geist,Geist_Mono } from "next/font/google";
+import { Toaster } from "sonner";
+import SessionWrapper from "./componets/session";
+import { DbProvider } from "./componets/tables_recharge";
+import { IdleMonitor } from "./componets/timer_session";
+import "./globals.css";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -40,9 +39,9 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  
+
   // 🚀 Traemos la sesión directamente desde las cookies del servidor en tiempo de renderizado
-  const session = await auth(); 
+  const session = await auth();
 
   return (
     <html
@@ -52,12 +51,12 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {/* 🎯 Le inyectamos la sesión directo al Wrapper */}
-        <SessionWrapper session={session}> 
+        <SessionWrapper session={session}>
           <DbProvider>
             {children}
             <IdleMonitor />
             <Toaster position="top-right" richColors />
-  
+
           </DbProvider>
         </SessionWrapper>
       </body>

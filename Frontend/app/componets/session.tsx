@@ -4,7 +4,7 @@ import { ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
-  session: any; // 👈 Recibe la sesión que le mandamos desde el layout de servidor
+  session: import("next-auth").Session | null; // 👈 Recibe la sesión que le mandamos desde el layout de servidor
 }
 
 export default function SessionWrapper({ children, session }: Props) {

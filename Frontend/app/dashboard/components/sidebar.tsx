@@ -1,26 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { 
-  Ruler, 
-  X,
-  LayoutDashboard, 
-  Users, 
-  FileText, 
-  Wrench, 
-  Package, 
-  FlaskConical, 
-  CheckSquare, 
-  Truck, 
-  BarChart3, 
-  Settings, 
-  ClipboardList, 
-  LogOut 
-} from "lucide-react";
-import UscLabLogo from "./logo";
-import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import { permisionMapping } from "@/app/lib/permissions/mapping";
 import { obtenerCertificadosRevision } from "@/app/action_module/certificados";
+import { permisionMapping } from "@/app/lib/permissions/mapping";
+import { usePermissions } from "@/app/lib/permissions/usePermissions";
+import {
+BarChart3,
+CheckSquare,
+ClipboardList,
+FileText,
+FlaskConical,
+LayoutDashboard,
+LogOut,
+Package,
+Settings,
+Truck,
+Users,
+Wrench,
+X
+} from "lucide-react";
+import { useEffect,useState } from "react";
+import UscLabLogo from "./logo";
 export type ModuleKey =
   | "dashboard"
   | "clientes"
@@ -54,8 +53,8 @@ interface SidebarProps {
   activeModule: ModuleKey;
   onNavigate: (module: ModuleKey) => void;
   onLogout: () => void;
-  isOpen: boolean;      
-  onClose: () => void;  
+  isOpen: boolean;
+  onClose: () => void;
 }
 
 const sections: SidebarSection[] = [
@@ -121,23 +120,23 @@ export function Sidebar({ activeModule, onNavigate, onLogout, isOpen, onClose }:
   return (
     <>
       {isOpen && (
-        <div 
-          className="fixed inset-0 z-40 bg-black/50 lg:hidden" 
+        <div
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
           onClick={onClose}
         />
       )}
 
-      <aside 
+      <aside
         className={`fixed inset-y-0 left-0 z-50 flex h-full w-72 shrink-0 flex-col border-r border-white/10 bg-slate-950 text-slate-300 transition-all duration-300 ease-in-out lg:static ${
-          isOpen 
-            ? "translate-x-0 lg:ml-0" 
+          isOpen
+            ? "translate-x-0 lg:ml-0"
             : "-translate-x-full lg:-ml-72"
         }`}
       >
         <div className="flex items-center justify-between px-6 py-5">
           <UscLabLogo />
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
             title="Cerrar menú"
           >
@@ -150,10 +149,10 @@ export function Sidebar({ activeModule, onNavigate, onLogout, isOpen, onClose }:
             // 2. Filtrar los ítems de esta sección basándonos en el mapeo y los permisos reales
             const visibleItems = section.items.filter((item) => {
               const permisoKey = permisionMapping[item.key];
-              
+
               // Si el mapeo dice true, no requiere restricción (ej: dashboard)
               if (permisoKey === true) return true;
-              
+
               // Si existe la propiedad en permisos, retornamos su valor booleano
               return hasModule(permisoKey as string);
             });

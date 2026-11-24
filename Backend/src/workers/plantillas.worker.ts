@@ -1,3 +1,4 @@
+import { despacharGeneracionesPendientes, type GeneracionDocumentoJob, type GeneracionExcelJob } from '../services/generacion-pendiente.service.js';
 // workers/plantillas.worker.ts
 import 'dotenv/config';
 import { Worker, Job } from 'bullmq';
@@ -9,10 +10,11 @@ import { s3Client, BUCKET_NAME } from '../lib/s3Client.js';
 import { getRedisConnection, TarifasJobData, TARIFAS_QUEUE,GENERATION_EXCEL } from '../lib/queue/queue.js';
 import { procesarPlantillaJob } from './plantillasWorker.js';
 import { PrismaClient } from '@prisma/client';
+import { publicarPdfFactura } from '../services/factura-pdf.service.js';
 import { pipeline } from 'stream/promises';
-import { GenerarExcelBody } from '../routes/plantillas-generacion.schemas.js';
 import { generarExcelPlantilla } from './generador.excel.js'; 
-import { encolarCorreoConRegistro } from '../services/email-delivery.service.js';
+import { despacharCorreosPendientes } from '../services/email-delivery.service.js';
+import { cerrarWorkersAlDetener } from '../lib/queue/worker-shutdown.js';
 const prisma = new PrismaClient();
 
 async function processTarifasJob(job: Job<TarifasJobData>) {
@@ -27,18 +29,23 @@ async function processTarifasJob(job: Job<TarifasJobData>) {
       throw new Error(`La versión ${versionId} no existe en la base de datos.`);
     }
 
-  if (version.ESTADO === 'PROCESANDO' || version.ESTADO === 'COMPLETADO') {
-    throw new Error(`La plantilla ${versionId} ya se encuentra en estado ${version.ESTADO}.`);
-  }
+  if (version.ESTADO === 'COMPLETADO') return 'La plantilla ya está procesada.';
 
-  // Marcamos como "PROCESANDO" y asociamos el JOB_ID de BullMQ
-  await prisma.version_plantillas.update({
-    where: { ID_VERSION_PLANTILLA: versionId },
+  const jobId = String(job.id);
+  const reserva = await prisma.version_plantillas.updateMany({
+    where: {
+      ID_VERSION_PLANTILLA: versionId,
+      OR: [
+        { ESTADO: { notIn: ['PROCESANDO', 'COMPLETADO'] } },
+        { ESTADO: 'PROCESANDO', JOB_ID: jobId },
+      ],
+    },
     data: { 
       ESTADO: 'PROCESANDO',
-      JOB_ID: job.id?.toString() || null 
+      JOB_ID: jobId,
     },
   });
+  if (!reserva.count) return 'Otra ejecución está procesando la plantilla o ya la completó.';
 
   const ext = path.extname(rutaUrl) || '.xlsx';
   const rutaArchivoLocal = path.join(os.tmpdir(), `tarifas-${versionId}-${Date.now()}${ext}`);
@@ -71,10 +78,15 @@ async function processTarifasJob(job: Job<TarifasJobData>) {
   }
 }
 
-async function marcarError(versionId: number, error: Error) {
+async function marcarError(job: Job<TarifasJobData>, error: Error) {
   try {
-    await prisma.version_plantillas.update({
-      where: { ID_VERSION_PLANTILLA: versionId },
+    if (await job.getState() !== 'failed') return;
+    await prisma.version_plantillas.updateMany({
+      where: {
+        ID_VERSION_PLANTILLA: job.data.versionId,
+        ESTADO: 'PROCESANDO',
+        JOB_ID: String(job.id),
+      },
       data: {
         ESTADO: 'ERROR',
         ERROR_LOG: error.message?.slice(0, 2000) || 'Error desconocido durante el procesamiento',
@@ -103,7 +115,7 @@ worker.on('completed', (job) => {
 worker.on('failed', async (job, err) => {
   console.error(`❌ [plantillas-worker] Job ${job?.id} falló: ${err.message}`);
   if (job?.data?.versionId) {
-    await marcarError(job.data.versionId, err);
+    await marcarError(job, err);
   }
 });
 
@@ -114,8 +126,9 @@ worker.on('error', (err) => {
 console.log('🚀 [plantillas-worker] Worker de consolidación de tarifas escuchando en Redis...');
 
 
-const generador_excel= new Worker<GenerarExcelBody>(GENERATION_EXCEL, async(job)=>{
-  return generarExcelPlantilla(job);
+const generador_excel= new Worker<GeneracionDocumentoJob>(GENERATION_EXCEL, async(job)=>{
+  if ('documento' in job.data) return publicarPdfFactura(prisma, job.data);
+  return generarExcelPlantilla(job as Job<GeneracionExcelJob>);
 },
  {
     connection: getRedisConnection(),
@@ -124,107 +137,64 @@ const generador_excel= new Worker<GenerarExcelBody>(GENERATION_EXCEL, async(job)
 )
 
 
-generador_excel.on('completed', async(job,returnvalue) => {
-  console.log(`✅ [generador_excel-worker] Job Redis ${job.id} completado con éxito. (Quote BD ID: ${job.data.id_job})`);
-  if (returnvalue?.exito && returnvalue?.datos_correo) {
-    if(returnvalue.estado=="ENVIADA"){
-    if(returnvalue.action=="cot_create"){
-     await encolarCorreoConRegistro(prisma, {
-    to: returnvalue.datos_correo.emailDestino,
-    subject: `Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
-    template_type: 'crear_cotizacion',
-    context_data: returnvalue.datos_correo,
-    minio_links: [returnvalue.url_pdf],
-    // 👇 ESTO FALTABA PARA QUE TU WORKER DE CORREOS NO FALLE EN LOS LOGS
-    tipo_entry: job.data.tipo_entry, 
-    id_registro: job.data.id_registro,
-    id_cotizacion: job.data.id_registro,
-    notificar_usuario_id: job.data.id_usuario ?? null,
-    modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
-  });
-    }}
-    if (returnvalue.action === "cot_update") {
-      await encolarCorreoConRegistro(prisma, {
-        to: returnvalue.datos_correo.emailDestino,
-        // Cambiamos el Asunto para reflejar la aprobación
-        subject: `Cotizacion actualizada: Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
-        template_type: 'actualizar_cotizacion', // Apunta al segundo HTML en tu worker de correos
-        context_data: returnvalue.datos_correo, // Ya incluye cantidadEquipos y numeroOT
-        minio_links: [returnvalue.url_pdf],
-        id_registro: job.data.id_registro,
-        id_cotizacion: job.data.id_registro,
-        notificar_usuario_id: job.data.id_usuario ?? null,
-        modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
-      });
-    }
-
-    if(returnvalue.action=="aprove"){
-      await encolarCorreoConRegistro(prisma, {
-        to: returnvalue.datos_correo.emailDestino,
-        // Cambiamos el Asunto para reflejar la aprobación
-        subject: `✅ Aprobada: Cotización ${returnvalue.datos_correo.numeroCotizacion} - MetroSoft`,
-        template_type: 'aproved', // Apunta al segundo HTML en tu worker de correos
-        context_data: returnvalue.datos_correo, // Ya incluye cantidadEquipos y numeroOT
-        minio_links: [returnvalue.url_pdf],
-        id_registro: job.data.id_registro,
-        id_cotizacion: job.data.id_registro,
-        notificar_usuario_id: job.data.id_usuario ?? null,
-        modulo_origen: 'cotizaciones', tabla_origen: 'cotizaciones'
-      });
-    }
-
-      if (returnvalue.action === "ot_create") {
-  await encolarCorreoConRegistro(prisma, {
-    to: returnvalue.datos_correo.emailDestino,
-    // 1. Nuevo asunto indicando la acción requerida
-    subject: `📋 Registro de Orden de Trabajo ${returnvalue.datos_correo.numeroOT} - MetroSoft`,
-    // 2. Apunta al nombre exacto de tu nuevo archivo .hbs (ej: 'crear_ot.hbs')
-    template_type: 'crear_ot', 
-    // 3. Pasa las variables: nombreCliente, numeroOT, numeroCotizacion
-    context_data: returnvalue.datos_correo, 
-    // 4. Solo enviamos el Excel para que lo llenen
-    minio_links: [returnvalue.url_excel],
-    // 5. Mantenemos el rastreo para los logs de BullMQ
-    tipo_entry: job.data.tipo_entry, 
-    id_registro: job.data.id_registro,
-    notificar_usuario_id: job.data.id_usuario ?? null,
-    modulo_origen: 'ordenes_trabajo', tabla_origen: 'ordenes_trabajo'
-  });
-}
-
-      if (returnvalue.action === "ot_actualizar") {
-  await encolarCorreoConRegistro(prisma, {
-    to: returnvalue.datos_correo.emailDestino,
-    subject: `📋 Orden de Trabajo actualizada ${returnvalue.datos_correo.numeroOT} - MetroSoft`,
-    template_type: 'actualizacion_ordenes',
-    context_data: returnvalue.datos_correo,
-    minio_links: [returnvalue.url_excel],
-    tipo_entry: job.data.tipo_entry,
-    id_registro: job.data.id_registro,
-    notificar_usuario_id: job.data.id_usuario ?? null,
-    modulo_origen: 'ordenes_trabajo', tabla_origen: 'ordenes_trabajo'
-  });
-}
-    
-    
-    console.log(`➡️ [Orquestador] Correo encolado exitosamente.`);
+let despachando = false;
+async function despacharDocumentos() {
+  if (despachando) return;
+  despachando = true;
+  try {
+    await despacharGeneracionesPendientes(prisma);
+  } catch (error) {
+    console.error('[generacion-documental] La cola no está disponible. Se reintentará.', error);
+  } finally {
+    despachando = false;
   }
+}
+void despacharDocumentos();
+const intervaloDespacho = setInterval(() => { void despacharDocumentos(); }, 2000).unref();
+
+let despachandoCorreo = false;
+async function despacharCorreos() {
+  if (despachandoCorreo) return;
+  despachandoCorreo = true;
+  try {
+    await despacharCorreosPendientes(prisma);
+  } catch (error) {
+    console.error('[email] El despacho persistido se volverá a intentar.', error);
+  } finally {
+    despachandoCorreo = false;
+  }
+}
+void despacharCorreos();
+const intervaloCorreo = setInterval(() => { void despacharCorreos(); }, 3000).unref();
+
+generador_excel.on('completed', (job, resultado) => {
+  console.log('[generador_excel-worker] Documento generado', {
+    redisJobId: job.id, id_job: job.data.id_job, pdf: resultado?.url_pdf,
+  });
 });
 
 generador_excel.on('failed', async (job, err) => {
-  console.error(`❌ [generador_excel-worker] Job Redis ${job?.id} falló: ${err.message}`);
-  
-  if (job?.data?.id_job) {
-    try {
-      // Liberamos el registro en BD para indicar que hubo un error crítico
-      await prisma.quote.update({
-        where: { id: job.data.id_job },
-        data: { status: 'FAILED' }
-      });
-      console.log(`⚠️ [generador_excel-worker] Registro ${job.data.id_job} actualizado a FAILED en la base de datos.`);
-    } catch (dbError) {
-      console.error(`🚨 [generador_excel-worker] Fallo fatal al intentar actualizar la BD a FAILED:`, dbError);
+  if (!job) {
+    console.error('[generador_excel-worker] Falló un trabajo sin datos:', err.message);
+    return;
+  }
+  const { id_job, tipo, id_registro } = job.data;
+  const contexto = { redisJobId: job.id, nombre: job.name, id_job, tipo, id_registro };
+  console.error('[generador_excel-worker] Error generando documento', contexto, err.message);
+  if (!id_job) return;
+
+  try {
+    const estado = await job.getState();
+    if (estado !== 'failed') return;
+    const resultado = await prisma.quote.updateMany({
+      where: { id: id_job, status: { not: 'COMPLETED' } },
+      data: { status: 'FAILED', data: { error: err.message } },
+    });
+    if (resultado.count === 0) {
+      console.warn('[generador_excel-worker] El trabajo terminó sin registro Quote en PostgreSQL', contexto);
     }
+  } catch (dbError) {
+    console.error('[generador_excel-worker] No se pudo registrar el fallo en PostgreSQL', contexto, dbError);
   }
 });
 
@@ -236,5 +206,7 @@ console.log('🚀 [generador_excel-worker] Worker de generación de Excel escuch
 
 import { emailWorker } from './gestion_email.js';
 import { worker_import } from './importarOTs.js';
-worker_import
-emailWorker
+cerrarWorkersAlDetener([worker, generador_excel, emailWorker, worker_import], () => {
+  clearInterval(intervaloDespacho);
+  clearInterval(intervaloCorreo);
+});

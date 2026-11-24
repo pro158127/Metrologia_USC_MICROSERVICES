@@ -1,18 +1,20 @@
+import type { Style } from "exceljs";
+export type StyleRegistry = ReturnType<typeof createStyleRegistry>;
 // utils/excel-univer/styleRegistry.ts
 import { convertStyleToUniver} from './ parseStyle';
 
 export function createStyleRegistry() {
-  const registry: Record<string, any> = {};
+  const registry: Record<string, NonNullable<ReturnType<typeof convertStyleToUniver>>> = {};
   const styleMap: Map<string, string> = new Map();
 
   return {
-    getOrCreate: (style: any): string | null => {
+    getOrCreate: (style: Partial<Style>): string | null => {
       const univerStyle = convertStyleToUniver(style);
       if (!univerStyle) return null;
 
       // Crear hash del estilo para deduplicación
       const hash = JSON.stringify(univerStyle);
-      
+
       if (styleMap.has(hash)) {
         return styleMap.get(hash)!;
       }
@@ -28,6 +30,6 @@ export function createStyleRegistry() {
 }
 
 // Función helper para usar el registry
-export function getOrCreateStyleId(style: any, registry: any): string | null {
+export function getOrCreateStyleId(style: Partial<Style>, registry: StyleRegistry): string | null {
   return registry.getOrCreate(style);
 }

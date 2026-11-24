@@ -19,13 +19,15 @@ function b64url(input: Buffer | string): string {
  */
 export function firmarTokenAprobacion(
   cotizacionId: number,
-  expiraEnSeg: number = DEFAULT_TTL_SEG
+  expiraEnSeg: number = DEFAULT_TTL_SEG,
+  codigo?: string
 ): string {
   const ahora = Math.floor(Date.now() / 1000);
   const header = { alg: 'HS256', typ: 'JWT' };
   const payload = {
     sub: String(cotizacionId),
     purpose: PURPOSE,
+    codigo,
     iat: ahora,
     exp: ahora + expiraEnSeg,
   };
@@ -43,6 +45,8 @@ export function firmarTokenAprobacion(
 
 export interface TokenAprobacion {
   cotizacionId: number;
+  codigo?: string;
+  iat: number;
 }
 
 /**
@@ -82,7 +86,8 @@ export function verificarTokenAprobacion(token: string): TokenAprobacion | null 
     const cotizacionId = Number(payload.sub);
     if (!Number.isInteger(cotizacionId) || cotizacionId <= 0) return null;
 
-    return { cotizacionId };
+    if (!Number.isInteger(payload.iat) || (payload.codigo !== undefined && typeof payload.codigo !== 'string')) return null;
+    return { cotizacionId, codigo: payload.codigo, iat: payload.iat };
   } catch {
     return null;
   }

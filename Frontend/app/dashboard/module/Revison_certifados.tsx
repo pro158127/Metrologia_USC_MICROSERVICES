@@ -14,7 +14,8 @@ import {
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
-import { useDbTable } from "@/app/componets/tables_recharge";
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
+import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
 import {
   obtenerCertificadosRevision,
   aprobarCertificado,
@@ -469,10 +470,9 @@ function mapRevision(data: CertificadoRevisionItem[]): CertificadoRevision[] {
   });
 }
 
-export function RevisionCertificados() {
+export function RevisionCertificados({ certificadoInicial = null }: { certificadoInicial?: number | null }) {
   const { data: session } = useSession();
-  const certificadosRealtime = useDbTable("certificados");
-  const calibracionesRealtime = useDbTable("calibraciones");
+  const revision = useRevisionTablas("certificados", "calibraciones");
   const { can } = usePermissions();
   const rol = (session?.user?.role as string) || "Sin rol";
   const puedeRevisarCertificado = useCallback(
@@ -484,7 +484,8 @@ export function RevisionCertificados() {
   );
   const [certsRaw, setCertsRaw] = useState<CertificadoRevision[]>([]);
   const [cargando, setCargando] = useState(true);
-  const [selected, setSelected] = useState<number | null>(null);
+  useModuleSplashReady("revision", !cargando);
+  const [selected, setSelected] = useState<number | null>(certificadoInicial);
   const [showDevolver, setShowDevolver] = useState<number | null>(null);
   const [showAprobar, setShowAprobar] = useState<number | null>(null);
   const [motivo, setMotivo] = useState("");
@@ -521,7 +522,7 @@ export function RevisionCertificados() {
     return () => {
       activo = false;
     };
-  }, [certificadosRealtime, calibracionesRealtime]);
+  }, [revision]);
 
   const pending = certsRaw.filter((c) => c.status === "pendiente");
   const selectedCert = certsRaw.find((c) => c.idCertificado === selected);

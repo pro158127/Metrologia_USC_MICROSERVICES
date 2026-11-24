@@ -43,6 +43,10 @@ export const idParamSchema = z.object({
 });
 export type IdParam = z.infer<typeof idParamSchema>;
 
+export const eliminarSeguimientoBodySchema = z.object({
+  motivo: z.string().trim().min(3, 'Indica el motivo de eliminación.'),
+});
+
 // ============================================================
 // OUTPUT DTO (camelCase)
 // ============================================================
@@ -63,6 +67,7 @@ export const seguimientoDtoSchema = z.object({
   resultado: z.string().nullable(),
   idUsuario: z.number().nullable(),
   createdAt: z.coerce.date(),
+  origen: z.enum(['MANUAL', 'SISTEMA']),
   usuario: usuarioDtoSchema.nullable(),
 });
 export type SeguimientoDto = z.infer<typeof seguimientoDtoSchema>;
@@ -93,6 +98,7 @@ export const seguimientoRawToDtoSchema = z
     RESULTADO: z.string().nullish(),
     ID_USUARIO_FK: z.number().nullish(),
     CREATED_AT: z.coerce.date(),
+    ORIGEN: z.enum(['MANUAL', 'SISTEMA']).default('MANUAL'),
     usuarios: usuarioRawToDtoSchema.nullish(),
   })
   .transform((raw): SeguimientoDto => ({
@@ -105,6 +111,7 @@ export const seguimientoRawToDtoSchema = z
     resultado: raw.RESULTADO ?? null,
     idUsuario: raw.ID_USUARIO_FK ?? null,
     createdAt: raw.CREATED_AT,
+    origen: raw.ORIGEN,
     usuario: raw.usuarios ?? null,
   }));
 

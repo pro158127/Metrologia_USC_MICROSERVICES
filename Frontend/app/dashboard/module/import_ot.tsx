@@ -2,10 +2,11 @@
 
   // 1. Imports
   import React, { useState, useEffect } from "react";
-  import { Link, FileText, Unlink, Layers, AlertTriangle, Search, Filter } from "lucide-react";
+import { Link, FileText, Unlink, Layers, AlertTriangle, Filter } from "lucide-react";
   import { useDbStore } from "../../stores/dbstore"; 
   import { useDbLoading } from "@/app/componets/tables_recharge";
-  import { procesarImportacionOTAction, consultarEstadoJobAction } from "@/app/action_module/ordenes";
+  import { useModuleSplashReady } from "@/app/dashboard/components/PageLoadSplash";
+import { procesarImportacionOTAction, consultarEstadoJobAction, obtenerCotizacionesImportables } from "@/app/action_module/ordenes";
   import { subirArchivoDocumento } from "@/app/action_module/archivos";
 import { validarArchivo } from "@/app/lib/upload";
 import { usePermissions } from "@/app/lib/permissions/usePermissions";
@@ -26,10 +27,42 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
   }
 
   interface RecepcionPorCotizacion {
+    idCotizacion: number;
     cotizacion: string;
     cliente: string;
     fechaRecepcion: string;
     equiposContados: number;
+    otsExistentes: { id: number; codigo: string; version: number | null; estado: string | null }[];
+  }
+
+  interface FileUploadZoneProps {
+    tipoFlujo: "estandar" | "inverso";
+    file: File | null;
+    showForm: boolean;
+    onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+    onRemoveFile: () => void;
+    onExtract: () => void;
+    onStartManual: () => void;
+  }
+
+  interface OTFormSectionProps {
+    tipoFlujo: "estandar" | "inverso";
+    cotizacionExtraida: string;
+    otNumber: string;
+    date: string;
+    client: string;
+    cotizacionSeleccionada: string;
+    recepciones: RecepcionPorCotizacion[];
+    paginaCotizaciones: number;
+    totalPaginasCotizaciones: number;
+    busquedaCotizaciones: string;
+    cargandoCotizaciones: boolean;
+    onCambiarPaginaCotizaciones: (pagina: number) => void;
+    onBuscarCotizaciones: (busqueda: string) => void;
+    isProcessing: boolean;
+    plantillasCompletas: boolean;
+    onCotizacionChange: (codigo: string) => void;
+    onGenerateOT: () => void;
   }
 
   // 2. Componentes Hijos
@@ -59,7 +92,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     </div>
   );
 
-  const FileUploadZone: React.FC<any> = ({ tipoFlujo, file, showForm, onFileChange, onRemoveFile, onExtract, onStartManual }) => {
+  const FileUploadZone: React.FC<FileUploadZoneProps> = ({ tipoFlujo, file, showForm, onFileChange, onRemoveFile, onExtract, onStartManual }) => {
     if (!file) {
       return (
         <label htmlFor="file-upload" className="flex flex-col items-center justify-center w-full max-w-md border-2 border-dashed border-slate-200 rounded-2xl p-8 cursor-pointer bg-slate-50/50 hover:bg-slate-50 transition">
@@ -89,7 +122,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     return null;
   };
 
-  const OTFormSection: React.FC<any> = ({ tipoFlujo, cotizacionExtraida, otNumber, date, client, cotizacionSeleccionada, recepciones, isProcessing, plantillasCompletas, onCotizacionChange, onGenerateOT }) => (
+  const OTFormSection: React.FC<OTFormSectionProps> = ({ tipoFlujo, cotizacionExtraida, otNumber, date, client, cotizacionSeleccionada, recepciones, paginaCotizaciones, totalPaginasCotizaciones, busquedaCotizaciones, cargandoCotizaciones, onCambiarPaginaCotizaciones, onBuscarCotizaciones, isProcessing, plantillasCompletas, onCotizacionChange, onGenerateOT }) => (
     <div className="mt-4 space-y-5 border-t border-slate-100 pt-4 animate-fadeIn">
       {tipoFlujo === "estandar" && cotizacionExtraida && (
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
@@ -117,10 +150,16 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
           {tipoFlujo === "estandar" ? "Asociar / Reemplazar por Cotización Vigente del Sistema" : "Seleccionar Cotización Origen Obligatoria"}
         </label>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <input value={busquedaCotizaciones} onChange={(event) => onBuscarCotizaciones(event.target.value)} placeholder="Buscar código o cliente" className="w-full max-w-sm rounded-lg border border-slate-200 px-3 py-2 text-xs" />
+          <span className="text-[11px] text-slate-500">{cargandoCotizaciones ? "Buscando…" : `Página ${paginaCotizaciones} de ${Math.max(totalPaginasCotizaciones, 1)}`}</span>
+          <button type="button" disabled={paginaCotizaciones <= 1 || cargandoCotizaciones} onClick={() => onCambiarPaginaCotizaciones(paginaCotizaciones - 1)} className="rounded-md border border-slate-200 px-2 py-1 text-xs disabled:opacity-40">Anterior</button>
+          <button type="button" disabled={paginaCotizaciones >= totalPaginasCotizaciones || cargandoCotizaciones} onClick={() => onCambiarPaginaCotizaciones(paginaCotizaciones + 1)} className="rounded-md border border-slate-200 px-2 py-1 text-xs disabled:opacity-40">Siguiente</button>
+        </div>
         <select value={cotizacionSeleccionada} onChange={(e) => onCotizacionChange(e.target.value)} disabled={isProcessing} className="w-full max-w-xl px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white outline-none focus:border-blue-500 font-medium text-slate-700 font-mono">
           <option value="">{tipoFlujo === "estandar" ? "-- Creación aislada (Flujo anormal) --" : "-- Seleccionar cotización vigente --"}</option>
-          {recepciones.map((rec: any) => (
-            <option key={rec.cotizacion} value={rec.cotizacion}>{rec.cotizacion} — {rec.cliente} ({rec.equiposContados} Equipos registrados)</option>
+          {recepciones.map((rec) => (
+            <option key={rec.idCotizacion} value={rec.cotizacion}>{rec.cotizacion} — {rec.cliente} ({rec.equiposContados} equipos){rec.otsExistentes.length ? ` · OT ${rec.otsExistentes.map((ot) => `${ot.codigo} v${ot.version ?? 1} ${ot.estado ?? ""}`).join(", ")}` : " · Sin OT previa"}</option>
           ))}
         </select>
       </div>
@@ -255,11 +294,11 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
   export const MainRenderer2: React.FC<{ onOpenOt: (id: number) => void }> = ({ onOpenOt }) => {
     const [isMounted, setIsMounted] = useState(false);
 
-    const { cotizaciones, ordenes_trabajo, loadTable } = useDbStore();
+    const { ordenes_trabajo, loadTable } = useDbStore();
     const loadingOTs = useDbLoading("ordenes_trabajo");
     const { can } = usePermissions();
     const tieneAcceso = can("ordenesOt", "acceso");
-    const { estado: estadoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
+    const { estado: estadoPlantillas, cargando: cargandoPlantillas, todasCompletas: plantillasCompletas } = usePlantillasOperativas();
 
     const [file, setFile] = useState<File | null>(null);
     const [showForm, setShowForm] = useState(false);
@@ -271,12 +310,48 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
     const [cotizacionExtraida, setCotizacionExtraida] = useState(""); 
     const [cotizacionSeleccionada, setCotizacionSeleccionada] = useState("");
     const [isProcessing, setIsProcessing] = useState(false);
+    const [paginaCotizaciones, setPaginaCotizaciones] = useState(1);
+    const [busquedaCotizaciones, setBusquedaCotizaciones] = useState("");
+    const [cotizacionesVinculables, setCotizacionesVinculables] = useState<RecepcionPorCotizacion[]>([]);
+    const [totalPaginasCotizaciones, setTotalPaginasCotizaciones] = useState(0);
+    const [cargandoCotizaciones, setCargandoCotizaciones] = useState(false);
 
     useEffect(() => {
-      setIsMounted(true);
+      const frame = window.requestAnimationFrame(() => setIsMounted(true));
       loadTable('ordenes_trabajo');
-      loadTable('cotizaciones');
+      return () => window.cancelAnimationFrame(frame);
     }, [loadTable]);
+
+    useEffect(() => {
+      if (!tieneAcceso) return;
+      let actual = true;
+      const timer = window.setTimeout(async () => {
+        setCargandoCotizaciones(true);
+        try {
+          const respuesta = await obtenerCotizacionesImportables({ page: paginaCotizaciones, busqueda: busquedaCotizaciones });
+          if (!actual) return;
+          setCotizacionesVinculables(respuesta.data.map((cotizacion) => ({
+            idCotizacion: cotizacion.idCotizacion,
+            cotizacion: cotizacion.codigo,
+            cliente: cotizacion.cliente,
+            fechaRecepcion: String(cotizacion.createdAt).slice(0, 10),
+            equiposContados: cotizacion.equiposContados,
+            otsExistentes: cotizacion.otsExistentes,
+          })));
+          setTotalPaginasCotizaciones(respuesta.meta.totalPages);
+        } catch (error) {
+          if (actual) {
+            setCotizacionesVinculables([]);
+            setToast(error instanceof Error ? error.message : "No se pudieron cargar las cotizaciones aprobadas.");
+          }
+        } finally {
+          if (actual) setCargandoCotizaciones(false);
+        }
+      }, busquedaCotizaciones ? 250 : 0);
+      return () => { actual = false; window.clearTimeout(timer); };
+    }, [tieneAcceso, paginaCotizaciones, busquedaCotizaciones]);
+
+    useModuleSplashReady("importarOrden", isMounted && !loadingOTs && !cargandoCotizaciones && !cargandoPlantillas);
 
     useEffect(() => {
       if (toast) {
@@ -289,16 +364,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
       return <div className="p-6 bg-gray-50 min-h-screen flex items-center justify-center"><span className="text-slate-400 font-bold text-sm">Cargando módulo...</span></div>;
     }
 
-    const cotizacionesVinculables = (cotizaciones || [])
-      .filter((c: any) => c.estado === 'APROBADA' || c.estado === 'ENVIADA')
-      .map((c: any) => ({
-        cotizacion: c.codigo,
-        cliente: c.cliente?.razonSocial || "Cliente no registrado",
-        fechaRecepcion: c.createdAt ? String(c.createdAt).substring(0, 10) : "-",
-        equiposContados: c.detalles?.length || 0
-      }));
-
-    const generatedOTs = (ordenes_trabajo || []).map((ot: any) => {
+    const generatedOTs = (ordenes_trabajo || []).map((ot) => {
       const isMaster = ot.sitioCalibracion == null;
       return {
         id: ot.idOrdenTrabajo,
@@ -315,7 +381,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
 
     const handleCotizacionChange = (cotiz: string) => {
       setCotizacionSeleccionada(cotiz);
-      const datosCotiz = cotizacionesVinculables.find((r: any) => r.cotizacion === cotiz);
+      const datosCotiz = cotizacionesVinculables.find((r) => r.cotizacion === cotiz);
       
       if (datosCotiz) {
         setClient(datosCotiz.cliente);
@@ -359,6 +425,11 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
         return setToast("⚠️ Las plantillas de documento no están completas. Configúrelas en Administración → Plantillas.");
       }
       if (!file) return setToast("⚠️ Por favor adjunta el archivo Excel primero.");
+      const cotizacionSeleccionadaInfo = cotizacionesVinculables.find((c) => c.cotizacion === cotizacionSeleccionada);
+      if (cotizacionSeleccionadaInfo?.otsExistentes.length) {
+        const codigosOT = cotizacionSeleccionadaInfo.otsExistentes.map((ot) => ot.codigo).join(", ");
+        if (!window.confirm(`Esta cotización ya tiene OT registradas (${codigosOT}). La importación reconciliará/versionará esa familia. ¿Deseas continuar?`)) return;
+      }
       
       setIsProcessing(true);
       setToast("⏳ Procesando documento y validando reglas de negocio...");
@@ -372,8 +443,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
         }
         s3KeyTemp = uploadRes.rutaUrl;
 
-        const cotizObj = cotizaciones.find((c: any) => c.codigo === cotizacionSeleccionada);
-        const idCotizacionReal = cotizObj ? cotizObj.idCotizacion : undefined; 
+        const idCotizacionReal = cotizacionSeleccionadaInfo?.idCotizacion;
 
         const actionRes = await procesarImportacionOTAction({ s3KeyTemp, tipoFlujo, idCotizacion: idCotizacionReal });
         if (!actionRes.ok || !actionRes.id_job) throw new Error(actionRes.error || "Error de detonación del orquestador.");
@@ -393,8 +463,8 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
             setIsProcessing(false);
           }
         }, 2500);
-      } catch (err: any) {
-        setToast(`❌ Error crítico: ${err.message}`);
+      } catch (err: unknown) {
+        setToast(`❌ Error crítico: ${err instanceof Error ? err.message : "Error inesperado."}`);
         setIsProcessing(false);
       }
     };
@@ -410,7 +480,7 @@ import { PlantillasIncompletasBanner } from "@/app/dashboard/components/Plantill
             <FlowSelector tipoFlujo={tipoFlujo} onSelectFlow={(f) => { setTipoFlujo(f); setCotizacionSeleccionada(""); setShowForm(false); setFile(null); }} />
             <FileUploadZone tipoFlujo={tipoFlujo} file={file} showForm={showForm} onFileChange={handleFileChange} onRemoveFile={() => setFile(null)} onExtract={handleExtract} onStartManual={handleStartManual} />
             {showForm && (
-              <OTFormSection tipoFlujo={tipoFlujo} cotizacionExtraida={cotizacionExtraida} otNumber={otNumber} date={date} client={client} cotizacionSeleccionada={cotizacionSeleccionada} recepciones={cotizacionesVinculables} isProcessing={isProcessing} plantillasCompletas={plantillasCompletas} onCotizacionChange={handleCotizacionChange} onGenerateOT={handleGenerateOT} />
+              <OTFormSection tipoFlujo={tipoFlujo} cotizacionExtraida={cotizacionExtraida} otNumber={otNumber} date={date} client={client} cotizacionSeleccionada={cotizacionSeleccionada} recepciones={cotizacionesVinculables} paginaCotizaciones={paginaCotizaciones} totalPaginasCotizaciones={totalPaginasCotizaciones} busquedaCotizaciones={busquedaCotizaciones} cargandoCotizaciones={cargandoCotizaciones} onCambiarPaginaCotizaciones={(pagina) => { setCotizacionSeleccionada(""); setPaginaCotizaciones(pagina); }} onBuscarCotizaciones={(busqueda) => { setCotizacionSeleccionada(""); setPaginaCotizaciones(1); setBusquedaCotizaciones(busqueda); }} isProcessing={isProcessing || cargandoCotizaciones} plantillasCompletas={plantillasCompletas} onCotizacionChange={handleCotizacionChange} onGenerateOT={handleGenerateOT} />
             )}
           </div>
           ) : (

@@ -1,34 +1,29 @@
 'use client';
-import { generarPrevisualizacionSello } from '@/app/action_module/sellos';
-import { toast } from 'sonner';
+import Image from "next/image";
+import { actualizarPlantillaSello,crearPlantillaSello,eliminarPlantillaSello,generarPrevisualizacionSello,obtenerArchivoSelloSeguro,obtenerPlantillasSellos } from '@/app/action_module/sellos';
+import { useRevisionTablas } from "@/app/componets/tables_recharge";
 import { validarArchivo } from '@/app/lib/upload';
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import type { BoundingBox,SealConfig,SelloConfigModalProps,WatermarkArea } from '@/tipos/sellos';
 import {
-  X,
-  Upload,
-  Eye,
-  Maximize2,
-  Sparkles,
-  FileText,
-  CheckCircle2,
-  Sliders,
-  Plus,
-  Edit3,
-  Trash2,
-  Layers,
-  Award,
-  Loader2,
-  AlertTriangle,
-  Download,
+AlertTriangle,
+Award,
+CheckCircle2,
+Download,
+Edit3,
+Eye,
+FileText,
+Layers,
+Loader2,
+Maximize2,
+Plus,
+Sliders,
+Sparkles,
+Trash2,
+Upload,
+X,
 } from 'lucide-react';
-import type { SealConfig, BoundingBox, WatermarkArea, SelloConfigModalProps } from '@/tipos/sellos';
-import {
-  obtenerPlantillasSellos,
-  crearPlantillaSello,
-  actualizarPlantillaSello,
-  eliminarPlantillaSello,
-  obtenerArchivoSelloSeguro
-} from '@/app/action_module/sellos';
+import React,{ useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { toast } from 'sonner';
 
 // ============================================================================
 // 1. VISOR DE PLANTILLA CON PDF.JS (object-fit: contain + matriz normalizada)
@@ -72,17 +67,6 @@ function buildTransform(page: PageSize, box: { width: number; height: number }):
     translateX: 0,
     translateY: 0,
   };
-}
-
-/** Codifica una key de MinIO preservando las "/" como separadores de ruta. */
-function encodeObjectKey(key: string): string {
-  return key.split('/').map(encodeURIComponent).join('/');
-}
-
-function isImageSource(source: File | string | null): boolean {
-  if (!source) return false;
-  if (source instanceof File) return source.type.startsWith('image/');
-  return /\.(jpg|jpeg|png|webp)(\?.*)?$/i.test(source) || source.startsWith('data:image/');
 }
 
 async function configurePdfWorker(): Promise<typeof import('pdfjs-dist')> {
@@ -165,6 +149,7 @@ function PdfTemplateCanvas({
 // ============================================================================
 
 export function SelloManagementDashboard() {
+  const revision = useRevisionTablas("plantillas_sellos", "sellos");
   const [seals, setSeals] = useState<SealConfig[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +159,7 @@ export function SelloManagementDashboard() {
 
   const applySellosResult = useCallback((res: Awaited<ReturnType<typeof obtenerPlantillasSellos>>) => {
     if (res.success && res.data) {
+      setError(null);
       setSeals(res.data);
     } else {
       setError(res.error ?? 'Error al cargar los sellos');
@@ -194,7 +180,7 @@ export function SelloManagementDashboard() {
     return () => {
       active = false;
     };
-  }, [applySellosResult]);
+  }, [applySellosResult, revision]);
 
   const handleCreateNew = () => {
     setEditingSeal({
@@ -302,10 +288,10 @@ export function SelloManagementDashboard() {
                 <div className="h-48 bg-slate-800 relative flex items-center justify-center overflow-hidden border-b border-slate-200">
                  {seal.templatePdfKey ? (
                     <div className="w-full h-full relative bg-slate-100">
-                      
+
                       {/* LÓGICA DE RENDERIZADO CONDICIONAL (IMAGEN VS PDF) */}
                       {seal.templatePdfKey.toLowerCase().match(/\.(jpg|jpeg|png)$/) ? (
-                        <img
+                        <Image unoptimized width={1200} height={1200}
                           src={`/api/v1/sellos/ver/${encodeURIComponent(seal.templatePdfKey)}`}
                           alt={seal.nombre}
                           loading="lazy"
@@ -457,25 +443,26 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
     setPageSize(size);
   }, []);
 // 1. Estado para guardar el Base64 que viene del Server Action
-  const [secureRenderSource, setSecureRenderSource] = useState<File | string | null>(null);
+  const [secureResult, setSecureResult] = useState<{ key: string; source: string } | null>(null);
+  const secureRenderSource = templateFile ?? (secureResult?.key === config.templatePdfKey ? secureResult.source : null);
 
   // 2. Ejecutamos el Server Action
   useEffect(() => {
     if (templateFile) {
-      setSecureRenderSource(templateFile);
       return;
     }
 
     if (config.templatePdfKey) {
+      // The previous response is hidden while a different source is requested.
       let isMounted = true;
 
       const fetchSecureFile = async () => {
         try {
           const res = await obtenerArchivoSelloSeguro(config.templatePdfKey!);
-          
+
           if (res.success && res.data && isMounted) {
             const dataUri = `data:${res.data.mime};base64,${res.data.base64}`;
-            setSecureRenderSource(dataUri);
+            setSecureResult({ key: config.templatePdfKey!, source: dataUri });
           }
         } catch (error) {
           console.error('Error al descargar el archivo protegido:', error);
@@ -486,21 +473,22 @@ console.log(">>> DATOS INYECTADOS AL MODAL (sealData):", sealData);
 
       return () => { isMounted = false; };
     } else {
-      setSecureRenderSource(null);
+      // The previous response is hidden while a different source is requested.
     }
   }, [templateFile, config.templatePdfKey]);
 
-  // 3. Adaptamos la validación
-  const isImage = useMemo(() => {
-    if (!secureRenderSource) return false;
-    if (secureRenderSource instanceof File) return secureRenderSource.type.startsWith('image/');
-    
-    if (config.templatePdfKey) {
-      const keyStr = config.templatePdfKey.toLowerCase();
-      return keyStr.endsWith('.png') || keyStr.endsWith('.jpg') || keyStr.endsWith('.jpeg');
-    }
-    return false;
-  }, [secureRenderSource, config.templatePdfKey]);
+  const [imagenLocal, setImagenLocal] = useState<{ file: File; url: string } | null>(null);
+  useEffect(() => {
+    if (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/")) return;
+    const url = URL.createObjectURL(secureRenderSource);
+    const timer = window.setTimeout(() => setImagenLocal({ file: secureRenderSource, url }), 0);
+    return () => { window.clearTimeout(timer); URL.revokeObjectURL(url); };
+  }, [secureRenderSource]);
+
+  const renderSource = templateFile ?? secureRenderSource;
+  const imageSource = renderSource instanceof File
+    ? (imagenLocal?.file === renderSource ? imagenLocal.url : null)
+    : (renderSource?.startsWith("data:image/") ? renderSource : null);
 
   const hasTemplate = !!config.templatePdfUrl || !!templateFile || !!config.templatePdfKey;
 
@@ -689,11 +677,11 @@ const handleDownloadBackendPreview = async () => {
       if (secureRenderSource instanceof File) {
         finalTemplateFile = secureRenderSource;
       } else if (typeof secureRenderSource === 'string') {
-        
+
         // CAMBIO 2: Al ser un Data URI (Base64), 'fetch' lo convierte a Blob en memoria sin usar la red
         const res = await fetch(secureRenderSource);
         const blob = await res.blob();
-        
+
         if (blob.size === 0) throw new Error('La plantilla base en memoria tiene 0 bytes.');
 
         // CAMBIO 3: Asignamos la extensión correcta según el tipo MIME que nos dio el backend
@@ -725,8 +713,8 @@ const handleDownloadBackendPreview = async () => {
     link.download = `Prueba_Estampada_${config.nombre.replace(/\s+/g, '_')}.pdf`;
     link.click();
     URL.revokeObjectURL(url);
-  } catch (err: any) {
-    toast.error(err.message ?? 'Error al generar la previsualización');
+  } catch (err: unknown) {
+    toast.error(err instanceof Error ? err.message : 'Error al generar la previsualización');
   } finally {
     setIsDownloadingPreview(false);
   }
@@ -735,7 +723,7 @@ const handleDownloadBackendPreview = async () => {
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
       <div className="w-full h-dvh sm:h-[95vh] max-w-7xl rounded-xl flex flex-col overflow-hidden shadow-2xl bg-white border border-slate-300">
-        
+
         {/* Header Modal */}
         <div className="flex justify-between items-center px-4 py-3 border-b bg-slate-50 border-slate-200">
           <div>
@@ -776,7 +764,7 @@ const handleDownloadBackendPreview = async () => {
 
         {/* Workspace */}
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          
+
           {/* TAB 1: MAPPER */}
           {activeTab === 'MAPPER' && (
             <>
@@ -789,10 +777,10 @@ const handleDownloadBackendPreview = async () => {
                     className="relative bg-white shadow-lg rounded border border-slate-300 overflow-hidden cursor-crosshair"
                     style={{ width: renderBox.width, height: renderBox.height }}
                   >
-                   {secureRenderSource &&
-                      (isImage ? (
-                        <img
-                          src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+                   {secureRenderSource && (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/") || imageSource) &&
+                      (imageSource ? (
+                        <Image unoptimized width={1200} height={1200}
+                          src={imageSource}
                           alt="Plantilla base"
                           className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
                           onLoad={(e) => {
@@ -880,6 +868,22 @@ const handleDownloadBackendPreview = async () => {
 
               {/* Controles Derecha */}
               <div className="w-full lg:w-96 border-l border-slate-200 p-4 flex flex-col gap-4 overflow-y-auto bg-slate-50">
+                <div className="p-3 bg-white border border-slate-200 rounded-lg flex flex-col gap-2">
+                  <span className="text-[11px] font-bold text-slate-700 uppercase">Archivo base del sello</span>
+                  <label className="cursor-pointer flex items-center justify-center gap-2 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold transition-colors">
+                    <Upload size={14} />
+                    {templateFile ? 'Cambiar archivo seleccionado' : hasTemplate ? 'Reemplazar archivo' : 'Seleccionar archivo'}
+                    <input
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg"
+                      onChange={handleTemplateUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    {templateFile?.name ?? (hasTemplate ? 'El archivo actual se conserva si no seleccionas otro.' : 'Formatos permitidos: PDF, PNG o JPG.')}
+                  </span>
+                </div>
                 <div>
                   <label className="text-[11px] font-bold text-slate-700 uppercase">Nombre de la Plantilla</label>
                   <input
@@ -997,10 +1001,10 @@ const handleDownloadBackendPreview = async () => {
         >
           {/* CAPA 1 (z-0): Plantilla Base / Logo de la USC al fondo */}
          <div className="absolute inset-0 z-0 pointer-events-none">
-            {secureRenderSource &&
-              (isImage ? (
-                <img
-                  src={secureRenderSource instanceof File ? URL.createObjectURL(secureRenderSource) : secureRenderSource}
+            {secureRenderSource && (!(secureRenderSource instanceof File) || !secureRenderSource.type.startsWith("image/") || imageSource) &&
+              (imageSource ? (
+                <Image unoptimized width={1200} height={1200}
+                  src={imageSource}
                   alt="Plantilla base"
                   className="w-full h-full object-contain select-none"
                 />

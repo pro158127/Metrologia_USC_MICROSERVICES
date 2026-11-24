@@ -19,6 +19,7 @@ export interface CertificadoReporte {
   nit: string;
   tecnico: string;
   ot: string;
+  cotizacion?: string | null;
   fecha: string | null;
   rutaUrl: string | null;
   tipoServicio: string | null;
@@ -42,6 +43,7 @@ export interface TrazabilidadReporte {
 }
 
 export interface DatosReporte {
+  series: { mes: string; interno: number; externo: number; tasa: number }[];
   kpis: {
     cotizacionesEmitidas: number;
     tasaConversion: number;
@@ -107,7 +109,37 @@ export async function exportarReporteExcel(
 export interface EstadoJobReporte {
   status: string;
   url: string | null;
+  archivos?: { pdf: string | null; excel: string | null };
+  resumen?: {
+    factura: string; cliente: string; fecha: string | null; valor: number;
+    ots: string; equipos: number; cert: string | null;
+  };
   error: string | null;
+}
+
+export type FiltrosFacturas = { numero: string; cotizacion: string; orden: string; cliente: string };
+export type FacturaArchivada = {
+  estadoPdf: 'disponible' | 'pendiente' | 'fallido' | 'sin_pdf';
+  numero: string;
+  fecha: string;
+  cliente: string | null;
+  nit: string | null;
+  cotizacion: string | null;
+  ordenes: string[];
+  valor: number;
+};
+
+export async function buscarFacturasArchivadas(filtros: FiltrosFacturas): Promise<{ data?: FacturaArchivada[]; error?: string }> {
+  try {
+    const session = await auth();
+    const query = new URLSearchParams(Object.entries(filtros).filter(([, valor]) => valor.trim()));
+    const res = await fastifyRequest<{ ok: boolean; data: FacturaArchivada[] }>(
+      session, `/api/v1/reportes/facturas?${query}`,
+    );
+    return { data: res.data };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'No se pudieron buscar las facturas.' };
+  }
 }
 
 export async function consultarEstadoJobReporte(jobId: string): Promise<EstadoJobReporte | null> {
